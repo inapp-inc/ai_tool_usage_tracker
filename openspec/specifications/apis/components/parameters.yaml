@@ -1,0 +1,142 @@
+# Shared query parameters
+
+CorrelationId:
+  name: X-Correlation-ID
+  in: header
+  required: false
+  schema:
+    type: string
+    format: uuid
+  description: Client-supplied correlation ID for tracing. Echoed in response when provided.
+
+Limit:
+  name: limit
+  in: query
+  schema:
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 20
+  description: Maximum number of items to return.
+
+Cursor:
+  name: cursor
+  in: query
+  schema:
+    type: string
+  description: Opaque pagination cursor from a previous response `meta.next_cursor`.
+
+DateFrom:
+  name: from
+  in: query
+  required: true
+  schema:
+    type: string
+    format: date-time
+  description: Period start (inclusive), ISO 8601 UTC.
+
+DateTo:
+  name: to
+  in: query
+  required: true
+  schema:
+    type: string
+    format: date-time
+  description: Period end (inclusive), ISO 8601 UTC.
+
+TeamId:
+  name: team_id
+  in: query
+  schema:
+    type: string
+    format: uuid
+  description: Filter by team ID. RBAC enforced.
+
+ToolId:
+  name: tool_id
+  in: query
+  schema:
+    type: string
+    format: uuid
+  description: Filter by AI tool ID.
+
+UserId:
+  name: user_id
+  in: query
+  schema:
+    type: string
+    format: uuid
+  description: Filter by user ID. Team members may only use own ID unless elevated.
+
+IdempotencyKey:
+  name: Idempotency-Key
+  in: header
+  required: true
+  schema:
+    type: string
+    maxLength: 128
+  description: Unique key for idempotent commit operations.
+
+UploadId:
+  name: uploadId
+  in: path
+  required: true
+  schema:
+    type: string
+    format: uuid
+
+ToolIdPath:
+  name: toolId
+  in: path
+  required: true
+  schema:
+    type: string
+    format: uuid
+
+TeamIdPath:
+  name: teamId
+  in: path
+  required: true
+  schema:
+    type: string
+    format: uuid
+
+CredentialId:
+  name: credentialId
+  in: path
+  required: true
+  schema:
+    type: string
+    format: uuid
+
+ThresholdId:
+  name: thresholdId
+  in: path
+  required: true
+  schema:
+    type: string
+    format: uuid
+
+NotificationId:
+  name: notificationId
+  in: path
+  required: true
+  schema:
+    type: string
+    format: uuid
+
+ReportJobId:
+  name: jobId
+  in: path
+  required: true
+  schema:
+    type: string
+    format: uuid
+
+MemberUserId:
+  name: userId
+  in: path
+  required: true
+  schema:
+    type: string
+    format: uuid

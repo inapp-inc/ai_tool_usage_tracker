@@ -1,0 +1,882 @@
+# --- Common ---
+
+ProblemDetails:
+  type: object
+  required: [type, title, status]
+  properties:
+    type:
+      type: string
+      format: uri
+      description: URI reference identifying the problem type.
+    title:
+      type: string
+      description: Short human-readable summary.
+    status:
+      type: integer
+      description: HTTP status code.
+    detail:
+      type: string
+      description: Human-readable explanation specific to this occurrence.
+    instance:
+      type: string
+      description: URI reference for this occurrence.
+    errors:
+      type: array
+      description: Field-level validation errors (400/422).
+      items:
+        $ref: '#/FieldError'
+
+FieldError:
+  type: object
+  required: [field, message]
+  properties:
+    field:
+      type: string
+    message:
+      type: string
+
+PaginationMeta:
+  type: object
+  properties:
+    limit:
+      type: integer
+    next_cursor:
+      type: string
+      nullable: true
+    has_more:
+      type: boolean
+
+AsyncJobReference:
+  type: object
+  required: [job_id, status]
+  properties:
+    job_id:
+      type: string
+      format: uuid
+    status:
+      $ref: '#/JobStatus'
+    message:
+      type: string
+
+JobStatus:
+  type: string
+  enum: [queued, processing, completed, failed]
+
+Role:
+  type: string
+  enum: [super_admin, team_admin, finance_viewer, team_member, auditor]
+
+# --- Auth ---
+
+LoginRequest:
+  type: object
+  required: [email, password]
+  properties:
+    email:
+      type: string
+      format: email
+      maxLength: 255
+    password:
+      type: string
+      format: password
+      minLength: 8
+      maxLength: 128
+
+TokenResponse:
+  type: object
+  required: [access_token, token_type, expires_in]
+  properties:
+    access_token:
+      type: string
+      description: JWT access token.
+    refresh_token:
+      type: string
+      description: Refresh token when rotation enabled.
+    token_type:
+      type: string
+      enum: [Bearer]
+    expires_in:
+      type: integer
+      description: Access token lifetime in seconds.
+
+RefreshRequest:
+  type: object
+  required: [refresh_token]
+  properties:
+    refresh_token:
+      type: string
+
+UserProfile:
+  type: object
+  required: [id, email, role, organization_id]
+  properties:
+    id:
+      type: string
+      format: uuid
+    email:
+      type: string
+      format: email
+    display_name:
+      type: string
+    role:
+      $ref: '#/Role'
+    organization_id:
+      type: string
+      format: uuid
+    team_ids:
+      type: array
+      items:
+        type: string
+        format: uuid
+
+# --- Tools ---
+
+PricingModel:
+  type: string
+  enum: [flat_token, package_with_overage, custom]
+
+ToolCreateRequest:
+  type: object
+  required: [name, vendor, pricing_model, token_price]
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 100
+      description: Unique within organization.
+    vendor:
+      type: string
+      minLength: 1
+      maxLength: 100
+    pricing_model:
+      $ref: '#/PricingModel'
+    token_price:
+      type: number
+      format: decimal
+      minimum: 0
+      description: Price per 1K tokens or unit per pricing model.
+    package_allowance:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Required when pricing_model is package_with_overage.
+    overage_price:
+      type: number
+      format: decimal
+      minimum: 0
+      description: Price per overage unit; required when package_allowance set.
+    pricing_config:
+      type: object
+      additionalProperties: true
+      description: Extended pricing JSON for custom model.
+
+ToolUpdateRequest:
+  type: object
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 100
+    vendor:
+      type: string
+      maxLength: 100
+    pricing_model:
+      $ref: '#/PricingModel'
+    token_price:
+      type: number
+      format: decimal
+      minimum: 0
+    package_allowance:
+      type: integer
+      format: int64
+      minimum: 0
+    overage_price:
+      type: number
+      format: decimal
+      minimum: 0
+    active:
+      type: boolean
+
+Tool:
+  type: object
+  required: [id, name, vendor, pricing_model, token_price, active, created_at]
+  properties:
+    id:
+      type: string
+      format: uuid
+    organization_id:
+      type: string
+      format: uuid
+    name:
+      type: string
+    vendor:
+      type: string
+    pricing_model:
+      $ref: '#/PricingModel'
+    token_price:
+      type: number
+      format: decimal
+    package_allowance:
+      type: integer
+      format: int64
+      nullable: true
+    overage_price:
+      type: number
+      format: decimal
+      nullable: true
+    active:
+      type: boolean
+    created_at:
+      type: string
+      format: date-time
+    updated_at:
+      type: string
+      format: date-time
+
+ToolListResponse:
+  type: object
+  required: [data, meta]
+  properties:
+    data:
+      type: array
+      items:
+        $ref: '#/Tool'
+    meta:
+      $ref: '#/PaginationMeta'
+
+# --- Teams ---
+
+TeamCreateRequest:
+  type: object
+  required: [name]
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 100
+      description: Unique within organization.
+    description:
+      type: string
+      maxLength: 500
+
+TeamUpdateRequest:
+  type: object
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 100
+    description:
+      type: string
+      maxLength: 500
+    active:
+      type: boolean
+
+Team:
+  type: object
+  required: [id, name, active, created_at]
+  properties:
+    id:
+      type: string
+      format: uuid
+    organization_id:
+      type: string
+      format: uuid
+    name:
+      type: string
+    description:
+      type: string
+    active:
+      type: boolean
+    member_count:
+      type: integer
+    created_at:
+      type: string
+      format: date-time
+
+TeamListResponse:
+  type: object
+  required: [data, meta]
+  properties:
+    data:
+      type: array
+      items:
+        $ref: '#/Team'
+    meta:
+      $ref: '#/PaginationMeta'
+
+TeamMemberAddRequest:
+  type: object
+  required: [user_id]
+  properties:
+    user_id:
+      type: string
+      format: uuid
+
+TeamMember:
+  type: object
+  required: [user_id, email, joined_at]
+  properties:
+    user_id:
+      type: string
+      format: uuid
+    email:
+      type: string
+      format: email
+    display_name:
+      type: string
+    joined_at:
+      type: string
+      format: date-time
+
+# --- Credentials ---
+
+CredentialEnvironment:
+  type: string
+  enum: [sandbox, production]
+
+CredentialCreateRequest:
+  type: object
+  required: [tool_id, environment, secret_value]
+  properties:
+    tool_id:
+      type: string
+      format: uuid
+    team_id:
+      type: string
+      format: uuid
+      nullable: true
+      description: Null for organization-wide credential.
+    environment:
+      $ref: '#/CredentialEnvironment'
+    secret_value:
+      type: string
+      minLength: 1
+      maxLength: 4096
+      writeOnly: true
+    expires_at:
+      type: string
+      format: date-time
+      nullable: true
+
+CredentialRotateRequest:
+  type: object
+  required: [secret_value]
+  properties:
+    secret_value:
+      type: string
+      minLength: 1
+      maxLength: 4096
+      writeOnly: true
+
+Credential:
+  type: object
+  required: [id, tool_id, environment, masked_secret, created_at]
+  properties:
+    id:
+      type: string
+      format: uuid
+    tool_id:
+      type: string
+      format: uuid
+    team_id:
+      type: string
+      format: uuid
+      nullable: true
+    environment:
+      $ref: '#/CredentialEnvironment'
+    masked_secret:
+      type: string
+      description: Last 4 characters only, e.g. ****abcd
+    expires_at:
+      type: string
+      format: date-time
+      nullable: true
+    last_rotated_at:
+      type: string
+      format: date-time
+      nullable: true
+    created_at:
+      type: string
+      format: date-time
+
+# --- Thresholds ---
+
+ThresholdType:
+  type: string
+  enum: [token_count, package_utilization_pct, cost_amount]
+
+ThresholdScope:
+  type: string
+  enum: [tool, team, user]
+
+AlertSeverity:
+  type: string
+  enum: [warning, critical]
+
+ThresholdCreateRequest:
+  type: object
+  required: [threshold_type, scope, limit_value, severity]
+  properties:
+    threshold_type:
+      $ref: '#/ThresholdType'
+    scope:
+      $ref: '#/ThresholdScope'
+    tool_id:
+      type: string
+      format: uuid
+    team_id:
+      type: string
+      format: uuid
+    user_id:
+      type: string
+      format: uuid
+    limit_value:
+      type: number
+      minimum: 0
+      description: Token count, percentage (0-100), or currency amount per type.
+    severity:
+      $ref: '#/AlertSeverity'
+    notify_email:
+      type: boolean
+      default: true
+    notify_in_app:
+      type: boolean
+      default: true
+
+Threshold:
+  type: object
+  required: [id, threshold_type, scope, limit_value, severity, active]
+  properties:
+    id:
+      type: string
+      format: uuid
+    threshold_type:
+      $ref: '#/ThresholdType'
+    scope:
+      $ref: '#/ThresholdScope'
+    tool_id:
+      type: string
+      format: uuid
+      nullable: true
+    team_id:
+      type: string
+      format: uuid
+      nullable: true
+    user_id:
+      type: string
+      format: uuid
+      nullable: true
+    limit_value:
+      type: number
+    severity:
+      $ref: '#/AlertSeverity'
+    active:
+      type: boolean
+    notify_email:
+      type: boolean
+    notify_in_app:
+      type: boolean
+
+# --- Uploads ---
+
+UploadStatus:
+  type: string
+  enum: [pending, parsing, preview_ready, committing, completed, failed, deleted]
+
+UploadCreateResponse:
+  type: object
+  required: [upload_id, status]
+  properties:
+    upload_id:
+      type: string
+      format: uuid
+    status:
+      $ref: '#/UploadStatus'
+    filename:
+      type: string
+    size_bytes:
+      type: integer
+      maximum: 52428800
+
+Upload:
+  type: object
+  required: [id, team_id, status, filename, created_at]
+  properties:
+    id:
+      type: string
+      format: uuid
+    team_id:
+      type: string
+      format: uuid
+    tool_id:
+      type: string
+      format: uuid
+      nullable: true
+    status:
+      $ref: '#/UploadStatus'
+    filename:
+      type: string
+    size_bytes:
+      type: integer
+    matched_rows:
+      type: integer
+    unmatched_rows:
+      type: integer
+    error_message:
+      type: string
+      nullable: true
+    created_at:
+      type: string
+      format: date-time
+    completed_at:
+      type: string
+      format: date-time
+      nullable: true
+
+UploadPreview:
+  type: object
+  required: [upload_id, total_rows, matched_rows, unmatched_rows, sample_rows]
+  properties:
+    upload_id:
+      type: string
+      format: uuid
+    total_rows:
+      type: integer
+    matched_rows:
+      type: integer
+    unmatched_rows:
+      type: integer
+    unmatched_emails:
+      type: array
+      items:
+        type: string
+        format: email
+    sample_rows:
+      type: array
+      maxItems: 10
+      items:
+        $ref: '#/ParsedUsageRow'
+
+ParsedUsageRow:
+  type: object
+  properties:
+    row_number:
+      type: integer
+    user_email:
+      type: string
+      format: email
+    matched_user_id:
+      type: string
+      format: uuid
+      nullable: true
+    input_tokens:
+      type: integer
+    output_tokens:
+      type: integer
+    occurred_at:
+      type: string
+      format: date-time
+
+# --- Dashboard ---
+
+PeriodFilter:
+  type: object
+  required: [from, to]
+  properties:
+    from:
+      type: string
+      format: date-time
+    to:
+      type: string
+      format: date-time
+
+TokenUsageWidget:
+  type: object
+  required: [input_tokens, output_tokens, total_tokens, last_updated_at]
+  properties:
+    input_tokens:
+      type: integer
+      format: int64
+    output_tokens:
+      type: integer
+      format: int64
+    total_tokens:
+      type: integer
+      format: int64
+    last_updated_at:
+      type: string
+      format: date-time
+
+CostOverviewWidget:
+  type: object
+  required: [actual_spend, package_allowance, overage_cost, last_updated_at]
+  properties:
+    actual_spend:
+      type: number
+      format: decimal
+    package_allowance:
+      type: number
+      format: decimal
+    allowance_consumed_pct:
+      type: number
+      format: float
+    overage_cost:
+      type: number
+      format: decimal
+    last_updated_at:
+      type: string
+      format: date-time
+
+UsageByToolItem:
+  type: object
+  required: [tool_id, tool_name, total_tokens, share_pct]
+  properties:
+    tool_id:
+      type: string
+      format: uuid
+    tool_name:
+      type: string
+    total_tokens:
+      type: integer
+      format: int64
+    estimated_cost:
+      type: number
+      format: decimal
+    share_pct:
+      type: number
+      format: float
+
+TrendGranularity:
+  type: string
+  enum: [daily, weekly, monthly]
+
+TrendPoint:
+  type: object
+  required: [period_start, total_tokens]
+  properties:
+    period_start:
+      type: string
+      format: date-time
+    total_tokens:
+      type: integer
+      format: int64
+    estimated_cost:
+      type: number
+      format: decimal
+
+TopConsumerItem:
+  type: object
+  properties:
+    entity_id:
+      type: string
+      format: uuid
+    entity_name:
+      type: string
+    total_tokens:
+      type: integer
+      format: int64
+    estimated_cost:
+      type: number
+      format: decimal
+
+ActiveAlertSummary:
+  type: object
+  required: [alert_id, severity, threshold_type, current_value, limit_value]
+  properties:
+    alert_id:
+      type: string
+      format: uuid
+    severity:
+      $ref: '#/AlertSeverity'
+    threshold_type:
+      $ref: '#/ThresholdType'
+    tool_name:
+      type: string
+    team_name:
+      type: string
+    current_value:
+      type: number
+    limit_value:
+      type: number
+    triggered_at:
+      type: string
+      format: date-time
+
+# --- Reports ---
+
+ReportType:
+  type: string
+  enum:
+    - tool_usage_summary
+    - team_usage
+    - cost
+    - user_usage
+    - alert_history
+    - api_key_activity
+
+ReportFormat:
+  type: string
+  enum: [json, csv, pdf]
+
+ReportGenerateRequest:
+  type: object
+  required: [report_type, from, to, format]
+  properties:
+    report_type:
+      $ref: '#/ReportType'
+    from:
+      type: string
+      format: date-time
+    to:
+      type: string
+      format: date-time
+    format:
+      $ref: '#/ReportFormat'
+    team_id:
+      type: string
+      format: uuid
+    tool_id:
+      type: string
+      format: uuid
+    user_id:
+      type: string
+      format: uuid
+    alert_type:
+      type: string
+    async:
+      type: boolean
+      default: false
+      description: Force async generation for large result sets.
+
+ReportJob:
+  type: object
+  required: [job_id, report_type, status, created_at]
+  properties:
+    job_id:
+      type: string
+      format: uuid
+    report_type:
+      $ref: '#/ReportType'
+    status:
+      $ref: '#/JobStatus'
+    format:
+      $ref: '#/ReportFormat'
+    download_url:
+      type: string
+      format: uri
+      nullable: true
+      description: Presigned URL when status is completed.
+    download_url_expires_at:
+      type: string
+      format: date-time
+      nullable: true
+    error_message:
+      type: string
+      nullable: true
+    created_at:
+      type: string
+      format: date-time
+    completed_at:
+      type: string
+      format: date-time
+      nullable: true
+
+# --- Notifications ---
+
+Notification:
+  type: object
+  required: [id, alert_type, severity, read, created_at]
+  properties:
+    id:
+      type: string
+      format: uuid
+    alert_type:
+      type: string
+    severity:
+      $ref: '#/AlertSeverity'
+    tool_name:
+      type: string
+    team_name:
+      type: string
+    threshold_value:
+      type: number
+    current_value:
+      type: number
+    read:
+      type: boolean
+    deep_link:
+      type: string
+    created_at:
+      type: string
+      format: date-time
+
+NotificationListResponse:
+  type: object
+  required: [data, unread_count, meta]
+  properties:
+    data:
+      type: array
+      items:
+        $ref: '#/Notification'
+    unread_count:
+      type: integer
+    meta:
+      $ref: '#/PaginationMeta'
+
+# --- Audit ---
+
+AuditLogEntry:
+  type: object
+  required: [id, actor_id, action, resource_type, outcome, created_at]
+  properties:
+    id:
+      type: string
+      format: uuid
+    actor_id:
+      type: string
+      format: uuid
+    actor_email:
+      type: string
+    action:
+      type: string
+    resource_type:
+      type: string
+    resource_id:
+      type: string
+    outcome:
+      type: string
+      enum: [success, failure]
+    source_ip:
+      type: string
+    correlation_id:
+      type: string
+    created_at:
+      type: string
+      format: date-time
+
+AuditLogListResponse:
+  type: object
+  required: [data, meta]
+  properties:
+    data:
+      type: array
+      items:
+        $ref: '#/AuditLogEntry'
+    meta:
+      $ref: '#/PaginationMeta'
+
+HealthResponse:
+  type: object
+  required: [status]
+  properties:
+    status:
+      type: string
+      enum: [ok, degraded]
+    database:
+      type: string
+      enum: [ok, error]
+      description: PostgreSQL connectivity (TASK-INF-001 uses `error`; synonym `unavailable` reserved for RFC 7807 Problem Details in TASK-INF-002)
+    redis:
+      type: string
+      enum: [ok, error]

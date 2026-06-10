@@ -1,0 +1,49 @@
+{
+  "version": "1.0",
+  "updatedAt": "2026-04-16T05:17:12.734Z",
+  "projects": [
+    {
+      "name": "default",
+      "jsonPath": "system-prompts-skills/requirement-skill/gaps-questionnaire-web/gap-questionnaire.json",
+      "createdAt": "2026-03-17T09:33:12.772Z",
+      "lastRegisteredAt": "2026-04-16T05:17:09.487Z",
+      "artifacts": {
+        "questionnaireMdPath": "NahlaMadison/Phase0_Discovery_and_Specs/SDD_Gaps_Questionnaire.md",
+        "answersMdPath": "NahlaMadison/Phase0_Discovery_and_Specs/SDD_Gaps_Answers.md",
+        "lastArtifactRegisteredAt": "2026-03-17T09:38:07.943Z"
+      }
+    },
+    {
+      "name": "MyDemoProject",
+      "jsonPath": "tmp/MyDemoProject/gap-questionnaire.json",
+      "createdAt": "2026-03-17T09:42:17.248Z",
+      "lastRegisteredAt": "2026-03-17T09:46:49.989Z",
+      "artifacts": {}
+    },
+    {
+      "name": "ProjFolders",
+      "jsonPath": "tmp/ProjFolders/Discovery and Design/gap-questionnaire.json",
+      "createdAt": "2026-03-17T09:54:21.514Z",
+      "lastRegisteredAt": "2026-03-17T10:10:06.496Z",
+      "artifacts": {}
+    },
+    {
+      "name": "NahlaMadison",
+      "jsonPath": "NahlaMadison/Discovery and Design/gap-questionnaire.json",
+      "createdAt": "2026-03-17T12:56:44.775Z",
+      "lastRegisteredAt": "2026-03-17T13:20:58.035Z",
+      "artifacts": {
+        "questionnaireMdPath": "NahlaMadison/Docs/SDD_Gaps_Questionnaire.md",
+        "answersMdPath": "NahlaMadison/Docs/SDD_Gaps_Answers.md",
+        "lastArtifactRegisteredAt": "2026-03-17T13:20:58.036Z"
+      }
+    },
+    {
+      "name": "todo-app",
+      "jsonPath": "/Users/mahalingam/Downloads/Presales/todo-app/Discovery and Design/gap-questionnaire.json",
+      "createdAt": "2026-04-16T05:16:31.395Z",
+      "lastRegisteredAt": "2026-04-16T05:17:12.734Z",
+      "artifacts": {}
+    }
+  ]
+}

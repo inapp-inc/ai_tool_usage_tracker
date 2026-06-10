@@ -1,0 +1,10 @@
+{
+  "auth.login.title": "Sign in",
+  "auth.login.email": "Email",
+  "auth.login.password": "Password",
+  "auth.login.submit": "Sign in",
+  "auth.login.error": "Sign in failed",
+  "routes.dashboard.title": "Dashboard",
+  "routes.admin.title": "Administration",
+  "routes.login.title": "Login"
+}

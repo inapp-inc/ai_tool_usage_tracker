@@ -1,0 +1,150 @@
+LoginRequestExample:
+  value:
+    email: admin@acme.example
+    password: SecurePass123!
+
+TokenResponseExample:
+  value:
+    access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example
+    refresh_token: dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4.example
+    token_type: Bearer
+    expires_in: 3600
+
+UserProfileExample:
+  value:
+    id: 550e8400-e29b-41d4-a716-446655440001
+    email: admin@acme.example
+    display_name: Platform Admin
+    role: super_admin
+    organization_id: 660e8400-e29b-41d4-a716-446655440000
+    team_ids: []
+
+ToolCreateExample:
+  value:
+    name: ChatGPT Enterprise
+    vendor: OpenAI
+    pricing_model: package_with_overage
+    token_price: 0.002
+    package_allowance: 10000000
+    overage_price: 0.003
+
+ToolResponseExample:
+  value:
+    id: 770e8400-e29b-41d4-a716-446655440010
+    organization_id: 660e8400-e29b-41d4-a716-446655440000
+    name: ChatGPT Enterprise
+    vendor: OpenAI
+    pricing_model: package_with_overage
+    token_price: 0.002
+    package_allowance: 10000000
+    overage_price: 0.003
+    active: true
+    created_at: '2026-01-15T10:00:00Z'
+    updated_at: '2026-01-15T10:00:00Z'
+
+TeamCreateExample:
+  value:
+    name: Engineering
+    description: Product engineering teams
+
+CredentialCreateExample:
+  value:
+    tool_id: 770e8400-e29b-41d4-a716-446655440010
+    team_id: null
+    environment: production
+    secret_value: sk-proj-xxxxxxxxxxxxxxxx
+    expires_at: '2027-01-01T00:00:00Z'
+
+ThresholdCreateExample:
+  value:
+    threshold_type: cost_amount
+    scope: team
+    team_id: 880e8400-e29b-41d4-a716-446655440020
+    limit_value: 5000.00
+    severity: critical
+    notify_email: true
+    notify_in_app: true
+
+UploadAcceptedExample:
+  value:
+    upload_id: 990e8400-e29b-41d4-a716-446655440030
+    status: pending
+    filename: openai-usage-jan-2026.csv
+    size_bytes: 1048576
+
+UploadPreviewExample:
+  value:
+    upload_id: 990e8400-e29b-41d4-a716-446655440030
+    total_rows: 150
+    matched_rows: 142
+    unmatched_rows: 8
+    unmatched_emails:
+      - contractor@external.example
+    sample_rows:
+      - row_number: 1
+        user_email: dev@acme.example
+        matched_user_id: 550e8400-e29b-41d4-a716-446655440002
+        input_tokens: 1200
+        output_tokens: 800
+        occurred_at: '2026-01-10T14:30:00Z'
+
+TokenWidgetExample:
+  value:
+    input_tokens: 1250000
+    output_tokens: 980000
+    total_tokens: 2230000
+    last_updated_at: '2026-06-10T12:05:00Z'
+
+CostWidgetExample:
+  value:
+    actual_spend: 4250.75
+    package_allowance: 6000.00
+    allowance_consumed_pct: 70.8
+    overage_cost: 120.50
+    last_updated_at: '2026-06-10T12:05:00Z'
+
+ReportGenerateExample:
+  value:
+    report_type: cost
+    from: '2026-01-01T00:00:00Z'
+    to: '2026-01-31T23:59:59Z'
+    format: pdf
+    team_id: 880e8400-e29b-41d4-a716-446655440020
+    async: false
+
+ReportJobExample:
+  value:
+    job_id: aa0e8400-e29b-41d4-a716-446655440040
+    report_type: cost
+    status: completed
+    format: pdf
+    download_url: https://s3.amazonaws.com/bucket/org/reports/aa0e8400.pdf?X-Amz-Signature=example
+    download_url_expires_at: '2026-06-10T12:30:00Z'
+    created_at: '2026-06-10T12:15:00Z'
+    completed_at: '2026-06-10T12:15:08Z'
+
+NotificationExample:
+  value:
+    id: bb0e8400-e29b-41d4-a716-446655440050
+    alert_type: threshold_breach
+    severity: critical
+    tool_name: ChatGPT Enterprise
+    team_name: Engineering
+    threshold_value: 5000.00
+    current_value: 5234.12
+    read: false
+    deep_link: /dashboard/alerts/bb0e8400-e29b-41d4-a716-446655440050
+    created_at: '2026-06-10T11:00:00Z'
+
+AuditLogExample:
+  value:
+    id: cc0e8400-e29b-41d4-a716-446655440060
+    actor_id: 550e8400-e29b-41d4-a716-446655440001
+    actor_email: admin@acme.example
+    action: credential.rotate
+    resource_type: credential
+    resource_id: dd0e8400-e29b-41d4-a716-446655440070
+    outcome: success
+    source_ip: 203.0.113.10
+    correlation_id: f47ac10b-58cc-4372-a567-0e02b2c3d479
+    created_at: '2026-06-10T09:30:00Z'

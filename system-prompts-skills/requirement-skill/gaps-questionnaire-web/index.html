@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gap Manager Portal</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <div class="titleBlock">
+          <div class="kicker">Global gap manager</div>
+          <h1 id="title">Gap manager portal</h1>
+          <div class="meta">
+            <label class="field">
+              <span>Project</span>
+              <select id="projectSelect"></select>
+            </label>
+            <label class="field">
+              <span>Version</span>
+              <input id="version" type="text" />
+            </label>
+            <label class="field">
+              <span>Date</span>
+              <input id="date" type="date" />
+            </label>
+            <label class="field">
+              <span>Status</span>
+              <select id="status">
+                <option value="Draft">Draft</option>
+                <option value="In progress">In progress</option>
+                <option value="Complete">Complete</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="reloadBtn" class="secondary">Reload</button>
+          <button id="saveBtn" class="primary">Save JSON</button>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="row">
+          <h2>Registry</h2>
+          <div class="hint mono" id="registryHint"></div>
+        </div>
+        <div class="row">
+          <div class="hint">Projects are registered on load/save. Each project owns its own JSON file.</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="row">
+          <h2>Source docs</h2>
+          <button id="addSourceDocBtn" class="secondary small">Add</button>
+        </div>
+        <div id="sourceDocs" class="chips"></div>
+      </section>
+
+      <main id="sections"></main>
+
+      <footer class="footer">
+        <div class="hint">
+          Completion gate: set <span class="mono">Status = Complete</span> (you will be asked to confirm; the portal then saves and finalizes).
+        </div>
+        <div id="toast" class="toast" aria-live="polite"></div>
+      </footer>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
+

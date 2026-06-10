@@ -1,0 +1,54 @@
+{
+  "title": "Gaps Questionnaire",
+  "version": "1.0",
+  "date": "2026-03-17",
+  "status": "Complete",
+  "sourceDocs": [],
+  "sections": [
+    {
+      "id": "functional",
+      "title": "Functional gaps",
+      "prefix": "F",
+      "rows": [
+        {
+          "id": "F1",
+          "question": "Which user roles must be supported in v1?",
+          "answer": "",
+          "owner": "",
+          "confidence": ""
+        }
+      ]
+    },
+    {
+      "id": "data",
+      "title": "Data and domain gaps",
+      "prefix": "D",
+      "rows": []
+    },
+    {
+      "id": "integration",
+      "title": "Integration and API gaps",
+      "prefix": "I",
+      "rows": []
+    },
+    {
+      "id": "nonfunctional",
+      "title": "Non-functional and constraints",
+      "prefix": "N",
+      "rows": []
+    },
+    {
+      "id": "scope",
+      "title": "Scope and out-of-scope",
+      "prefix": "S",
+      "rows": []
+    },
+    {
+      "id": "decisions",
+      "title": "Open decisions",
+      "prefix": "O",
+      "isDecisions": true,
+      "rows": []
+    }
+  ]
+}

@@ -1,0 +1,1319 @@
+openapi: 3.0.3
+info:
+  title: AI Tool Usage Tracker API
+  version: 1.0.0
+  description: |
+    REST API for the AI Tool Usage Tracker platform (Phase 1 MVP).
+
+    **Authentication:** JWT Bearer token except `/auth/login`, `/auth/refresh`, and `/health`.
+
+    **Errors:** RFC 7807 Problem Details (`application/problem+json`).
+
+    **Traceability:** FR-PLT-001, ADR-012, NFR-SEC-003/004/006.
+  contact:
+    name: Platform Team
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.ai-tool-tracker.example/api/v1
+    description: Production
+  - url: https://staging-api.ai-tool-tracker.example/api/v1
+    description: Staging
+  - url: http://localhost:8000/api/v1
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Authentication and session management
+  - name: Health
+    description: Service health probes
+  - name: Tools
+    description: AI tool configuration (FR-ADM-001)
+  - name: Teams
+    description: Team management (FR-ADM-002)
+  - name: Credentials
+    description: Vendor API credentials (FR-ADM-003)
+  - name: Thresholds
+    description: Usage and cost thresholds (FR-ADM-004)
+  - name: Uploads
+    description: Vendor file ingestion (FR-ING-001, FR-ING-002)
+  - name: Dashboard
+    description: Dashboard widgets (FR-DSH-001 – FR-DSH-009)
+  - name: Reports
+    description: Operational and financial reports (FR-RPT-001 – FR-RPT-007)
+  - name: Notifications
+    description: In-app notifications (FR-NTF-001)
+  - name: Audit
+    description: Audit log query (FR-PLT-002)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Liveness/readiness probe. No authentication required.
+      security: []
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service health status
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/HealthResponse'
+              example:
+                status: ok
+                database: ok
+                redis: ok
+        '503':
+          description: Service unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: './components/schemas.yaml#/ProblemDetails'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate user
+      description: |
+        Validates credentials and returns JWT access token.
+
+        **Validation:** email required (RFC 5322); password 8–128 characters.
+
+        **Rate limiting:** Failed attempts throttled (NFR-SEC-003).
+      security: []
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/LoginRequest'
+            examples:
+              default:
+                $ref: './components/examples.yaml#/LoginRequestExample'
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/TokenResponse'
+              examples:
+                default:
+                  $ref: './components/examples.yaml#/TokenResponseExample'
+        '400':
+          $ref: './components/responses.yaml#/BadRequest'
+        '401':
+          description: Invalid credentials
+          content:
+            application/problem+json:
+              schema:
+                $ref: './components/schemas.yaml#/ProblemDetails'
+              example:
+                type: https://api.ai-tool-tracker.example/problems/invalid-credentials
+                title: Invalid Credentials
+                status: 401
+                detail: Email or password is incorrect.
+        '429':
+          description: Too many login attempts
+          content:
+            application/problem+json:
+              schema:
+                $ref: './components/schemas.yaml#/ProblemDetails'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      security: []
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/RefreshRequest'
+      responses:
+        '200':
+          description: New tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/TokenResponse'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user profile
+      description: Returns authenticated user, role, and team memberships.
+      operationId: getCurrentUser
+      parameters:
+        - $ref: './components/parameters.yaml#/CorrelationId'
+      responses:
+        '200':
+          description: Current user profile
+          headers:
+            X-Correlation-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/UserProfile'
+              examples:
+                default:
+                  $ref: './components/examples.yaml#/UserProfileExample'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+
+  /tools:
+    get:
+      tags: [Tools]
+      summary: List AI tools
+      description: |
+        Returns paginated AI tools for the organization.
+
+        **Roles:** All authenticated roles (read-scoped).
+      operationId: listTools
+      parameters:
+        - $ref: './components/parameters.yaml#/Limit'
+        - $ref: './components/parameters.yaml#/Cursor'
+        - name: active
+          in: query
+          schema:
+            type: boolean
+          description: Filter by active status.
+      responses:
+        '200':
+          description: Tool list
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/ToolListResponse'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+    post:
+      tags: [Tools]
+      summary: Create AI tool
+      description: |
+        **Roles:** `super_admin` only.
+
+        **Validation:**
+        - `name` unique within organization (1–100 chars)
+        - `token_price` >= 0
+        - `package_allowance` and `overage_price` required when `pricing_model` is `package_with_overage`
+      operationId: createTool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/ToolCreateRequest'
+            examples:
+              default:
+                $ref: './components/examples.yaml#/ToolCreateExample'
+      responses:
+        '201':
+          description: Tool created
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Tool'
+              examples:
+                default:
+                  $ref: './components/examples.yaml#/ToolResponseExample'
+        '400':
+          $ref: './components/responses.yaml#/BadRequest'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '409':
+          $ref: './components/responses.yaml#/Conflict'
+        '422':
+          $ref: './components/responses.yaml#/UnprocessableEntity'
+
+  /tools/{toolId}:
+    get:
+      tags: [Tools]
+      summary: Get AI tool by ID
+      operationId: getTool
+      parameters:
+        - $ref: './components/parameters.yaml#/ToolIdPath'
+      responses:
+        '200':
+          description: Tool details
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Tool'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+    patch:
+      tags: [Tools]
+      summary: Update AI tool
+      description: '**Roles:** `super_admin` only. Deactivate via `active: false`.'
+      operationId: updateTool
+      parameters:
+        - $ref: './components/parameters.yaml#/ToolIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/ToolUpdateRequest'
+      responses:
+        '200':
+          description: Tool updated
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Tool'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+        '409':
+          $ref: './components/responses.yaml#/Conflict'
+        '422':
+          $ref: './components/responses.yaml#/UnprocessableEntity'
+
+  /teams:
+    get:
+      tags: [Teams]
+      summary: List teams
+      operationId: listTeams
+      parameters:
+        - $ref: './components/parameters.yaml#/Limit'
+        - $ref: './components/parameters.yaml#/Cursor'
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Team list
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/TeamListResponse'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+    post:
+      tags: [Teams]
+      summary: Create team
+      description: '**Roles:** `super_admin`. **Validation:** unique name within org.'
+      operationId: createTeam
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/TeamCreateRequest'
+            examples:
+              default:
+                $ref: './components/examples.yaml#/TeamCreateExample'
+      responses:
+        '201':
+          description: Team created
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Team'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '409':
+          $ref: './components/responses.yaml#/Conflict'
+
+  /teams/{teamId}:
+    get:
+      tags: [Teams]
+      summary: Get team by ID
+      operationId: getTeam
+      parameters:
+        - $ref: './components/parameters.yaml#/TeamIdPath'
+      responses:
+        '200':
+          description: Team details
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Team'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+    patch:
+      tags: [Teams]
+      summary: Update team
+      description: '**Roles:** `super_admin`. Deactivate via `active: false`.'
+      operationId: updateTeam
+      parameters:
+        - $ref: './components/parameters.yaml#/TeamIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/TeamUpdateRequest'
+      responses:
+        '200':
+          description: Team updated
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Team'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+
+  /teams/{teamId}/members:
+    get:
+      tags: [Teams]
+      summary: List team members
+      operationId: listTeamMembers
+      parameters:
+        - $ref: './components/parameters.yaml#/TeamIdPath'
+        - $ref: './components/parameters.yaml#/Limit'
+        - $ref: './components/parameters.yaml#/Cursor'
+      responses:
+        '200':
+          description: Team members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: './components/schemas.yaml#/TeamMember'
+                  meta:
+                    $ref: './components/schemas.yaml#/PaginationMeta'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+    post:
+      tags: [Teams]
+      summary: Add team member
+      description: '**Roles:** `super_admin`, `team_admin` (administered teams only).'
+      operationId: addTeamMember
+      parameters:
+        - $ref: './components/parameters.yaml#/TeamIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/TeamMemberAddRequest'
+      responses:
+        '201':
+          description: Member added
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/TeamMember'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+        '409':
+          $ref: './components/responses.yaml#/Conflict'
+
+  /teams/{teamId}/members/{userId}:
+    delete:
+      tags: [Teams]
+      summary: Remove team member
+      description: Historical usage retained. **Roles:** `super_admin`, scoped `team_admin`.
+      operationId: removeTeamMember
+      parameters:
+        - $ref: './components/parameters.yaml#/TeamIdPath'
+        - $ref: './components/parameters.yaml#/MemberUserId'
+      responses:
+        '204':
+          description: Member removed
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+
+  /credentials:
+    get:
+      tags: [Credentials]
+      summary: List API credentials
+      description: Returns masked credentials only. **Roles:** `super_admin`.
+      operationId: listCredentials
+      parameters:
+        - $ref: './components/parameters.yaml#/ToolId'
+        - $ref: './components/parameters.yaml#/TeamId'
+        - $ref: './components/parameters.yaml#/Limit'
+        - $ref: './components/parameters.yaml#/Cursor'
+      responses:
+        '200':
+          description: Credential list (masked)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: './components/schemas.yaml#/Credential'
+                  meta:
+                    $ref: './components/schemas.yaml#/PaginationMeta'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+    post:
+      tags: [Credentials]
+      summary: Create API credential
+      description: |
+        **Roles:** `super_admin`.
+
+        **Validation:** `secret_value` write-only; stored AES-256 encrypted (NFR-SEC-001).
+        Full secret never returned after creation.
+      operationId: createCredential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/CredentialCreateRequest'
+            examples:
+              default:
+                $ref: './components/examples.yaml#/CredentialCreateExample'
+      responses:
+        '201':
+          description: Credential created (masked)
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Credential'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '422':
+          $ref: './components/responses.yaml#/UnprocessableEntity'
+
+  /credentials/{credentialId}/rotate:
+    post:
+      tags: [Credentials]
+      summary: Rotate API credential
+      operationId: rotateCredential
+      parameters:
+        - $ref: './components/parameters.yaml#/CredentialId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/CredentialRotateRequest'
+      responses:
+        '200':
+          description: Credential rotated
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Credential'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+
+  /credentials/{credentialId}:
+    delete:
+      tags: [Credentials]
+      summary: Delete API credential
+      operationId: deleteCredential
+      parameters:
+        - $ref: './components/parameters.yaml#/CredentialId'
+      responses:
+        '204':
+          description: Credential deleted
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+
+  /thresholds:
+    get:
+      tags: [Thresholds]
+      summary: List thresholds
+      operationId: listThresholds
+      parameters:
+        - $ref: './components/parameters.yaml#/TeamId'
+        - $ref: './components/parameters.yaml#/ToolId'
+        - $ref: './components/parameters.yaml#/Limit'
+        - $ref: './components/parameters.yaml#/Cursor'
+      responses:
+        '200':
+          description: Threshold list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: './components/schemas.yaml#/Threshold'
+                  meta:
+                    $ref: './components/schemas.yaml#/PaginationMeta'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+    post:
+      tags: [Thresholds]
+      summary: Create threshold
+      description: |
+        **Roles:** `super_admin`, `team_admin` (team scope only).
+
+        **Validation:** `limit_value` >= 0; scope-specific IDs required
+        (e.g. `team_id` when scope is `team`).
+      operationId: createThreshold
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/ThresholdCreateRequest'
+            examples:
+              default:
+                $ref: './components/examples.yaml#/ThresholdCreateExample'
+      responses:
+        '201':
+          description: Threshold created
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Threshold'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '422':
+          $ref: './components/responses.yaml#/UnprocessableEntity'
+
+  /thresholds/{thresholdId}:
+    patch:
+      tags: [Thresholds]
+      summary: Update threshold
+      operationId: updateThreshold
+      parameters:
+        - $ref: './components/parameters.yaml#/ThresholdId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit_value:
+                  type: number
+                  minimum: 0
+                severity:
+                  $ref: './components/schemas.yaml#/AlertSeverity'
+                active:
+                  type: boolean
+                notify_email:
+                  type: boolean
+                notify_in_app:
+                  type: boolean
+      responses:
+        '200':
+          description: Threshold updated
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Threshold'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+    delete:
+      tags: [Thresholds]
+      summary: Delete threshold
+      operationId: deleteThreshold
+      parameters:
+        - $ref: './components/parameters.yaml#/ThresholdId'
+      responses:
+        '204':
+          description: Threshold deleted
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+
+  /uploads:
+    get:
+      tags: [Uploads]
+      summary: List uploads
+      operationId: listUploads
+      parameters:
+        - $ref: './components/parameters.yaml#/TeamId'
+        - name: status
+          in: query
+          schema:
+            $ref: './components/schemas.yaml#/UploadStatus'
+        - $ref: './components/parameters.yaml#/Limit'
+        - $ref: './components/parameters.yaml#/Cursor'
+      responses:
+        '200':
+          description: Upload list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: './components/schemas.yaml#/Upload'
+                  meta:
+                    $ref: './components/schemas.yaml#/PaginationMeta'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+    post:
+      tags: [Uploads]
+      summary: Upload vendor export file
+      description: |
+        **Roles:** `super_admin`, `team_admin` (administered teams).
+
+        **Validation:**
+        - Max file size 50 MB (52,428,800 bytes)
+        - Formats: CSV, JSON, XLSX
+        - `team_id` required
+
+        Returns 202; parsing runs asynchronously.
+      operationId: createUpload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, team_id]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Vendor export file (max 50 MB).
+                team_id:
+                  type: string
+                  format: uuid
+                tool_id:
+                  type: string
+                  format: uuid
+                  description: Optional hint for parser selection.
+            encoding:
+              file:
+                contentType: application/octet-stream, text/csv, application/json, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+      responses:
+        '202':
+          description: Upload accepted for parsing
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/UploadCreateResponse'
+              examples:
+                default:
+                  $ref: './components/examples.yaml#/UploadAcceptedExample'
+        '400':
+          $ref: './components/responses.yaml#/BadRequest'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '413':
+          $ref: './components/responses.yaml#/PayloadTooLarge'
+
+  /uploads/{uploadId}:
+    get:
+      tags: [Uploads]
+      summary: Get upload status
+      operationId: getUpload
+      parameters:
+        - $ref: './components/parameters.yaml#/UploadId'
+      responses:
+        '200':
+          description: Upload metadata
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Upload'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+    delete:
+      tags: [Uploads]
+      summary: Delete upload
+      description: Removes staging data; committed usage unaffected. Audit-logged.
+      operationId: deleteUpload
+      parameters:
+        - $ref: './components/parameters.yaml#/UploadId'
+      responses:
+        '204':
+          description: Upload deleted
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+
+  /uploads/{uploadId}/preview:
+    get:
+      tags: [Uploads]
+      summary: Preview import
+      description: Available when status is `preview_ready`.
+      operationId: getUploadPreview
+      parameters:
+        - $ref: './components/parameters.yaml#/UploadId'
+      responses:
+        '200':
+          description: Import preview with matched/unmatched summary
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/UploadPreview'
+              examples:
+                default:
+                  $ref: './components/examples.yaml#/UploadPreviewExample'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+        '409':
+          description: Upload not ready for preview
+          content:
+            application/problem+json:
+              schema:
+                $ref: './components/schemas.yaml#/ProblemDetails'
+
+  /uploads/{uploadId}/commit:
+    post:
+      tags: [Uploads]
+      summary: Commit import
+      description: |
+        Persists staged rows as usage events. **Idempotency-Key required.**
+
+        **Roles:** `super_admin`, scoped `team_admin`.
+      operationId: commitUpload
+      parameters:
+        - $ref: './components/parameters.yaml#/UploadId'
+        - $ref: './components/parameters.yaml#/IdempotencyKey'
+      responses:
+        '202':
+          $ref: './components/responses.yaml#/Accepted'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+        '409':
+          $ref: './components/responses.yaml#/Conflict'
+
+  /uploads/{uploadId}/reprocess:
+    post:
+      tags: [Uploads]
+      summary: Reprocess upload
+      description: Re-runs parsing and matching against stored file.
+      operationId: reprocessUpload
+      parameters:
+        - $ref: './components/parameters.yaml#/UploadId'
+      responses:
+        '202':
+          $ref: './components/responses.yaml#/Accepted'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+
+  /dashboard/tokens:
+    get:
+      tags: [Dashboard]
+      summary: Total token usage widget
+      description: '**Performance target:** p95 <= 3s (NFR-PER-001). RBAC-scoped.'
+      operationId: getDashboardTokens
+      parameters:
+        - $ref: './components/parameters.yaml#/DateFrom'
+        - $ref: './components/parameters.yaml#/DateTo'
+        - $ref: './components/parameters.yaml#/TeamId'
+      responses:
+        '200':
+          description: Token usage aggregate
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/TokenUsageWidget'
+              examples:
+                default:
+                  $ref: './components/examples.yaml#/TokenWidgetExample'
+        '400':
+          $ref: './components/responses.yaml#/BadRequest'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+
+  /dashboard/cost:
+    get:
+      tags: [Dashboard]
+      summary: Cost overview widget
+      operationId: getDashboardCost
+      parameters:
+        - $ref: './components/parameters.yaml#/DateFrom'
+        - $ref: './components/parameters.yaml#/DateTo'
+        - $ref: './components/parameters.yaml#/TeamId'
+      responses:
+        '200':
+          description: Cost overview
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/CostOverviewWidget'
+              examples:
+                default:
+                  $ref: './components/examples.yaml#/CostWidgetExample'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+
+  /dashboard/usage-by-tool:
+    get:
+      tags: [Dashboard]
+      summary: Usage by tool widget
+      operationId: getDashboardUsageByTool
+      parameters:
+        - $ref: './components/parameters.yaml#/DateFrom'
+        - $ref: './components/parameters.yaml#/DateTo'
+        - $ref: './components/parameters.yaml#/TeamId'
+      responses:
+        '200':
+          description: Per-tool usage breakdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: './components/schemas.yaml#/UsageByToolItem'
+                  last_updated_at:
+                    type: string
+                    format: date-time
+
+  /dashboard/usage-by-team:
+    get:
+      tags: [Dashboard]
+      summary: Usage by team widget
+      operationId: getDashboardUsageByTeam
+      parameters:
+        - $ref: './components/parameters.yaml#/DateFrom'
+        - $ref: './components/parameters.yaml#/DateTo'
+      responses:
+        '200':
+          description: Team comparison data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        team_id:
+                          type: string
+                          format: uuid
+                        team_name:
+                          type: string
+                        total_tokens:
+                          type: integer
+                          format: int64
+                        estimated_cost:
+                          type: number
+
+  /dashboard/top-consumers:
+    get:
+      tags: [Dashboard]
+      summary: Top consumers widget
+      operationId: getDashboardTopConsumers
+      parameters:
+        - $ref: './components/parameters.yaml#/DateFrom'
+        - $ref: './components/parameters.yaml#/DateTo'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+            maximum: 50
+        - name: entity
+          in: query
+          schema:
+            type: string
+            enum: [teams, users]
+      responses:
+        '200':
+          description: Ranked top consumers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  teams:
+                    type: array
+                    items:
+                      $ref: './components/schemas.yaml#/TopConsumerItem'
+                  users:
+                    type: array
+                    items:
+                      $ref: './components/schemas.yaml#/TopConsumerItem'
+
+  /dashboard/alerts:
+    get:
+      tags: [Dashboard]
+      summary: Active alerts widget
+      operationId: getDashboardAlerts
+      parameters:
+        - $ref: './components/parameters.yaml#/TeamId'
+      responses:
+        '200':
+          description: Active threshold breaches
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: './components/schemas.yaml#/ActiveAlertSummary'
+
+  /dashboard/trends:
+    get:
+      tags: [Dashboard]
+      summary: Trend analysis widget
+      operationId: getDashboardTrends
+      parameters:
+        - $ref: './components/parameters.yaml#/DateFrom'
+        - $ref: './components/parameters.yaml#/DateTo'
+        - name: granularity
+          in: query
+          required: true
+          schema:
+            $ref: './components/schemas.yaml#/TrendGranularity'
+        - $ref: './components/parameters.yaml#/TeamId'
+        - $ref: './components/parameters.yaml#/ToolId'
+      responses:
+        '200':
+          description: Usage trend time series
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  granularity:
+                    $ref: './components/schemas.yaml#/TrendGranularity'
+                  data:
+                    type: array
+                    items:
+                      $ref: './components/schemas.yaml#/TrendPoint'
+
+  /dashboard/my-usage:
+    get:
+      tags: [Dashboard]
+      summary: Personal usage widget
+      description: Team members see own data; admins may pass `user_id` when authorized.
+      operationId: getDashboardMyUsage
+      parameters:
+        - $ref: './components/parameters.yaml#/DateFrom'
+        - $ref: './components/parameters.yaml#/DateTo'
+        - $ref: './components/parameters.yaml#/UserId'
+      responses:
+        '200':
+          description: Personal usage summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_tokens:
+                    type: integer
+                    format: int64
+                  estimated_cost:
+                    type: number
+                  by_tool:
+                    type: array
+                    items:
+                      $ref: './components/schemas.yaml#/UsageByToolItem'
+                  team_average_tokens:
+                    type: integer
+                    format: int64
+                  last_updated_at:
+                    type: string
+                    format: date-time
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+
+  /reports/generate:
+    post:
+      tags: [Reports]
+      summary: Generate report
+      description: |
+        Sync when `async: false` and result within 10s (NFR-PER-002).
+        Returns 202 with `job_id` when async.
+
+        **Roles:** Role-scoped read per report type.
+      operationId: generateReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/ReportGenerateRequest'
+            examples:
+              default:
+                $ref: './components/examples.yaml#/ReportGenerateExample'
+      responses:
+        '200':
+          description: Sync report — JSON body or file download
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Report data when format is json
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '202':
+          description: Async report queued
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/ReportJob'
+              examples:
+                default:
+                  $ref: './components/examples.yaml#/ReportJobExample'
+        '400':
+          $ref: './components/responses.yaml#/BadRequest'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+
+  /reports/jobs/{jobId}:
+    get:
+      tags: [Reports]
+      summary: Get report job status
+      operationId: getReportJob
+      parameters:
+        - $ref: './components/parameters.yaml#/ReportJobId'
+      responses:
+        '200':
+          description: Job status and download URL when completed
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/ReportJob'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+
+  /reports/jobs/{jobId}/download:
+    get:
+      tags: [Reports]
+      summary: Download report artifact
+      description: Redirects or returns presigned S3 URL (15 min expiry).
+      operationId: downloadReportJob
+      parameters:
+        - $ref: './components/parameters.yaml#/ReportJobId'
+      responses:
+        '302':
+          description: Redirect to presigned URL
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+        '409':
+          description: Job not completed
+          content:
+            application/problem+json:
+              schema:
+                $ref: './components/schemas.yaml#/ProblemDetails'
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications
+      operationId: listNotifications
+      parameters:
+        - $ref: './components/parameters.yaml#/Limit'
+        - $ref: './components/parameters.yaml#/Cursor'
+        - name: unread_only
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Notification list with unread count
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/NotificationListResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      - id: bb0e8400-e29b-41d4-a716-446655440050
+                        alert_type: threshold_breach
+                        severity: critical
+                        tool_name: ChatGPT Enterprise
+                        team_name: Engineering
+                        threshold_value: 5000.00
+                        current_value: 5234.12
+                        read: false
+                        deep_link: /dashboard/alerts/bb0e8400-e29b-41d4-a716-446655440050
+                        created_at: '2026-06-10T11:00:00Z'
+                    unread_count: 3
+                    meta:
+                      limit: 20
+                      has_more: false
+                      next_cursor: null
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+
+  /notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: Get unread notification count
+      operationId: getUnreadNotificationCount
+      responses:
+        '200':
+          description: Unread count
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [unread_count]
+                properties:
+                  unread_count:
+                    type: integer
+
+  /notifications/{notificationId}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark notification as read
+      operationId: markNotificationRead
+      parameters:
+        - $ref: './components/parameters.yaml#/NotificationId'
+      responses:
+        '200':
+          description: Notification updated
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/Notification'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+
+  /audit-logs:
+    get:
+      tags: [Audit]
+      summary: Query audit logs
+      description: '**Roles:** `super_admin`, `auditor`. Append-only log (NFR-AUD-001).'
+      operationId: listAuditLogs
+      parameters:
+        - $ref: './components/parameters.yaml#/DateFrom'
+        - $ref: './components/parameters.yaml#/DateTo'
+        - name: actor_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+        - $ref: './components/parameters.yaml#/Limit'
+        - $ref: './components/parameters.yaml#/Cursor'
+      responses:
+        '200':
+          description: Audit log entries
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/AuditLogListResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      - id: cc0e8400-e29b-41d4-a716-446655440060
+                        actor_id: 550e8400-e29b-41d4-a716-446655440001
+                        actor_email: admin@acme.example
+                        action: credential.rotate
+                        resource_type: credential
+                        resource_id: dd0e8400-e29b-41d4-a716-446655440070
+                        outcome: success
+                        source_ip: 203.0.113.10
+                        correlation_id: f47ac10b-58cc-4372-a567-0e02b2c3d479
+                        created_at: '2026-06-10T09:30:00Z'
+                    meta:
+                      limit: 20
+                      has_more: false
+                      next_cursor: null
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+
+  /audit-logs/export:
+    post:
+      tags: [Audit]
+      summary: Export audit logs to CSV
+      description: '**Roles:** `super_admin`, `auditor`.'
+      operationId: exportAuditLogs
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, to]
+              properties:
+                from:
+                  type: string
+                  format: date-time
+                to:
+                  type: string
+                  format: date-time
+                actor_id:
+                  type: string
+                  format: uuid
+                action:
+                  type: string
+      responses:
+        '200':
+          description: CSV export
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT from POST /auth/login. Required on all endpoints except /auth/login, /auth/refresh, /health.

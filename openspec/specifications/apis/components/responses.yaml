@@ -1,0 +1,105 @@
+BadRequest:
+  description: Invalid request syntax or validation failure
+  content:
+    application/problem+json:
+      schema:
+        $ref: './schemas.yaml#/ProblemDetails'
+      example:
+        type: https://api.ai-tool-tracker.example/problems/validation-error
+        title: Validation Error
+        status: 400
+        detail: One or more fields failed validation.
+        errors:
+          - field: name
+            message: Tool name is required and must be unique within the organization.
+
+Unauthorized:
+  description: Missing or invalid JWT
+  content:
+    application/problem+json:
+      schema:
+        $ref: './schemas.yaml#/ProblemDetails'
+      example:
+        type: https://api.ai-tool-tracker.example/problems/unauthorized
+        title: Unauthorized
+        status: 401
+        detail: Access token is missing, expired, or invalid.
+
+Forbidden:
+  description: Authenticated but insufficient RBAC permissions
+  content:
+    application/problem+json:
+      schema:
+        $ref: './schemas.yaml#/ProblemDetails'
+      example:
+        type: https://api.ai-tool-tracker.example/problems/forbidden
+        title: Forbidden
+        status: 403
+        detail: Role team_member is not permitted to create AI tools.
+
+NotFound:
+  description: Resource not found or not visible in RBAC scope
+  content:
+    application/problem+json:
+      schema:
+        $ref: './schemas.yaml#/ProblemDetails'
+      example:
+        type: https://api.ai-tool-tracker.example/problems/not-found
+        title: Not Found
+        status: 404
+        detail: Tool with id 550e8400-e29b-41d4-a716-446655440000 was not found.
+
+Conflict:
+  description: Resource conflict (duplicate name, idempotency replay with different body)
+  content:
+    application/problem+json:
+      schema:
+        $ref: './schemas.yaml#/ProblemDetails'
+      example:
+        type: https://api.ai-tool-tracker.example/problems/conflict
+        title: Conflict
+        status: 409
+        detail: A tool with name ChatGPT Enterprise already exists in this organization.
+
+PayloadTooLarge:
+  description: Upload exceeds 50 MB limit
+  content:
+    application/problem+json:
+      schema:
+        $ref: './schemas.yaml#/ProblemDetails'
+      example:
+        type: https://api.ai-tool-tracker.example/problems/payload-too-large
+        title: Payload Too Large
+        status: 413
+        detail: Maximum upload size is 52428800 bytes (50 MB).
+
+UnprocessableEntity:
+  description: Semantically invalid request (Pydantic 422 equivalent)
+  content:
+    application/problem+json:
+      schema:
+        $ref: './schemas.yaml#/ProblemDetails'
+      example:
+        type: https://api.ai-tool-tracker.example/problems/unprocessable-entity
+        title: Unprocessable Entity
+        status: 422
+        detail: package_allowance must be non-negative when pricing model is package.
+
+InternalError:
+  description: Unexpected server error
+  content:
+    application/problem+json:
+      schema:
+        $ref: './schemas.yaml#/ProblemDetails'
+      example:
+        type: https://api.ai-tool-tracker.example/problems/internal-error
+        title: Internal Server Error
+        status: 500
+        detail: An unexpected error occurred. Reference correlation ID in support requests.
+
+Accepted:
+  description: Request accepted for asynchronous processing
+  content:
+    application/json:
+      schema:
+        $ref: './schemas.yaml#/AsyncJobReference'

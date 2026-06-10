@@ -1,0 +1,21 @@
+securitySchemes:
+  bearerAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: JWT
+    description: |
+      JWT access token issued by `POST /auth/login` or `POST /auth/refresh`.
+      Include as `Authorization: Bearer <token>`.
+      Token TTL default 15–60 minutes (ADR-005).
+
+roles:
+  super_admin:
+    description: Full platform administration and visibility
+  team_admin:
+    description: Manage administered teams, uploads, team thresholds
+  finance_viewer:
+    description: Read-only cost and usage reports
+  team_member:
+    description: Personal usage and team context (limited)
+  auditor:
+    description: Read-only org visibility, audit logs, exports

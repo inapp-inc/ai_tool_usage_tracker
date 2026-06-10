@@ -1,0 +1,23 @@
+# Local environment — never commit secrets (NFR-SEC-008)
+.env
+
+# Local Docker data (optional bind mounts)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node (frontend, TASK-INF-006+)
+node_modules/
+dist/
+
+# IDE
+.idea/
+.vscode/
