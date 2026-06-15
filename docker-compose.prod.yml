@@ -1,0 +1,19 @@
+# Production overrides — single public port (4501) via nginx frontend gateway.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Public URLs (when TLS terminates at foundry.inapp.com):
+#   App:  https://foundry.inapp.com/aitool/
+#   API:  https://foundry.inapp.com/aitool/api/v1/
+
+services:
+  api:
+    ports: []
+    environment:
+      ENVIRONMENT: production
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://foundry.inapp.com}
+
+  frontend:
+    ports:
+      - "${APP_PORT:-4501}:80"

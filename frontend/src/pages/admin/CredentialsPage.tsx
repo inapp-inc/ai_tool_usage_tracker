@@ -47,6 +47,7 @@ import { StatusBadge } from "@/components/data-display/StatusBadge";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
+import { LIVE_DATA_POLL_MS } from "@/config/apiPolling";
 import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { formatDate } from "@/utils/formatters";
@@ -54,7 +55,7 @@ import { formatDate } from "@/utils/formatters";
 const createSchema = z.object({
   label: z.string().min(1, "Label is required").max(100),
   description: z.string().max(200).default(""),
-  toolId: z.string().min(1, "Select a tool"),
+  toolId: z.string().min(1, "Select a team"),
   teamId: z.string().min(1, "Select a team"),
   environment: z.enum(["production", "sandbox"]),
   apiKey: z.string().min(1, "API key is required"),
@@ -190,16 +191,19 @@ export function CredentialsPage() {
   const credentialsQuery = useQuery({
     queryKey: ["credentials"],
     queryFn: fetchCredentials,
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const teamsQuery = useQuery({
     queryKey: ["teams"],
     queryFn: fetchTeams,
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const toolOptionsQuery = useQuery({
     queryKey: ["tool-options"],
     queryFn: fetchToolOptions,
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const isEditMode = slideOver.credential !== null;
@@ -377,13 +381,13 @@ export function CredentialsPage() {
       },
       {
         key: "toolName",
-        header: "Tool",
+        header: "Team",
         sortable: true,
         render: (row) => <Typography variant="body2">{row.toolName}</Typography>,
       },
       {
         key: "teamName",
-        header: "Team",
+        header: "Group",
         sortable: true,
         render: (row) => <Typography variant="body2">{row.teamName}</Typography>,
       },
@@ -553,7 +557,7 @@ export function CredentialsPage() {
           rowKey={(row) => row.id}
           loading={credentialsQuery.isPending}
           emptyTitle="No credentials yet"
-          emptyDescription="Add an AI provider key scoped to a team and tool."
+          emptyDescription="Add a provider key scoped to a group and team."
         />
 
         <SlideOver
@@ -723,11 +727,11 @@ export function CredentialsPage() {
                   control={control}
                   render={({ field }) => (
                     <FormControl fullWidth size="small" error={Boolean(errors.toolId)}>
-                      <InputLabel id="credential-tool-label">AI Tool</InputLabel>
+                      <InputLabel id="credential-tool-label">Team</InputLabel>
                       <Select
                         {...field}
                         labelId="credential-tool-label"
-                        label="AI Tool"
+                        label="Team"
                         disabled={toolOptionsQuery.isPending}
                       >
                         {toolOptions.map((tool) => (
@@ -748,11 +752,11 @@ export function CredentialsPage() {
                   control={control}
                   render={({ field }) => (
                     <FormControl fullWidth size="small" error={Boolean(errors.teamId)}>
-                      <InputLabel id="credential-team-label">Team</InputLabel>
+                      <InputLabel id="credential-team-label">Group</InputLabel>
                       <Select
                         {...field}
                         labelId="credential-team-label"
-                        label="Team"
+                        label="Group"
                         disabled={teamsQuery.isPending}
                       >
                         {teams.map((team) => (

@@ -29,7 +29,8 @@ Centralized platform for monitoring AI tool consumption, costs, and adoption acr
 | `api` | `backend/Dockerfile` | FastAPI at `/api/v1` |
 | `worker` | `backend/Dockerfile` | Celery worker (5 queues) |
 | `beat` | `backend/Dockerfile` | Celery Beat |
-| `frontend` | `node:20-alpine` | Vite dev server (profile `dev` only) |
+| `frontend` | `frontend/Dockerfile` | nginx SPA + API proxy at `/aitool/` on port **4501** |
+| `frontend-dev` | `node:20-alpine` | Vite dev server (profile `dev` only) |
 
 ### Quick start
 
@@ -68,20 +69,29 @@ Centralized platform for monitoring AI tool consumption, costs, and adoption acr
 
 ### Frontend development
 
-**Local (recommended):**
+**Local (recommended for UI work):**
 
 ```bash
 cd frontend
 npm ci
+cp .env.example .env.local   # VITE_API_BASE_URL=http://localhost:8000/api/v1
 npm run dev
 ```
 
-Open http://localhost:5173 — API requests proxy to `http://localhost:8000/api/v1`.
+Open http://localhost:5173 — API requests go to `http://localhost:8000/api/v1`.
 
-**Docker (optional):**
+**Docker production-like stack (port 4501):**
 
 ```bash
-docker compose --profile dev up --build frontend api postgres redis migrate
+docker compose up --build
+```
+
+Open http://localhost:4501/aitool/ — nginx serves the SPA and proxies `/aitool/api/v1` to the API container.
+
+**Docker Vite hot reload (optional):**
+
+```bash
+docker compose --profile dev up --build frontend-dev api postgres redis migrate
 ```
 
 ### Apply order for OpenSpec changes
@@ -124,11 +134,89 @@ npm ci
 npm test
 ```
 
-Integration tests (Postgres required):
+Integration tests (Postgres + Redis required):
 
 ```bash
 export DATABASE_URL=postgresql+asyncpg://aitracker:PASSWORD@localhost:5432/aitracker
+export REDIS_URL=redis://localhost:6379/0
 pytest tests -v -m integration
+```
+
+### Authentication (TASK-PLT-001)
+
+After migrate and seed:
+
+```bash
+docker compose run --rm migrate
+docker compose run --rm api python -m app.scripts.seed_dev_admin
+
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@acme.example","password":"SecurePass123!"}'
+
+curl http://localhost:8000/api/v1/auth/me \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Default dev credentials: `admin@acme.example` / `SecurePass123!` (see `.env.example`).
+
+### Tools and credentials (TASK-ADM-001 / TASK-ADM-003)
+
+Protected with JWT. Tool writes and all credential operations require `super_admin`.
+
+```bash
+# After login, use Bearer token:
+curl http://localhost:8000/api/v1/tools -H "Authorization: Bearer <access_token>"
+
+curl -X POST http://localhost:8000/api/v1/tools \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Production OpenAI","vendor":"OpenAI","pricing_model":"flat_token","token_price":0.005}'
+
+curl -X POST http://localhost:8000/api/v1/credentials \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"tool_id":"<uuid>","environment":"production","secret_value":"sk-live-..."}'
+```
+
+Set `CREDENTIAL_ENCRYPTION_KEY` in `.env` for AES-256 credential storage.
+
+## Production deployment (foundry.inapp.com)
+
+Single public port **4501** — nginx in the `frontend` container serves the app and proxies the API:
+
+| URL | Purpose |
+|-----|---------|
+| `https://foundry.inapp.com/aitool/` | React SPA |
+| `https://foundry.inapp.com/aitool/api/v1/` | FastAPI backend |
+
+On the server:
+
+```bash
+cp .env.example .env
+# Set POSTGRES_PASSWORD, JWT secrets, CREDENTIAL_ENCRYPTION_KEY, CORS_ORIGINS, etc.
+
+docker compose run --rm migrate
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Ensure `.env` includes:
+
+```env
+APP_PORT=4501
+VITE_API_BASE_URL=/aitool/api/v1
+VITE_BASE_PATH=/aitool
+CORS_ORIGINS=https://foundry.inapp.com
+ENVIRONMENT=production
+```
+
+Point your external reverse proxy (TLS at `foundry.inapp.com`) to host port **4501**.
+
+Verify:
+
+```bash
+curl http://localhost:4501/aitool/api/v1/health
+curl -I http://localhost:4501/aitool/
 ```
 
 ## License

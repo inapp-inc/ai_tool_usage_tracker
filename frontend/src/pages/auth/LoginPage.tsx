@@ -19,6 +19,7 @@ import { Navigate, useNavigate } from "react-router-dom";
 import { z } from "zod";
 
 import { login } from "@/api/auth";
+import { ApiClientError } from "@/api/client";
 import { useAuth } from "@/auth/AuthContext";
 import { useAuthStore } from "@/stores/authStore";
 import { tokens } from "@/theme/palette";
@@ -65,9 +66,11 @@ export function LoginPage() {
   };
 
   const errorMessage =
-    mutation.error instanceof Error
-      ? mutation.error.message
-      : "Sign in failed";
+    mutation.error instanceof ApiClientError
+      ? mutation.error.apiError.detail
+      : mutation.error instanceof Error
+        ? mutation.error.message
+        : "Sign in failed";
 
   return (
     <Box

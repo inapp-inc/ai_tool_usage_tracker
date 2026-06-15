@@ -1,14 +1,8 @@
-const MOCK_LATENCY_MS = 400;
-
-function delay<T>(value: T, ms = MOCK_LATENCY_MS): Promise<T> {
-  return new Promise((resolve) => {
-    setTimeout(() => resolve(value), ms);
-  });
-}
+import { apiRequest } from "./client";
 
 export type AlertSeverity = "critical" | "warning" | "info";
 export type ThresholdType = "token_count" | "cost_usd" | "budget_percent";
-export type ThresholdScope = "organization" | "team" | "user";
+export type ThresholdScope = "organization" | "team" | "tool" | "user";
 export type AlertChannel = "email" | "webhook" | "both";
 
 export interface AlertRule {
@@ -48,6 +42,7 @@ export interface CreateAlertRuleRequest {
   thresholdValue: number;
   scope: ThresholdScope;
   teamId: string | null;
+  teamName: string | null;
   channel: AlertChannel;
   webhookUrl: string | null;
   emailRecipients: string[];
@@ -57,323 +52,137 @@ export type UpdateAlertRuleRequest = Partial<CreateAlertRuleRequest> & {
   status?: "active" | "inactive";
 };
 
-const TEAM_NAMES: Record<string, string> = {
-  team_1: "Engineering",
-  team_2: "Data Science",
-  team_3: "Design",
-  team_4: "Marketing",
-  team_5: "Support",
-  team_6: "Operations",
-};
-
-function resolveTeamName(teamId: string | null): string | null {
-  if (!teamId) {
-    return null;
-  }
-  return TEAM_NAMES[teamId] ?? null;
+interface BackendAlertRule {
+  id: string;
+  name: string;
+  severity: AlertSeverity;
+  threshold_type: ThresholdType;
+  threshold_value: number;
+  scope: ThresholdScope;
+  team_id: string | null;
+  team_name: string | null;
+  channel: AlertChannel;
+  webhook_url: string | null;
+  email_recipients: string[];
+  status: "active" | "inactive";
+  trigger_count: number;
+  last_triggered_at: string | null;
+  created_at: string;
 }
 
-let mockAlertRules: AlertRule[] = [
-  {
-    id: "alert_1",
-    name: "Org Token Spike",
-    severity: "critical",
-    thresholdType: "token_count",
-    thresholdValue: 10_000_000,
-    scope: "organization",
-    teamId: null,
-    teamName: null,
-    channel: "email",
-    webhookUrl: null,
-    emailRecipients: ["ops@acme.com", "admin@acme.com"],
-    status: "active",
-    triggerCount: 5,
-    lastTriggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(),
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 90).toISOString(),
-  },
-  {
-    id: "alert_2",
-    name: "Engineering Budget Threshold",
-    severity: "warning",
-    thresholdType: "budget_percent",
-    thresholdValue: 80,
-    scope: "team",
-    teamId: "team_1",
-    teamName: "Engineering",
-    channel: "both",
-    webhookUrl: "https://hooks.acme.com/alerts/engineering",
-    emailRecipients: ["eng-leads@acme.com"],
-    status: "active",
-    triggerCount: 12,
-    lastTriggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 60).toISOString(),
-  },
-  {
-    id: "alert_3",
-    name: "Data Science Cost Limit",
-    severity: "info",
-    thresholdType: "cost_usd",
-    thresholdValue: 200,
-    scope: "team",
-    teamId: "team_2",
-    teamName: "Data Science",
-    channel: "webhook",
-    webhookUrl: "https://hooks.acme.com/alerts/data-science",
-    emailRecipients: [],
-    status: "active",
-    triggerCount: 3,
-    lastTriggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(),
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 45).toISOString(),
-  },
-  {
-    id: "alert_4",
-    name: "Design User Overage",
-    severity: "warning",
-    thresholdType: "token_count",
-    thresholdValue: 500_000,
-    scope: "user",
-    teamId: "team_3",
-    teamName: "Design",
-    channel: "email",
-    webhookUrl: null,
-    emailRecipients: ["design-admin@acme.com"],
-    status: "inactive",
-    triggerCount: 0,
-    lastTriggeredAt: null,
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30).toISOString(),
-  },
-  {
-    id: "alert_5",
-    name: "Monthly Org Cost Cap",
-    severity: "critical",
-    thresholdType: "cost_usd",
-    thresholdValue: 5000,
-    scope: "organization",
-    teamId: null,
-    teamName: null,
-    channel: "both",
-    webhookUrl: "https://hooks.acme.com/alerts/org-cost",
-    emailRecipients: ["finance@acme.com", "cfo@acme.com"],
-    status: "active",
-    triggerCount: 2,
-    lastTriggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString(),
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString(),
-  },
-  {
-    id: "alert_6",
-    name: "Marketing Budget Alert",
-    severity: "warning",
-    thresholdType: "budget_percent",
-    thresholdValue: 90,
-    scope: "team",
-    teamId: "team_4",
-    teamName: "Marketing",
-    channel: "email",
-    webhookUrl: null,
-    emailRecipients: ["marketing-leads@acme.com"],
-    status: "active",
-    triggerCount: 1,
-    lastTriggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 14).toISOString(),
-  },
-];
+interface BackendAlertEvent {
+  id: string;
+  rule_id: string;
+  rule_name: string;
+  severity: AlertSeverity;
+  message: string;
+  team_name: string | null;
+  triggered_at: string;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+}
 
-let mockAlertHistory: AlertEvent[] = [
-  {
-    id: "event_1",
-    ruleId: "alert_2",
-    ruleName: "Engineering Budget Threshold",
-    severity: "warning",
-    message: "Engineering team exceeded 80% of token budget",
-    teamName: "Engineering",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-    acknowledgedAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-    acknowledgedBy: "Alan Chen",
-  },
-  {
-    id: "event_2",
-    ruleId: "alert_1",
-    ruleName: "Org Token Spike",
-    severity: "critical",
-    message: "Organization token usage exceeded 10M tokens in 24 hours",
-    teamName: null,
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(),
-    acknowledgedAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
-    acknowledgedBy: "Jordan Lee",
-  },
-  {
-    id: "event_3",
-    ruleId: "alert_3",
-    ruleName: "Data Science Cost Limit",
-    severity: "info",
-    message: "Data Science team cost reached $200 this month",
-    teamName: "Data Science",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(),
-    acknowledgedAt: null,
-    acknowledgedBy: null,
-  },
-  {
-    id: "event_4",
-    ruleId: "alert_5",
-    ruleName: "Monthly Org Cost Cap",
-    severity: "critical",
-    message: "Organization monthly cost exceeded $5,000",
-    teamName: null,
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString(),
-    acknowledgedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 6).toISOString(),
-    acknowledgedBy: "Morgan Patel",
-  },
-  {
-    id: "event_5",
-    ruleId: "alert_6",
-    ruleName: "Marketing Budget Alert",
-    severity: "warning",
-    message: "Marketing team exceeded 90% of monthly budget",
-    teamName: "Marketing",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-    acknowledgedAt: null,
-    acknowledgedBy: null,
-  },
-  {
-    id: "event_6",
-    ruleId: "alert_2",
-    ruleName: "Engineering Budget Threshold",
-    severity: "warning",
-    message: "Engineering team exceeded 80% of token budget",
-    teamName: "Engineering",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
-    acknowledgedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 4).toISOString(),
-    acknowledgedBy: "Sam Rivera",
-  },
-  {
-    id: "event_7",
-    ruleId: "alert_1",
-    ruleName: "Org Token Spike",
-    severity: "critical",
-    message: "Organization token usage exceeded 10M tokens in 24 hours",
-    teamName: null,
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 10).toISOString(),
-    acknowledgedAt: null,
-    acknowledgedBy: null,
-  },
-  {
-    id: "event_8",
-    ruleId: "alert_3",
-    ruleName: "Data Science Cost Limit",
-    severity: "info",
-    message: "Data Science team cost reached $200 this month",
-    teamName: "Data Science",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 12).toISOString(),
-    acknowledgedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 11).toISOString(),
-    acknowledgedBy: "Taylor Kim",
-  },
-  {
-    id: "event_9",
-    ruleId: "alert_5",
-    ruleName: "Monthly Org Cost Cap",
-    severity: "critical",
-    message: "Organization monthly cost exceeded $5,000",
-    teamName: null,
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 20).toISOString(),
-    acknowledgedAt: null,
-    acknowledgedBy: null,
-  },
-  {
-    id: "event_10",
-    ruleId: "alert_2",
-    ruleName: "Engineering Budget Threshold",
-    severity: "warning",
-    message: "Engineering team exceeded 80% of token budget",
-    teamName: "Engineering",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 14).toISOString(),
-    acknowledgedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 13).toISOString(),
-    acknowledgedBy: "Alan Chen",
-  },
-];
+function mapRule(row: BackendAlertRule): AlertRule {
+  return {
+    id: row.id,
+    name: row.name,
+    severity: row.severity,
+    thresholdType: row.threshold_type,
+    thresholdValue: row.threshold_value,
+    scope: row.scope,
+    teamId: row.team_id,
+    teamName: row.team_name,
+    channel: row.channel,
+    webhookUrl: row.webhook_url,
+    emailRecipients: row.email_recipients ?? [],
+    status: row.status,
+    triggerCount: row.trigger_count ?? 0,
+    lastTriggeredAt: row.last_triggered_at,
+    createdAt: row.created_at,
+  };
+}
+
+function mapEvent(row: BackendAlertEvent): AlertEvent {
+  return {
+    id: row.id,
+    ruleId: row.rule_id,
+    ruleName: row.rule_name,
+    severity: row.severity,
+    message: row.message,
+    teamName: row.team_name,
+    triggeredAt: row.triggered_at,
+    acknowledgedAt: row.acknowledged_at,
+    acknowledgedBy: row.acknowledged_by,
+  };
+}
 
 export async function fetchAlertRules(): Promise<AlertRule[]> {
-  return delay([...mockAlertRules]);
+  const rows = await apiRequest<BackendAlertRule[]>("/alerts/rules");
+  return rows.map(mapRule);
 }
 
 export async function createAlertRule(
   body: CreateAlertRuleRequest,
 ): Promise<AlertRule> {
-  const rule: AlertRule = {
-    id: `alert_${Date.now()}`,
-    name: body.name,
-    severity: body.severity,
-    thresholdType: body.thresholdType,
-    thresholdValue: body.thresholdValue,
-    scope: body.scope,
-    teamId: body.teamId,
-    teamName: resolveTeamName(body.teamId),
-    channel: body.channel,
-    webhookUrl: body.webhookUrl,
-    emailRecipients: body.emailRecipients,
-    status: "active",
-    triggerCount: 0,
-    lastTriggeredAt: null,
-    createdAt: new Date().toISOString(),
-  };
-
-  mockAlertRules = [rule, ...mockAlertRules];
-  return delay(rule);
+  const created = await apiRequest<BackendAlertRule>("/alerts/rules", {
+    method: "POST",
+    body: JSON.stringify({
+      name: body.name,
+      severity: body.severity,
+      threshold_type: body.thresholdType,
+      threshold_value: body.thresholdValue,
+      scope: body.scope,
+      team_id: body.teamId,
+      team_name: body.teamName,
+      channel: body.channel,
+      webhook_url: body.webhookUrl,
+      email_recipients: body.emailRecipients,
+    }),
+  });
+  return mapRule(created);
 }
 
 export async function updateAlertRule(
   id: string,
   body: UpdateAlertRuleRequest,
 ): Promise<AlertRule> {
-  const index = mockAlertRules.findIndex((rule) => rule.id === id);
-  if (index === -1) {
-    throw new Error("Alert rule not found");
+  const payload: Record<string, unknown> = {};
+  if (body.name !== undefined) payload.name = body.name;
+  if (body.severity !== undefined) payload.severity = body.severity;
+  if (body.thresholdType !== undefined) payload.threshold_type = body.thresholdType;
+  if (body.thresholdValue !== undefined) payload.threshold_value = body.thresholdValue;
+  if (body.scope !== undefined) payload.scope = body.scope;
+  if (body.teamId !== undefined) payload.team_id = body.teamId;
+  if (body.teamName !== undefined) payload.team_name = body.teamName;
+  if (body.channel !== undefined) payload.channel = body.channel;
+  if (body.webhookUrl !== undefined) payload.webhook_url = body.webhookUrl;
+  if (body.emailRecipients !== undefined) {
+    payload.email_recipients = body.emailRecipients;
   }
+  if (body.status !== undefined) payload.status = body.status;
 
-  const existing = mockAlertRules[index];
-  const teamId =
-    body.teamId !== undefined ? body.teamId : existing.teamId;
-  const updated: AlertRule = {
-    ...existing,
-    ...body,
-    teamId,
-    teamName: resolveTeamName(teamId),
-  };
-
-  mockAlertRules = [
-    ...mockAlertRules.slice(0, index),
-    updated,
-    ...mockAlertRules.slice(index + 1),
-  ];
-  return delay(updated);
+  const updated = await apiRequest<BackendAlertRule>(`/alerts/rules/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return mapRule(updated);
 }
 
 export async function deleteAlertRule(id: string): Promise<void> {
-  mockAlertRules = mockAlertRules.filter((rule) => rule.id !== id);
-  await delay(undefined);
+  await apiRequest<void>(`/alerts/rules/${id}`, { method: "DELETE" });
 }
 
 export async function fetchAlertHistory(): Promise<AlertEvent[]> {
-  return delay([...mockAlertHistory]);
+  const rows = await apiRequest<BackendAlertEvent[]>("/alerts/events");
+  return rows.map(mapEvent);
 }
 
 export async function acknowledgeAlert(id: string): Promise<AlertEvent> {
-  const index = mockAlertHistory.findIndex((event) => event.id === id);
-  if (index === -1) {
-    throw new Error("Alert event not found");
-  }
-
-  const updated: AlertEvent = {
-    ...mockAlertHistory[index],
-    acknowledgedAt: new Date().toISOString(),
-    acknowledgedBy: "Alan Chen",
-  };
-
-  mockAlertHistory = [
-    ...mockAlertHistory.slice(0, index),
-    updated,
-    ...mockAlertHistory.slice(index + 1),
-  ];
-  return delay(updated);
+  const updated = await apiRequest<BackendAlertEvent>(
+    `/alerts/events/${id}/acknowledge`,
+    { method: "POST" },
+  );
+  return mapEvent(updated);
 }
 
 export const alertsApi = {

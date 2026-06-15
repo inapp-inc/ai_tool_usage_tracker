@@ -26,7 +26,7 @@ export class ApiClientError extends Error {
   }
 }
 
-async function parseApiError(response: Response): Promise<ApiError> {
+export async function parseApiError(response: Response): Promise<ApiError> {
   const contentType = response.headers.get("Content-Type") ?? "";
   if (contentType.includes("application/json")) {
     const body: unknown = await response.json();
@@ -69,7 +69,11 @@ export async function apiFetch(
   if (accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
-  if (!headers.has("Content-Type") && init.body) {
+  if (
+    !headers.has("Content-Type") &&
+    init.body &&
+    !(init.body instanceof FormData)
+  ) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -129,4 +133,130 @@ export async function apiRequest<T>(
   return payload as T;
 }
 
+export async function apiFormRequest<T>(
+  path: string,
+  formData: FormData,
+  init: ApiRequestInit = {},
+): Promise<T> {
+  const { skipAuthRetry = false, ...fetchInit } = init;
+  let response = await apiFetch(path, {
+    ...fetchInit,
+    method: fetchInit.method ?? "POST",
+    body: formData,
+  });
+
+  if (response.status === 401 && !skipAuthRetry) {
+    try {
+      const { refreshToken } = await import("./auth");
+      await refreshToken();
+      return apiFormRequest<T>(path, formData, { ...init, skipAuthRetry: true });
+    } catch {
+      const { useAuthStore } = await import("@/stores/authStore");
+      useAuthStore.getState().clearAuth();
+      window.location.assign("/login");
+      throw new ApiClientError({
+        type: "about:blank",
+        title: "Unauthorized",
+        status: 401,
+        detail: "Session expired",
+      });
+    }
+  }
+
+  if (!response.ok) {
+    throw new ApiClientError(await parseApiError(response));
+  }
+
+  const payload: unknown = await response.json();
+  if (payload && typeof payload === "object" && "data" in payload) {
+    return (payload as ApiResponse<T>).data;
+  }
+
+  return payload as T;
+}
+
 export { API_BASE };
+
+export interface ListPageMeta {
+  limit?: number;
+  next_cursor?: string | null;
+  has_more?: boolean;
+}
+
+export interface ApiListResponse<T> {
+  data: T[];
+  meta?: ListPageMeta;
+}
+
+function buildQuery(
+  params?: Record<string, string | number | boolean | undefined | null>,
+): string {
+  if (!params) return "";
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    search.set(key, String(value));
+  }
+  const query = search.toString();
+  return query ? `?${query}` : "";
+}
+
+export async function apiListRequest<T>(
+  path: string,
+  params?: Record<string, string | number | boolean | undefined | null>,
+  init: ApiRequestInit = {},
+): Promise<ApiListResponse<T>> {
+  const { skipAuthRetry = false, ...fetchInit } = init;
+  const url = `${path}${buildQuery(params)}`;
+  let response = await apiFetch(url, fetchInit);
+
+  if (response.status === 401 && !skipAuthRetry) {
+    try {
+      const { refreshToken } = await import("./auth");
+      await refreshToken();
+      return apiListRequest<T>(path, params, { ...init, skipAuthRetry: true });
+    } catch {
+      const { useAuthStore } = await import("@/stores/authStore");
+      useAuthStore.getState().clearAuth();
+      window.location.assign("/login");
+      throw new ApiClientError({
+        type: "about:blank",
+        title: "Unauthorized",
+        status: 401,
+        detail: "Session expired",
+      });
+    }
+  }
+
+  if (!response.ok) {
+    throw new ApiClientError(await parseApiError(response));
+  }
+
+  const payload = (await response.json()) as ApiListResponse<T>;
+  return payload;
+}
+
+export async function fetchAllPages<T>(
+  path: string,
+  params?: Record<string, string | number | boolean | undefined | null>,
+  limit = 100,
+): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | undefined;
+
+  for (;;) {
+    const page = await apiListRequest<T>(path, {
+      ...params,
+      limit,
+      cursor,
+    });
+    items.push(...page.data);
+    const next = page.meta?.next_cursor;
+    if (!page.meta?.has_more || !next) {
+      break;
+    }
+    cursor = next;
+  }
+
+  return items;
+}

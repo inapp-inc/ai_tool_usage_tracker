@@ -430,8 +430,8 @@ export function UploadsPage() {
 
             {selectedFile && (
               <Alert severity="info" sx={{ mt: 1 }}>
-                File will be validated before import. Review errors before
-                confirming.
+                After upload you can map CSV columns and preview extracted usage
+                before confirming import.
               </Alert>
             )}
           </DialogContent>

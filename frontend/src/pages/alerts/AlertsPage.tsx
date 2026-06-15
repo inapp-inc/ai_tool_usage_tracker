@@ -44,7 +44,9 @@ import {
   type ThresholdScope,
   type ThresholdType,
 } from "@/api/alerts";
+import { fetchMembers, type Member } from "@/api/members";
 import { fetchTeams, type Team } from "@/api/teams";
+import { fetchToolOptions } from "@/api/usage";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
@@ -55,6 +57,8 @@ import { tokens } from "@/theme/palette";
 import { formatCost, formatRelativeTime, formatTokens } from "@/utils/formatters";
 
 const EMPTY_TEAMS: Team[] = [];
+const EMPTY_MEMBERS: Member[] = [];
+const EMPTY_TOOL_OPTIONS: Array<{ id: string; name: string }> = [];
 
 const SEVERITY_CHIP_COLORS: Record<
   AlertSeverity,
@@ -85,9 +89,26 @@ const THRESHOLD_TYPE_OPTIONS: Array<{ value: ThresholdType; label: string }> = [
 
 const SCOPE_OPTIONS: Array<{ value: ThresholdScope; label: string }> = [
   { value: "organization", label: "Organization" },
-  { value: "team", label: "Team" },
+  { value: "team", label: "Group" },
+  { value: "tool", label: "Team" },
   { value: "user", label: "User" },
 ];
+
+function getScopeTargetMeta(scope: ThresholdScope): {
+  label: string;
+  placeholder: string;
+} {
+  switch (scope) {
+    case "team":
+      return { label: "Group", placeholder: "Select group" };
+    case "tool":
+      return { label: "Team", placeholder: "Select team" };
+    case "user":
+      return { label: "User", placeholder: "Select user" };
+    default:
+      return { label: "Target", placeholder: "" };
+  }
+}
 
 const CHANNEL_OPTIONS: Array<{ value: AlertChannel; label: string }> = [
   { value: "email", label: "Email" },
@@ -101,7 +122,7 @@ const schema = z
     severity: z.enum(["critical", "warning", "info"]),
     thresholdType: z.enum(["token_count", "cost_usd", "budget_percent"]),
     thresholdValue: z.coerce.number().positive("Must be greater than 0"),
-    scope: z.enum(["organization", "team", "user"]),
+    scope: z.enum(["organization", "team", "tool", "user"]),
     teamId: z.string().nullable(),
     channel: z.enum(["email", "webhook", "both"]),
     webhookUrl: z
@@ -110,10 +131,24 @@ const schema = z
     emailRecipients: z.string(),
   })
   .superRefine((data, ctx) => {
-    if (data.scope !== "organization" && !data.teamId) {
+    if (data.scope === "team" && !data.teamId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Group is required",
+        path: ["teamId"],
+      });
+    }
+    if (data.scope === "tool" && !data.teamId) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Team is required",
+        path: ["teamId"],
+      });
+    }
+    if (data.scope === "user" && !data.teamId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "User is required",
         path: ["teamId"],
       });
     }
@@ -243,14 +278,43 @@ function toFormValues(rule: AlertRule | null): FormValues {
   };
 }
 
-function toRequestBody(data: FormValues) {
+function resolveScopeTargetName(
+  scope: ThresholdScope,
+  targetId: string | null,
+  groups: Team[],
+  tools: Array<{ id: string; name: string }>,
+  members: Member[],
+): string | null {
+  if (!targetId) {
+    return null;
+  }
+  switch (scope) {
+    case "team":
+      return groups.find((group) => group.id === targetId)?.name ?? null;
+    case "tool":
+      return tools.find((tool) => tool.id === targetId)?.name ?? null;
+    case "user":
+      return members.find((member) => member.id === targetId)?.name ?? null;
+    default:
+      return null;
+  }
+}
+
+function toRequestBody(
+  data: FormValues,
+  groups: Team[],
+  tools: Array<{ id: string; name: string }>,
+  members: Member[],
+) {
+  const teamId = data.scope === "organization" ? null : data.teamId;
   return {
     name: data.name,
     severity: data.severity,
     thresholdType: data.thresholdType,
     thresholdValue: data.thresholdValue,
     scope: data.scope,
-    teamId: data.scope === "organization" ? null : data.teamId,
+    teamId,
+    teamName: resolveScopeTargetName(data.scope, teamId, groups, tools, members),
     channel: data.channel,
     webhookUrl:
       data.webhookUrl && data.webhookUrl !== "" ? data.webhookUrl : null,
@@ -285,6 +349,16 @@ export function AlertsPage() {
   const teamsQuery = useQuery({
     queryKey: ["teams"],
     queryFn: fetchTeams,
+  });
+
+  const toolOptionsQuery = useQuery({
+    queryKey: ["tool-options"],
+    queryFn: fetchToolOptions,
+  });
+
+  const membersQuery = useQuery({
+    queryKey: ["members"],
+    queryFn: fetchMembers,
   });
 
   const createMutation = useMutation({
@@ -346,6 +420,8 @@ export function AlertsPage() {
   const isEditMode = slideOver.rule !== null;
   const savePending = createMutation.isPending || updateMutation.isPending;
   const teams = teamsQuery.data ?? EMPTY_TEAMS;
+  const toolOptions = toolOptionsQuery.data ?? EMPTY_TOOL_OPTIONS;
+  const members = membersQuery.data ?? EMPTY_MEMBERS;
 
   const {
     register,
@@ -365,6 +441,23 @@ export function AlertsPage() {
   const watchedThresholdType = watch("thresholdType");
   const watchedThresholdValue = watch("thresholdValue");
   const thresholdFieldMeta = getThresholdFieldMeta(watchedThresholdType);
+  const scopeTargetMeta = getScopeTargetMeta(watchedScope);
+
+  const scopeTargetOptions = useMemo(() => {
+    switch (watchedScope) {
+      case "team":
+        return teams.map((team) => ({ id: team.id, label: team.name }));
+      case "tool":
+        return toolOptions.map((tool) => ({ id: tool.id, label: tool.name }));
+      case "user":
+        return members.map((member) => ({
+          id: member.id,
+          label: member.name,
+        }));
+      default:
+        return [];
+    }
+  }, [watchedScope, teams, toolOptions, members]);
 
   const showWebhookField =
     watchedChannel === "webhook" || watchedChannel === "both";
@@ -404,10 +497,12 @@ export function AlertsPage() {
       },
       {
         key: "scope",
-        header: "Scope",
+        header: "Applies to",
         render: (row) => (
           <Typography variant="caption">
-            {row.teamName ?? "Organization"}
+            {row.scope === "organization"
+              ? "Organization"
+              : (row.teamName ?? "—")}
           </Typography>
         ),
       },
@@ -516,7 +611,7 @@ export function AlertsPage() {
       },
       {
         key: "teamName",
-        header: "Team",
+        header: "Group",
         render: (row) => (
           <Typography variant="caption" sx={{ color: tokens.textMuted }}>
             {row.teamName ?? "Organization"}
@@ -566,7 +661,7 @@ export function AlertsPage() {
   );
 
   const onSubmit = (data: FormValues) => {
-    const body = toRequestBody(data);
+    const body = toRequestBody(data, teams, toolOptions, members);
     if (slideOver.rule) {
       updateMutation.mutate({ id: slideOver.rule.id, body });
       return;
@@ -820,7 +915,15 @@ export function AlertsPage() {
                 render={({ field }) => (
                   <FormControl fullWidth size="small">
                     <InputLabel id="alert-scope-label">Scope</InputLabel>
-                    <Select {...field} labelId="alert-scope-label" label="Scope">
+                    <Select
+                      {...field}
+                      labelId="alert-scope-label"
+                      label="Scope"
+                      onChange={(event) => {
+                        field.onChange(event);
+                        setValue("teamId", null);
+                      }}
+                    >
                       {SCOPE_OPTIONS.map((option) => (
                         <MenuItem key={option.value} value={option.value}>
                           {option.label}
@@ -841,7 +944,9 @@ export function AlertsPage() {
                     error={Boolean(errors.teamId)}
                     disabled={teamSelectDisabled}
                   >
-                    <InputLabel id="alert-team-label">Team</InputLabel>
+                    <InputLabel id="alert-target-label">
+                      {scopeTargetMeta.label}
+                    </InputLabel>
                     <Select
                       {...field}
                       value={field.value ?? ""}
@@ -849,15 +954,17 @@ export function AlertsPage() {
                         const value = event.target.value;
                         field.onChange(value === "" ? null : value);
                       }}
-                      labelId="alert-team-label"
-                      label="Team"
+                      labelId="alert-target-label"
+                      label={scopeTargetMeta.label}
                     >
                       <MenuItem value="">
-                        <em>{teamSelectDisabled ? "" : "Select team"}</em>
+                        <em>
+                          {teamSelectDisabled ? "" : scopeTargetMeta.placeholder}
+                        </em>
                       </MenuItem>
-                      {teams.map((team) => (
-                        <MenuItem key={team.id} value={team.id}>
-                          {team.name}
+                      {scopeTargetOptions.map((option) => (
+                        <MenuItem key={option.id} value={option.id}>
+                          {option.label}
                         </MenuItem>
                       ))}
                     </Select>

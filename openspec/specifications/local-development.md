@@ -19,6 +19,8 @@ Docker Compose stack for **AI Tool Usage Tracker** — used for **all environmen
 | `api` | `ai-tracker-api` | `backend/Dockerfile` | FastAPI application |
 | `worker` | `ai-tracker-worker` | `backend/Dockerfile` | Celery worker |
 | `beat` | `ai-tracker-beat` | `backend/Dockerfile` | Celery Beat scheduler |
+| `frontend` | `ai-tracker-frontend` | `frontend/Dockerfile` | nginx — SPA + API reverse proxy (production) |
+| `frontend-dev` | `ai-tracker-frontend-dev` | `node` + Vite (profile) | Hot-reload dev server on port 5173 |
 
 **Compose project name:** `ai-tool-tracker`  
 **Internal network:** `ai-tracker-network` (Compose key: `ai-tracker`)
@@ -85,7 +87,15 @@ Configuration is loaded from `.env` (copy from `.env.example`). Secrets MUST NOT
 |----------|---------|---------|
 | `POSTGRES_PORT` | `5432` | Host port published for Postgres |
 | `REDIS_PORT` | `6379` | Host port published for Redis |
-| `API_PORT` | `8000` | Host port published for API |
+| `API_PORT` | `8000` | Host port published for API (dev; hidden in prod override) |
+| `APP_PORT` | `4501` | Host port published for frontend nginx |
+
+### Frontend environment (build-time)
+
+| Variable | Example (prod) | Purpose |
+|----------|----------------|---------|
+| `VITE_API_BASE_URL` | `/aitool/api/v1` | API base path for SPA client |
+| `VITE_BASE_PATH` | `/aitool` | React Router basename |
 
 ### Forward-looking placeholders (TASK-INF-002+)
 
@@ -162,7 +172,13 @@ docker compose up --build -d  # detached
 
 docker compose exec postgres pg_isready -U aitracker -d aitracker
 curl http://localhost:8000/health
+curl http://localhost:4501/aitool/   # production-style frontend (when frontend service running)
 ```
+
+**Profiles:**
+
+- Default stack includes `frontend` on `${APP_PORT:-4501}` (nginx serving built SPA).
+- `docker compose --profile frontend-dev up frontend-dev` — Vite on port `5173` for local UI development.
 
 See repository [README.md](../../README.md) for full command reference.
 

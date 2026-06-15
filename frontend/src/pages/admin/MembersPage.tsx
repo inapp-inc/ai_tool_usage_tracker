@@ -267,7 +267,7 @@ export function MembersPage() {
       },
       {
         key: "teams",
-        header: "Teams",
+        header: "Groups",
         render: (row) => (
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
             {row.teams.slice(0, 2).map((team) => (
@@ -422,7 +422,7 @@ export function MembersPage() {
               }
               displayEmpty
             >
-              <MenuItem value="">All teams</MenuItem>
+              <MenuItem value="">All groups</MenuItem>
               {teams.map((team) => (
                 <MenuItem key={team.id} value={team.id}>
                   {team.name}
@@ -531,12 +531,12 @@ export function MembersPage() {
               control={control}
               render={({ field }) => (
                 <FormControl fullWidth size="small" error={Boolean(errors.teamIds)}>
-                  <InputLabel id="member-teams-label">Teams</InputLabel>
+                  <InputLabel id="member-teams-label">Groups</InputLabel>
                   <Select
                     {...field}
                     multiple
                     labelId="member-teams-label"
-                    label="Teams"
+                    label="Groups"
                     renderValue={(selected) =>
                       teams
                         .filter((team) => selected.includes(team.id))

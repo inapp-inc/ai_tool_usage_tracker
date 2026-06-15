@@ -48,6 +48,7 @@ import {
 } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
+import { z } from "zod";
 import {
   Bar,
   BarChart,
@@ -60,7 +61,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { z } from "zod";
+import { LIVE_DATA_POLL_MS } from "@/config/apiPolling";
 
 import {
   fetchDashboardStats,
@@ -120,7 +121,6 @@ type ChartMode = "tokens" | "cost";
 interface InsightsFilters {
   period: DateRange;
   teamId: string;
-  toolId: string;
 }
 
 const EMPTY_TEAMS: Team[] = [];
@@ -263,7 +263,6 @@ function createDefaultFilters(): InsightsFilters {
       to: endOfDay(today).toISOString(),
     },
     teamId: "",
-    toolId: "",
   };
 }
 
@@ -401,41 +400,46 @@ export function InsightsPage() {
     date: string | null;
   }>({ open: false, date: null });
 
-  const { from, to, teamId, toolId } = {
+  const { from, to, teamId } = {
     from: filters.period.from,
     to: filters.period.to,
     teamId: filters.teamId,
-    toolId: filters.toolId,
   };
 
   const statsQuery = useQuery({
-    queryKey: ["insights", "stats", from, to, teamId, toolId],
+    queryKey: ["insights", "stats", from, to, teamId],
     queryFn: () => fetchDashboardStats(from, to),
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const dailyQuery = useQuery({
-    queryKey: ["insights", "daily", from, to, teamId, toolId],
+    queryKey: ["insights", "daily", from, to, teamId],
     queryFn: () => fetchDailyUsage(from, to),
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const teamCostQuery = useQuery({
-    queryKey: ["insights", "teamCost", from, to, teamId, toolId],
-    queryFn: () => fetchTeamCost(from, to),
+    queryKey: ["insights", "teamCost", from, to, teamId],
+    queryFn: () => fetchTeamCost(from, to, teamId || null),
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const topUsersQuery = useQuery({
-    queryKey: ["insights", "topUsers", from, to, teamId, toolId],
+    queryKey: ["insights", "topUsers", from, to, teamId],
     queryFn: () => fetchTopUsers(from, to),
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const alertsQuery = useQuery({
-    queryKey: ["insights", "recentAlerts", teamId, toolId],
+    queryKey: ["insights", "recentAlerts", teamId],
     queryFn: fetchRecentAlerts,
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const teamsUsageQuery = useQuery({
-    queryKey: ["insights", "teams", from, to, teamId, toolId],
-    queryFn: () => fetchTeamUsage(from, to),
+    queryKey: ["insights", "teams", from, to, teamId],
+    queryFn: () => fetchTeamUsage(from, to, teamId || null),
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const reportsQuery = useQuery({
@@ -446,17 +450,18 @@ export function InsightsPage() {
   const teamsQuery = useQuery({
     queryKey: ["teams"],
     queryFn: fetchTeams,
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const toolOptionsQuery = useQuery({
     queryKey: ["tools-options"],
     queryFn: fetchToolOptions,
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const drilldownQuery = useQuery({
-    queryKey: ["insights", "drilldown", drilldown.team?.teamId, from, to, toolId],
-    queryFn: () =>
-      fetchTeamDrilldown(drilldown.team!.teamId, from, to, toolId || null),
+    queryKey: ["insights", "drilldown", drilldown.team?.teamId, from, to],
+    queryFn: () => fetchTeamDrilldown(drilldown.team!.teamId, from, to, null),
     enabled: drilldown.open && Boolean(drilldown.team?.teamId),
   });
 
@@ -470,13 +475,12 @@ export function InsightsPage() {
       "daily-breakdown",
       dateDrilldown.date,
       filters.teamId,
-      filters.toolId,
     ],
     queryFn: () =>
       fetchDailyBreakdown(
         dateDrilldown.date!,
         filters.teamId || null,
-        filters.toolId || null,
+        null,
       ),
     enabled: dateDrilldown.open && dateDrilldown.date !== null,
   });
@@ -966,7 +970,7 @@ export function InsightsPage() {
       />
 
       <Box sx={{ display: "flex", gap: 2, mb: 0, alignItems: "center" }}>
-        <FormControl size="small" sx={{ width: 180 }}>
+        <FormControl size="small" sx={{ width: 220 }}>
           <InputLabel id="insights-team-label">Team</InputLabel>
           <Select
             labelId="insights-team-label"
@@ -977,25 +981,6 @@ export function InsightsPage() {
             }
           >
             <MenuItem value="">All teams</MenuItem>
-            {teams.map((team) => (
-              <MenuItem key={team.id} value={team.id}>
-                {team.name}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-
-        <FormControl size="small" sx={{ width: 180 }}>
-          <InputLabel id="insights-tool-label">AI Tool</InputLabel>
-          <Select
-            labelId="insights-tool-label"
-            label="AI Tool"
-            value={filters.toolId}
-            onChange={(event) =>
-              setFilters((prev) => ({ ...prev, toolId: event.target.value }))
-            }
-          >
-            <MenuItem value="">All tools</MenuItem>
             {toolOptions.map((tool) => (
               <MenuItem key={tool.id} value={tool.id}>
                 {tool.name}

@@ -4,8 +4,8 @@
 
 The frontend SPA (`frontend/`) implements:
 
-- **11 active routes** (login, insights, alerts, uploads, preview, 5 admin pages) plus legacy redirects
-- **13 API modules** in `src/api/` — `client.ts` and partial `auth.ts` use real HTTP; all other modules use in-memory mocks with 400ms delay (600ms for login mock path)
+- **11+ active routes** (login, insights, alerts, uploads, preview, admin pages) plus legacy redirects
+- **13 API modules** in `src/api/` — **core modules use live HTTP** to `/api/v1` (auth, tools, teams, members, credentials, alerts, uploads, dashboard, usage) as of 2026-06-15; see `frontend-ux-deployment-alignment` change for details
 - **TanStack Query v5** for server state; **Zustand** for auth/UI client state
 - **MUI v6** + Recharts; shared components under `src/components/`
 - **BRD 5.1** admin redesigns: tool pricing, team–tool mapping, team-scoped AI credentials, report subscriptions in Insights

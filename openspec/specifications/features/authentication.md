@@ -21,9 +21,9 @@ Stakeholder approved the following scope and defaults (2026-06-10):
 | # | Decision |
 |---|----------|
 | **D1 — Feature boundary** | Authentication includes backend auth API, auth schema, login UI, JWT validation dependency (`get_current_user`). **Excludes** TASK-PLT-002 full RBAC policy matrix (separate deliverable). |
-| **D2 — Post-login routes** | `super_admin` → `/admin`; `team_admin`, `finance_viewer`, `team_member` → `/dashboard`; `auditor` → `/reports`. |
+| **D2 — Post-login routes** | All roles → `/insights` in current SPA. Legacy spec: `super_admin` → `/admin`; other roles → `/dashboard` — superseded by Insights hub consolidation. |
 | **D3 — Logout** | **Client-only:** clear tokens and auth state; no `POST /auth/logout` in Phase 1. Refresh tokens remain valid until expiry (acceptable for MVP). |
-| **D4 — Token storage** | Access token in memory; refresh token in `sessionStorage` (cleared on tab close). `localStorage` **not** used in production builds. |
+| **D4 — Token storage** | Access and refresh tokens in **`sessionStorage`** (tab-scoped) for session restore on reload; access token also held in memory during active session. `localStorage` **not** used in production builds. |
 | **D5 — Access token TTL** | Default **30 minutes** (`JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30`). OpenAPI example `expires_in: 3600` is illustrative only. |
 | **D6 — Refresh reuse detection** | **Deferred** to Phase 2. Phase 1 rejects revoked/expired refresh tokens only. |
 | **D7 — Login audit** | **Not required** for MVP. Optional failure audit deferred with TASK-PLT-003. |
@@ -143,6 +143,8 @@ foundation (INF-002 /api/v1, INF-004 Alembic)
 | **AC-AUTH-15** | Expired access, valid refresh | API 401 | Silent refresh + retry; else login |
 | **AC-AUTH-16** | Authenticated | Logout | Tokens cleared; redirect login |
 | **AC-AUTH-17** | Login page | Keyboard-only | All actions completable (NFR-ACC-002) |
+| **AC-AUTH-21** | Valid tokens in sessionStorage | Full page reload | Session restored via `/auth/me`; user lands on `/insights` without re-login |
+| **AC-AUTH-22** | Authenticated user | Navigate to `/` | Redirect to `/insights` |
 
 ### 4.5 Database
 
@@ -172,21 +174,20 @@ foundation (INF-002 /api/v1, INF-004 Alembic)
 
 | Concern | Specification |
 |---------|---------------|
-| **AuthProvider** | `user`, `accessToken`, `login()`, `logout()`, `refreshSession()` |
-| **Token storage** | Access: memory; Refresh: `sessionStorage` (D4) |
+| **AuthProvider** | `user`, `accessToken`, `login()`, `logout()`, `refreshSession()`, bootstrap on mount |
+| **Token storage** | Access + refresh in `sessionStorage`; access also in memory during session (D4) |
 | **ProtectedRoute** | Redirect unauthenticated to `/login?returnUrl=` |
-| **API client** | Base `/api/v1`; `Authorization: Bearer`; `X-Correlation-ID` (UUID v4) |
+| **API client** | Base from `VITE_API_BASE_URL` (default `/api/v1`); `Authorization: Bearer`; `X-Correlation-ID` (UUID v4) |
 | **Refresh** | On 401: single refresh attempt; queue concurrent requests |
+| **Basename** | `BrowserRouter` uses `VITE_BASE_PATH` (e.g. `/aitool`) |
 
-### 5.3 Post-Login Redirect (D2)
+### 5.3 Post-Login Redirect (D2 — implemented)
 
 | Role | Route |
 |------|-------|
-| `super_admin` | `/admin` |
-| `team_admin` | `/dashboard` |
-| `finance_viewer` | `/dashboard` |
-| `team_member` | `/dashboard` |
-| `auditor` | `/reports` |
+| All authenticated roles | `/insights` |
+
+Legacy role-specific targets (`/admin`, `/dashboard`, `/reports`) are redirected to `/insights` via router aliases.
 
 ### 5.4 Logout (D3)
 

@@ -24,6 +24,7 @@ import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
+import { ApiClientError } from "@/api/client";
 import {
   createTeam,
   deleteTeam,
@@ -38,6 +39,7 @@ import { StatusBadge } from "@/components/data-display/StatusBadge";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
+import { LIVE_DATA_POLL_MS } from "@/config/apiPolling";
 import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { formatCost, formatTokens } from "@/utils/formatters";
@@ -47,7 +49,7 @@ const schema = z.object({
   description: z.string().max(200),
   tokenBudget: z.number().int().positive().nullable(),
   costBudget: z.number().positive().nullable(),
-  toolIds: z.array(z.string()).min(1, "Assign at least one tool"),
+  toolIds: z.array(z.string()),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -174,11 +176,13 @@ export function TeamsPage() {
   const teamsQuery = useQuery({
     queryKey: ["teams"],
     queryFn: fetchTeams,
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const toolOptionsQuery = useQuery({
     queryKey: ["tool-options"],
     queryFn: fetchToolOptions,
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const toolNameById = useMemo(() => {
@@ -276,11 +280,19 @@ export function TeamsPage() {
     });
   }, [reset, slideOver]);
 
+  const mutationError = createMutation.error ?? updateMutation.error;
+  const saveError =
+    mutationError instanceof ApiClientError
+      ? mutationError.apiError.detail
+      : mutationError instanceof Error
+        ? mutationError.message
+        : null;
+
   const columns: Column<Team>[] = useMemo(
     () => [
       {
         key: "name",
-        header: "Team",
+        header: "Group",
         sortable: true,
         render: (row) => (
           <Box>
@@ -306,7 +318,7 @@ export function TeamsPage() {
       },
       {
         key: "toolIds",
-        header: "Tools",
+        header: "Teams",
         render: (row) => (
           <TeamToolsCell toolIds={row.toolIds} toolNameById={toolNameById} />
         ),
@@ -398,7 +410,7 @@ export function TeamsPage() {
       fallback={
         <EmptyState
           title="Access denied"
-          description="You don't have permission to manage teams."
+          description="You don't have permission to manage groups."
         />
       }
     >
@@ -413,10 +425,10 @@ export function TeamsPage() {
         >
           <Box>
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              Teams
+              Groups
             </Typography>
             <Typography variant="body2" sx={{ color: tokens.textMuted }}>
-              Organise members and set usage budgets
+              Organise members and assign team API connections
             </Typography>
           </Box>
           <Button
@@ -425,13 +437,13 @@ export function TeamsPage() {
             startIcon={<IconPlus size={15} />}
             onClick={() => setSlideOver({ open: true, team: null })}
           >
-            New Team
+            New Group
           </Button>
         </Box>
 
         {teamsQuery.isError && (
           <Alert severity="error" sx={{ mb: 2 }}>
-            Failed to load teams. Please refresh.
+            Failed to load groups. Please refresh.
           </Alert>
         )}
 
@@ -440,17 +452,17 @@ export function TeamsPage() {
           rows={teamsQuery.data ?? []}
           rowKey={(row) => row.id}
           loading={teamsQuery.isPending}
-          emptyTitle="No teams yet"
-          emptyDescription="Create a team to organise members and set usage budgets."
+          emptyTitle="No groups yet"
+          emptyDescription="Create a group to organise members and set usage budgets."
         />
 
         <SlideOver
           open={slideOver.open}
           onClose={() => setSlideOver({ open: false, team: null })}
-          title={isEditMode ? "Edit Team" : "New Team"}
+          title={isEditMode ? "Edit Group" : "New Group"}
           subtitle={
             isEditMode
-              ? "Update team configuration"
+              ? "Update group configuration"
               : "Set a budget to receive alerts when thresholds are crossed"
           }
           footer={
@@ -477,6 +489,11 @@ export function TeamsPage() {
             </>
           }
         >
+          {saveError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {saveError}
+            </Alert>
+          )}
           <Box
             component="form"
             onSubmit={handleSubmit(onSubmit)}
@@ -485,7 +502,7 @@ export function TeamsPage() {
             <TextField
               {...register("name")}
               fullWidth
-              label="Team name"
+              label="Group name"
               size="small"
               error={Boolean(errors.name)}
               helperText={errors.name?.message}
@@ -512,7 +529,7 @@ export function TeamsPage() {
                 display: "block",
               }}
             >
-              Tool access
+              Team access
             </Typography>
 
             <FormControl
@@ -521,11 +538,11 @@ export function TeamsPage() {
               error={Boolean(errors.toolIds)}
               disabled={toolOptionsQuery.isPending}
             >
-              <InputLabel id="team-tools-label">Assigned tools</InputLabel>
+              <InputLabel id="team-tools-label">Assigned teams</InputLabel>
               <Select
                 multiple
                 labelId="team-tools-label"
-                label="Assigned tools"
+                label="Assigned teams"
                 value={selectedToolIds}
                 onChange={(event) => {
                   setValue("toolIds", event.target.value as string[], {
@@ -538,7 +555,7 @@ export function TeamsPage() {
                     .join(", ");
                   return (
                     <Typography noWrap sx={{ fontSize: "0.8125rem" }}>
-                      {names || (toolOptionsQuery.isPending ? "Loading tools…" : "")}
+                      {names || (toolOptionsQuery.isPending ? "Loading teams…" : "")}
                     </Typography>
                   );
                 }}
@@ -558,7 +575,8 @@ export function TeamsPage() {
                 <FormHelperText error>{errors.toolIds.message}</FormHelperText>
               ) : (
                 <FormHelperText>
-                  Members of this team will only be tracked against these tools
+                  Optional — link API teams this group can use. You can add teams
+                  later from Admin → Teams.
                 </FormHelperText>
               )}
             </FormControl>
@@ -617,7 +635,7 @@ export function TeamsPage() {
 
         <ConfirmDialog
           open={deleteTarget !== null}
-          title="Delete team?"
+          title="Delete group?"
           description={`"${deleteTarget?.name ?? ""}" and all its budget configuration will be removed. Members will be unassigned. Usage history is preserved.`}
           dangerous
           confirmLabel="Delete"

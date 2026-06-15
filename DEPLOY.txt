@@ -1,0 +1,80 @@
+
+AI Tools Token Tracker - Docker Deployment Package
+
+==================================================
+
+
+
+Stack:
+
+  - PostgreSQL 16 (postgres)
+
+  - Python FastAPI backend (BACKEND_PORT, default 4500)
+
+  - React Vite frontend (APP_PORT, default 4501)
+
+  - Host nginx on server routes /aitool/ (see deploy/nginx.example.conf)
+
+
+
+Quick start (Linux):
+
+  1. ./scripts/deploy-docker.sh ai-tools-token-tracker-docker.zip
+
+
+
+Manual start:
+
+  1. Copy .env.example to .env and update secrets/passwords
+
+  2. Set APP_ENV=production, BACKEND_PORT and APP_PORT (4500+ range)
+
+  3. docker compose up --build -d
+
+  4. Open http://localhost:4501/aitool (frontend) and http://localhost:4500/health (backend)
+
+
+
+Default demo login (after seed):
+
+  admin@demo.com / demo1234
+
+
+
+Services:
+
+  postgres   - database
+
+  bootstrap  - one-shot DB init + seed
+
+  backend    - FastAPI API (BACKEND_PORT -> container 8000)
+
+  frontend   - React app (APP_PORT -> container 80)
+
+
+
+Production env (.env):
+
+  APP_ENV=production
+
+  BACKEND_PORT=4500
+
+  APP_PORT=4501
+
+  VITE_BASE_PATH=/aitool/
+
+
+
+Host nginx (production):
+
+  deploy/nginx.example.conf
+
+
+
+Useful commands:
+
+  docker compose logs -f backend
+
+  docker compose down
+
+  docker compose down -v   (reset database)

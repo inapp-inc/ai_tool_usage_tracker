@@ -2,6 +2,7 @@ import { lazy, Suspense, type ReactElement } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { useAuth } from "@/auth/AuthContext";
+import { AuthProvider } from "@/auth/AuthProvider";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageSkeleton } from "@/components/feedback/PageSkeleton";
 
@@ -45,6 +46,11 @@ const CredentialsPage = lazy(() =>
     default: m.CredentialsPage,
   })),
 );
+const ProvidersPage = lazy(() =>
+  import("@/pages/admin/ProvidersPage").then((m) => ({
+    default: m.ProvidersPage,
+  })),
+);
 const AuditLogPage = lazy(() =>
   import("@/pages/admin/AuditLogPage").then((m) => ({ default: m.AuditLogPage })),
 );
@@ -56,12 +62,33 @@ function ProtectedRoute({ children }: { children: ReactElement }) {
   return children;
 }
 
+function RootRedirect() {
+  const { isAuthenticated } = useAuth();
+  return <Navigate to={isAuthenticated ? "/insights" : "/login"} replace />;
+}
+
+function GuestRoute({ children }: { children: ReactElement }) {
+  const { isAuthenticated } = useAuth();
+  if (isAuthenticated) return <Navigate to="/insights" replace />;
+  return children;
+}
+
 // ─── Routes ──────────────────────────────────────────────────────────────────
+const routerBasename =
+  import.meta.env.VITE_BASE_PATH?.replace(/\/$/, "") || undefined;
+
 export function AppRoutes() {
   return (
     <Routes>
       {/* Public */}
-      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/login"
+        element={
+          <GuestRoute>
+            <LoginPage />
+          </GuestRoute>
+        }
+      />
 
       {/* Protected — wrapped in AppShell */}
       <Route
@@ -85,15 +112,17 @@ export function AppRoutes() {
         <Route path="/uploads" element={<UploadsPage />} />
         <Route path="/uploads/:uploadId/preview" element={<UploadPreviewPage />} />
 
-        <Route path="/admin/tools" element={<ToolsPage />} />
-        <Route path="/admin/teams" element={<TeamsPage />} />
+        <Route path="/admin/teams" element={<ToolsPage />} />
+        <Route path="/admin/tools" element={<Navigate to="/admin/teams" replace />} />
+        <Route path="/admin/providers" element={<ProvidersPage />} />
+        <Route path="/admin/groups" element={<TeamsPage />} />
         <Route path="/admin/members" element={<MembersPage />} />
         <Route path="/admin/credentials" element={<CredentialsPage />} />
         <Route path="/admin/audit-log" element={<AuditLogPage />} />
       </Route>
 
       {/* Fallback */}
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route path="/" element={<RootRedirect />} />
       <Route path="*" element={<Navigate to="/insights" replace />} />
     </Routes>
   );
@@ -101,10 +130,12 @@ export function AppRoutes() {
 
 export function App() {
   return (
-    <BrowserRouter>
-      <Suspense fallback={<PageSkeleton />}>
-        <AppRoutes />
-      </Suspense>
+    <BrowserRouter basename={routerBasename}>
+      <AuthProvider>
+        <Suspense fallback={<PageSkeleton />}>
+          <AppRoutes />
+        </Suspense>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

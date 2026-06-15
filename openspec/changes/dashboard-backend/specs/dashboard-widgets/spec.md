@@ -54,19 +54,26 @@ The system SHALL implement `GET /api/v1/dashboard/usage-by-tool` with per-tool t
 
 ### Requirement: Usage by team widget
 
-The system SHALL implement `GET /api/v1/dashboard/usage-by-team` with team comparison metrics.
+The system SHALL implement `GET /api/v1/dashboard/usage-by-team` with API team (`admin.tools`) comparison metrics. Response fields `team_id` and `team_name` carry tool UUID and tool display name for backward compatibility.
 
-#### Scenario: Organization-wide team ranking
+#### Scenario: Organization-wide API team ranking
 
-- **GIVEN** a Super Admin and multiple teams with usage
-- **WHEN** the usage-by-team widget loads
-- **THEN** teams are returned with `total_tokens` and `estimated_cost` for comparison
+- **GIVEN** a Super Admin and multiple active tools with usage in `pricing_config`
+- **WHEN** the usage-by-team widget loads for a date range
+- **THEN** tools are returned with `total_tokens` and `estimated_cost` for comparison
+- **AND** daily usage within `from`/`to` is aggregated when `daily_usage` exists
 
-#### Scenario: Deactivated team with period usage
+#### Scenario: Filter by tool_id
 
-- **GIVEN** a deactivated team with usage in the selected period
+- **GIVEN** query parameter `tool_id`
+- **WHEN** the usage-by-team endpoint is called
+- **THEN** only the matching API team row is returned
+
+#### Scenario: Inactive tool with period usage
+
+- **GIVEN** an inactive tool with usage in the selected period
 - **WHEN** the widget loads for authorized scope
-- **THEN** the deactivated team appears in results
+- **THEN** the inactive tool appears in results if it has non-zero metrics
 
 ### Requirement: Top consumers widget
 

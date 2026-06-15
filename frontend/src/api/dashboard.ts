@@ -1,12 +1,6 @@
-import { format, subDays } from "date-fns";
+import { format, parseISO } from "date-fns";
 
-const MOCK_LATENCY_MS = 400;
-
-function delay<T>(value: T): Promise<T> {
-  return new Promise((resolve) => {
-    setTimeout(() => resolve(value), MOCK_LATENCY_MS);
-  });
-}
+import { apiRequest } from "./client";
 
 export interface DashboardStats {
   totalTokens: number;
@@ -47,185 +41,110 @@ export interface RecentAlert {
   team: string;
 }
 
-function generateTimeseries(): TokenDataPoint[] {
-  const today = new Date();
-  return Array.from({ length: 30 }, (_, index) => {
-    const date = subDays(today, 29 - index);
-    const dayFactor = 1 + Math.sin(index / 4) * 0.15;
-    const tokens = Math.round(145_000 * dayFactor + (index % 7) * 8_500);
-    return {
-      date: format(date, "MMM d"),
-      tokens,
-      cost: Number((tokens * 0.000065).toFixed(2)),
-    };
-  });
+function periodQuery(from: string, to: string, toolId?: string | null): string {
+  const params = new URLSearchParams({ from, to });
+  if (toolId) {
+    params.set("tool_id", toolId);
+  }
+  return params.toString();
 }
 
-const MOCK_STATS: DashboardStats = {
-  totalTokens: 4_820_300,
-  totalCost: 312.45,
-  activeTools: 7,
-  activeTeams: 12,
-  tokensDelta: 8.4,
-  costDelta: 5.2,
-  toolsDelta: 0,
-  teamsDelta: 2.1,
-};
-
-const MOCK_TIMESERIES = generateTimeseries();
-
-const MOCK_TEAM_COSTS: TeamCostDataPoint[] = [
-  { team: "Engineering", cost: 98.4 },
-  { team: "Data Science", cost: 72.15 },
-  { team: "Design", cost: 41.2 },
-  { team: "Marketing", cost: 38.6 },
-  { team: "Sales", cost: 35.1 },
-  { team: "Support", cost: 27.0 },
-];
-
-const MOCK_TOP_USERS: TopUser[] = [
-  {
-    id: "u1",
-    name: "Alex Chen",
-    team: "Engineering",
-    tokens: 892_400,
-    cost: 58.02,
-    percentOfTotal: 0.185,
-  },
-  {
-    id: "u2",
-    name: "Jordan Lee",
-    team: "Data Science",
-    tokens: 654_200,
-    cost: 42.52,
-    percentOfTotal: 0.136,
-  },
-  {
-    id: "u3",
-    name: "Sam Rivera",
-    team: "Engineering",
-    tokens: 521_800,
-    cost: 33.92,
-    percentOfTotal: 0.108,
-  },
-  {
-    id: "u4",
-    name: "Taylor Kim",
-    team: "Design",
-    tokens: 412_300,
-    cost: 26.8,
-    percentOfTotal: 0.086,
-  },
-  {
-    id: "u5",
-    name: "Morgan Patel",
-    team: "Marketing",
-    tokens: 387_600,
-    cost: 25.19,
-    percentOfTotal: 0.08,
-  },
-  {
-    id: "u6",
-    name: "Casey Nguyen",
-    team: "Sales",
-    tokens: 298_400,
-    cost: 19.4,
-    percentOfTotal: 0.062,
-  },
-  {
-    id: "u7",
-    name: "Riley Brooks",
-    team: "Support",
-    tokens: 245_100,
-    cost: 15.93,
-    percentOfTotal: 0.051,
-  },
-  {
-    id: "u8",
-    name: "Jamie Ortiz",
-    team: "Engineering",
-    tokens: 198_700,
-    cost: 12.92,
-    percentOfTotal: 0.041,
-  },
-];
-
-const MOCK_RECENT_ALERTS: RecentAlert[] = [
-  {
-    id: "a1",
-    title: "Token threshold exceeded",
-    severity: "critical",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-    team: "Engineering",
-  },
-  {
-    id: "a2",
-    title: "Monthly budget at 85%",
-    severity: "warning",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
-    team: "Data Science",
-  },
-  {
-    id: "a3",
-    title: "New tool integration active",
-    severity: "info",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 8).toISOString(),
-    team: "Design",
-  },
-  {
-    id: "a4",
-    title: "Unusual usage spike detected",
-    severity: "warning",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 22).toISOString(),
-    team: "Marketing",
-  },
-  {
-    id: "a5",
-    title: "Daily limit approaching",
-    severity: "critical",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 30).toISOString(),
-    team: "Sales",
-  },
-];
+interface SummaryResponse {
+  total_tokens: number;
+  total_cost: number;
+  active_tools: number;
+  active_teams: number;
+  tokens_delta: number;
+  cost_delta: number;
+  tools_delta: number;
+  teams_delta: number;
+}
 
 export async function fetchDashboardStats(
   from: string,
   to: string,
 ): Promise<DashboardStats> {
-  void from;
-  void to;
-  return delay(MOCK_STATS);
+  const raw = await apiRequest<SummaryResponse>(
+    `/dashboard/summary?${periodQuery(from, to)}`,
+  );
+  return {
+    totalTokens: raw.total_tokens,
+    totalCost: raw.total_cost,
+    activeTools: raw.active_tools,
+    activeTeams: raw.active_teams,
+    tokensDelta: raw.tokens_delta,
+    costDelta: raw.cost_delta,
+    toolsDelta: raw.tools_delta,
+    teamsDelta: raw.teams_delta,
+  };
 }
 
 export async function fetchTokenTimeseries(
   from: string,
   to: string,
 ): Promise<TokenDataPoint[]> {
-  void from;
-  void to;
-  return delay(MOCK_TIMESERIES);
+  const rows = await apiRequest<Array<{
+    period_start: string;
+    total_tokens: number;
+    estimated_cost?: number;
+  }>>(`/dashboard/trends?${periodQuery(from, to)}&granularity=daily`);
+  return rows.map((point) => ({
+    date: format(parseISO(point.period_start), "MMM d"),
+    tokens: point.total_tokens,
+    cost: Number(point.estimated_cost ?? 0),
+  }));
 }
 
 export async function fetchTeamCost(
   from: string,
   to: string,
+  toolId?: string | null,
 ): Promise<TeamCostDataPoint[]> {
-  void from;
-  void to;
-  return delay(MOCK_TEAM_COSTS);
+  const rows = await apiRequest<Array<{ team_name: string; estimated_cost: number }>>(
+    `/dashboard/usage-by-team?${periodQuery(from, to, toolId)}`,
+  );
+  return rows.map((row) => ({
+    team: row.team_name,
+    cost: Number(row.estimated_cost ?? 0),
+  }));
 }
 
 export async function fetchTopUsers(
   from: string,
   to: string,
 ): Promise<TopUser[]> {
-  void from;
-  void to;
-  return delay(MOCK_TOP_USERS);
+  const rows = await apiRequest<Array<{
+    entity_id: string;
+    entity_name: string;
+    total_tokens: number;
+    estimated_cost?: number;
+  }>>(`/dashboard/top-consumers?${periodQuery(from, to)}&limit=10`);
+  const totalTokens = rows.reduce((sum, row) => sum + row.total_tokens, 0);
+  return rows.map((row) => ({
+    id: row.entity_id,
+    name: row.entity_name,
+    team: row.entity_name,
+    tokens: row.total_tokens,
+    cost: Number(row.estimated_cost ?? 0),
+    percentOfTotal: totalTokens > 0 ? row.total_tokens / totalTokens : 0,
+  }));
 }
 
 export async function fetchRecentAlerts(): Promise<RecentAlert[]> {
-  return delay(MOCK_RECENT_ALERTS);
+  const rows = await apiRequest<Array<{
+    id: string;
+    title: string;
+    severity: RecentAlert["severity"];
+    triggered_at: string;
+    team_name?: string;
+  }>>("/dashboard/alerts");
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    severity: row.severity,
+    triggeredAt: row.triggered_at,
+    team: row.team_name ?? "",
+  }));
 }
 
 export const dashboardApi = {

@@ -78,9 +78,18 @@ This document defines implementation standards for the React SPA under `frontend
 
 ## Security
 
-- **Access and refresh tokens** are stored **in memory only** — never `localStorage`, `sessionStorage`, or logs.
+- **Access and refresh tokens** are stored in **`sessionStorage`** for tab-scoped session restore; access token is also held in memory during active use — never `localStorage` or logs.
 - **Never log** request or response bodies. The API client logs only method, URL, and status code at warn level.
-- Sensitive credentials (API keys) follow the same in-memory-only rule.
+- Sensitive credentials (API keys) follow the same in-memory-only rule in UI state.
+
+## Production base path
+
+- Set `VITE_BASE_PATH` (e.g. `/aitool`) for subpath hosting; `BrowserRouter` basename must match nginx SPA location.
+- Set `VITE_API_BASE_URL` to the proxied API path (e.g. `/aitool/api/v1`).
+
+## API integration status (2026-06-15)
+
+Core modules call live `/api/v1` endpoints: `auth`, `tools`, `teams`, `members`, `credentials`, `alerts`, `uploads`, `dashboard`, `usage`. See `openspec/changes/frontend-ux-deployment-alignment/design.md` for UI/API terminology.
 
 ---
 

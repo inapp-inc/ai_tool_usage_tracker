@@ -159,10 +159,18 @@ docker push registry.example.com/ai-tool-tracker-api:${GIT_SHA}
 
 | Environment | Container | Access |
 |-------------|-----------|--------|
-| Development | Vite dev server **or** `frontend` service | `http://localhost:5173` |
-| Staging / Production | `frontend` (nginx static) behind `nginx` proxy | `https://app.example.com` |
+| Development | `frontend-dev` profile (Vite) | `http://localhost:5173` |
+| Development / Production | `frontend` (nginx) | `http://localhost:${APP_PORT:-4501}/aitool/` |
+| Production (foundry.inapp.com) | `frontend` behind host TLS | `https://foundry.inapp.com/aitool/` |
 
-API served at `https://api.example.com` via same reverse-proxy container.
+The `frontend` container nginx config:
+
+- Serves the Vite build at `/aitool/` (SPA fallback)
+- Proxies `/aitool/api/v1/` → internal `api:8000/api/v1/`
+
+Build-time env: `VITE_BASE_PATH=/aitool`, `VITE_API_BASE_URL=/aitool/api/v1`.
+
+With `docker-compose.prod.yml`, the API service is **not** published on the host; clients reach the API only through the frontend proxy path above.
 
 ### 1.7 Production hardening (`docker-compose.prod.yml`)
 

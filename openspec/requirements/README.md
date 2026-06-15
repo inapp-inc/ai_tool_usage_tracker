@@ -33,6 +33,8 @@ Functional requirements for the **AI Tool Usage Tracker** platform, derived from
 | Team Member | TM |
 | Auditor | AU |
 
+**UI terminology (2026-06-15):** SPA **Teams** = API connections (`/api/v1/tools`); **Groups** = member org units (`/api/v1/teams`). See [01-administration.md](./01-administration.md) glossary and `openspec/changes/frontend-ux-deployment-alignment/`.
+
 ## Traceability
 
 Each feature includes user stories mapped to roles, testable acceptance criteria (Given/When/Then), explicit business rules, and upstream/downstream dependencies for OpenSpec spec and SEED unit decomposition.

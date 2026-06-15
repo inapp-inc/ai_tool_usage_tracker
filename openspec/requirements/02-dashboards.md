@@ -116,12 +116,15 @@ The dashboard SHALL display consumption broken down by AI tool with comparative 
 
 ### Description
 
-The dashboard SHALL display team-level consumption comparisons so administrators can identify high-usage teams.
+The dashboard SHALL display **API team** (vendor connection) consumption comparisons so administrators can identify high-usage connections. In the Insights **By Team** tab, rows represent `admin.tools` with metrics from `pricing_config` (including period-filtered `daily_usage` when available).
+
+> **UI note:** “Team” in dashboard widgets means API team (`/tools`), not member group (`/teams`).
 
 ### Business Rules
 
-- Team comparisons MUST respect RBAC; Team Admins see only their teams unless granted broader access.
-- Deactivated teams with usage in the selected period MUST appear in historical comparisons.
+- Team comparisons MUST respect RBAC; Team Admins see only authorized scope.
+- Inactive API teams with usage in the selected period MUST appear in historical comparisons.
+- `GET /dashboard/usage-by-team` MAY accept `tool_id` to filter a single API team.
 
 ### User Stories
 
@@ -132,8 +135,8 @@ The dashboard SHALL display team-level consumption comparisons so administrators
 
 ### Acceptance Criteria
 
-- **AC-DSH-004-01:** Given organization-wide access, when the widget loads, then teams are ranked or charted by consumption for the selected period.
-- **AC-DSH-004-02:** Given a Team Admin with single-team access, when the widget loads, then only authorized team data is shown.
+- **AC-DSH-004-01:** Given organization-wide access, when the widget loads, then API teams are ranked or charted by token/cost for the selected period (from tool `pricing_config` / `daily_usage`).
+- **AC-DSH-004-02:** Given a Team filter on Insights, when a single API team is selected, then only that tool's usage row is returned.
 
 ### Dependencies
 

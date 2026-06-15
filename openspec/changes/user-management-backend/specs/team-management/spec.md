@@ -6,12 +6,15 @@
 
 The system SHALL implement team list, create, get, and update per OpenAPI `/teams` paths and FR-ADM-002.
 
+> **UI mapping:** `/api/v1/teams` = **Groups** in the SPA. Optional `settings.toolIds` links member groups to API teams.
+
 #### Scenario: Create team with unique name
 
 - **GIVEN** an authenticated Super Admin
-- **WHEN** `POST /api/v1/teams` is submitted with a unique team name in the organization
+- **WHEN** `POST /api/v1/teams` is submitted with a unique group name in the organization
 - **THEN** the response status is 201
-- **AND** the team appears in `GET /api/v1/teams`
+- **AND** the group appears in `GET /api/v1/teams`
+- **AND** `settings.toolIds` MAY be omitted or empty
 
 #### Scenario: Duplicate team name rejected
 

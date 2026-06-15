@@ -17,6 +17,7 @@ import {
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { endOfDay, startOfDay, subDays } from "date-fns";
+import { LIVE_DATA_POLL_MS } from "@/config/apiPolling";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -161,26 +162,31 @@ export function DashboardPage() {
   const statsQuery = useQuery({
     queryKey: ["dashboard", "stats", period.from, period.to],
     queryFn: () => fetchDashboardStats(period.from, period.to),
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const timeseriesQuery = useQuery({
     queryKey: ["dashboard", "timeseries", period.from, period.to],
     queryFn: () => fetchTokenTimeseries(period.from, period.to),
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const teamCostQuery = useQuery({
     queryKey: ["dashboard", "teamCost", period.from, period.to],
     queryFn: () => fetchTeamCost(period.from, period.to),
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const topUsersQuery = useQuery({
     queryKey: ["dashboard", "topUsers", period.from, period.to],
     queryFn: () => fetchTopUsers(period.from, period.to),
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   const alertsQuery = useQuery({
     queryKey: ["dashboard", "recentAlerts"],
     queryFn: fetchRecentAlerts,
+    refetchInterval: LIVE_DATA_POLL_MS,
   });
 
   return (

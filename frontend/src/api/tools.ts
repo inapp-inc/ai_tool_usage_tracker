@@ -1,19 +1,14 @@
-const MOCK_LATENCY_MS = 400;
+import { apiFormRequest, apiRequest, fetchAllPages } from "./client";
+import {
+  mapToolCreateToBackend,
+  mapToolFromBackend,
+  mapToolUpdateToBackend,
+  type BackendTool,
+} from "./adapters/admin";
 
-function delay<T>(value: T): Promise<T> {
-  return new Promise((resolve) => {
-    setTimeout(() => resolve(value), MOCK_LATENCY_MS);
-  });
-}
+export type ToolProvider = string;
 
-export type ToolProvider =
-  | "openai"
-  | "anthropic"
-  | "google"
-  | "azure_openai"
-  | "cohere"
-  | "mistral"
-  | "custom";
+export type CollectionSchedule = "hourly" | "daily";
 
 export type PricingModel = "per_token" | "per_seat" | "flat_fee" | "hybrid";
 
@@ -29,6 +24,8 @@ export interface ToolPricing {
   overageRate: number | null;
 }
 
+export type IngestionSource = "api" | "csv";
+
 export interface AiTool {
   id: string;
   name: string;
@@ -37,10 +34,17 @@ export interface AiTool {
   pricing: ToolPricing;
   status: "active" | "inactive" | "error";
   apiKeyMasked: string;
+  ingestionSource: IngestionSource;
   lastSyncAt: string | null;
+  lastCsvImportAt: string | null;
+  collectionSchedule: CollectionSchedule;
   tokenCount: number;
   costTotal: number;
   createdAt: string;
+}
+
+export function isCsvImportedTool(tool: AiTool): boolean {
+  return tool.ingestionSource === "csv";
 }
 
 export interface CreateToolRequest {
@@ -49,196 +53,267 @@ export interface CreateToolRequest {
   apiKey: string;
   description: string;
   pricing: ToolPricing;
+  collectionSchedule: CollectionSchedule;
 }
 
 export type UpdateToolRequest = Partial<CreateToolRequest>;
 
-function maskApiKey(apiKey: string): string {
-  const lastFour = apiKey.slice(-4);
-  return `sk-...${lastFour}`;
+export type ToolCsvImportMode = "create" | "update";
+
+export type ToolCsvFormatHint = "daily" | "summary";
+
+export interface ToolCsvColumnMapping {
+  tokenColumn: string;
+  costColumn: string;
+  dateColumn: string;
+  dateFromColumn: string;
+  dateToColumn: string;
 }
 
-let mockTools: AiTool[] = [
-  {
-    id: "tool_1",
-    name: "Production OpenAI",
-    provider: "openai",
-    description: "Primary GPT-4o production endpoint for engineering workloads.",
-    pricing: {
-      model: "per_token",
-      inputCostPer1K: 0.005,
-      outputCostPer1K: 0.015,
-      costPerSeat: null,
-      seatCount: null,
-      flatMonthlyCost: null,
-      planName: null,
-      includedTokens: null,
-      overageRate: null,
-    },
-    status: "active",
-    apiKeyMasked: "sk-...a3Fb",
-    lastSyncAt: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-    tokenCount: 2_840_000,
-    costTotal: 184.6,
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 90).toISOString(),
-  },
-  {
-    id: "tool_2",
-    name: "Claude Enterprise",
-    provider: "anthropic",
-    description: "Anthropic Claude API for research and long-context tasks.",
-    pricing: {
-      model: "per_token",
-      inputCostPer1K: 0.003,
-      outputCostPer1K: 0.015,
-      costPerSeat: null,
-      seatCount: null,
-      flatMonthlyCost: null,
-      planName: null,
-      includedTokens: null,
-      overageRate: null,
-    },
-    status: "active",
-    apiKeyMasked: "sk-...9kL2",
-    lastSyncAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-    tokenCount: 1_520_400,
-    costTotal: 98.75,
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 60).toISOString(),
-  },
-  {
-    id: "tool_3",
-    name: "Gemini Workspace",
-    provider: "google",
-    description: "Google Gemini models for design and content generation.",
-    pricing: {
-      model: "per_token",
-      inputCostPer1K: 0.00125,
-      outputCostPer1K: 0.005,
-      costPerSeat: null,
-      seatCount: null,
-      flatMonthlyCost: null,
-      planName: null,
-      includedTokens: null,
-      overageRate: null,
-    },
-    status: "inactive",
-    apiKeyMasked: "sk-...pQ7x",
-    lastSyncAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 14).toISOString(),
-    tokenCount: 412_800,
-    costTotal: 22.4,
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString(),
-  },
-  {
-    id: "tool_4",
-    name: "Azure OpenAI EU",
-    provider: "azure_openai",
-    description: "EU-region Azure OpenAI deployment under enterprise agreement.",
-    pricing: {
-      model: "hybrid",
-      inputCostPer1K: 0.003,
-      outputCostPer1K: 0.012,
-      costPerSeat: null,
-      seatCount: null,
-      flatMonthlyCost: 0,
-      planName: "Enterprise",
-      includedTokens: null,
-      overageRate: null,
-    },
-    status: "error",
-    apiKeyMasked: "sk-...mN4z",
-    lastSyncAt: null,
-    tokenCount: 89_200,
-    costTotal: 5.12,
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30).toISOString(),
-  },
-  {
-    id: "tool_5",
-    name: "Internal LLM Gateway",
-    provider: "custom",
-    description: "Self-hosted gateway routing to internal fine-tuned models.",
-    pricing: {
-      model: "flat_fee",
-      inputCostPer1K: null,
-      outputCostPer1K: null,
-      costPerSeat: null,
-      seatCount: null,
-      flatMonthlyCost: 99,
-      planName: "Team Pro",
-      includedTokens: 1_000_000,
-      overageRate: 0.002,
-    },
-    status: "active",
-    apiKeyMasked: "sk-...rT8w",
-    lastSyncAt: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-    tokenCount: 678_500,
-    costTotal: 41.9,
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 45).toISOString(),
-  },
-];
+export interface ToolCsvInspectResult {
+  headers: string[];
+  rowCount: number;
+  formatHint: ToolCsvFormatHint;
+  suggestedMapping: ToolCsvColumnMapping;
+}
+
+export interface ToolCsvDailyUsageRow {
+  date: string;
+  tokens: number;
+  cost: number;
+}
+
+export interface ToolCsvImportPreview {
+  fileName: string;
+  rowCount: number;
+  tokenCount: number;
+  costTotal: number;
+  dateFrom: string | null;
+  dateTo: string | null;
+  dailyUsage: ToolCsvDailyUsageRow[];
+}
+
+export interface ToolCsvImportResult {
+  message: string;
+  tool: AiTool;
+  preview: ToolCsvImportPreview;
+}
+
+interface BackendToolCsvPreview {
+  file_name: string;
+  row_count: number;
+  token_count: number;
+  cost_total: number;
+  date_from: string | null;
+  date_to: string | null;
+  daily_usage: Array<{ date: string; tokens: number; cost: number }>;
+}
+
+function mapCsvPreviewFromBackend(preview: BackendToolCsvPreview): ToolCsvImportPreview {
+  return {
+    fileName: preview.file_name,
+    rowCount: preview.row_count,
+    tokenCount: preview.token_count,
+    costTotal: preview.cost_total,
+    dateFrom: preview.date_from,
+    dateTo: preview.date_to,
+    dailyUsage: preview.daily_usage.map((row) => ({
+      date: row.date,
+      tokens: row.tokens,
+      cost: row.cost,
+    })),
+  };
+}
+
+interface BackendToolCsvMapping {
+  token_column?: string | null;
+  cost_column?: string | null;
+  date_column?: string | null;
+  date_from_column?: string | null;
+  date_to_column?: string | null;
+}
+
+interface BackendToolCsvInspect {
+  headers: string[];
+  row_count: number;
+  format_hint: ToolCsvFormatHint;
+  suggested_mapping: BackendToolCsvMapping;
+}
+
+export function mapCsvMappingFromBackend(
+  mapping: BackendToolCsvMapping,
+): ToolCsvColumnMapping {
+  return {
+    tokenColumn: mapping.token_column ?? "",
+    costColumn: mapping.cost_column ?? "",
+    dateColumn: mapping.date_column ?? "",
+    dateFromColumn: mapping.date_from_column ?? "",
+    dateToColumn: mapping.date_to_column ?? "",
+  };
+}
+
+export function appendCsvMappingToFormData(
+  formData: FormData,
+  mapping: ToolCsvColumnMapping,
+): void {
+  if (mapping.tokenColumn) formData.append("token_column", mapping.tokenColumn);
+  if (mapping.costColumn) formData.append("cost_column", mapping.costColumn);
+  if (mapping.dateColumn) formData.append("date_column", mapping.dateColumn);
+  if (mapping.dateFromColumn) {
+    formData.append("date_from_column", mapping.dateFromColumn);
+  }
+  if (mapping.dateToColumn) formData.append("date_to_column", mapping.dateToColumn);
+}
+
+export const EMPTY_CSV_COLUMN_MAPPING: ToolCsvColumnMapping = {
+  tokenColumn: "",
+  costColumn: "",
+  dateColumn: "",
+  dateFromColumn: "",
+  dateToColumn: "",
+};
 
 export async function fetchTools(): Promise<AiTool[]> {
-  return delay([...mockTools]);
+  const rows = await fetchAllPages<BackendTool>("/tools", { limit: 100 });
+  return rows.map(mapToolFromBackend);
 }
 
 export async function createTool(body: CreateToolRequest): Promise<AiTool> {
-  const tool: AiTool = {
-    id: `tool_${Date.now()}`,
-    name: body.name,
-    provider: body.provider,
-    description: body.description,
-    pricing: body.pricing,
-    status: "active",
-    apiKeyMasked: maskApiKey(body.apiKey),
-    lastSyncAt: null,
-    tokenCount: 0,
-    costTotal: 0,
-    createdAt: new Date().toISOString(),
-  };
-  mockTools = [...mockTools, tool];
-  return delay(tool);
+  const created = await apiRequest<BackendTool>("/tools", {
+    method: "POST",
+    body: JSON.stringify(mapToolCreateToBackend(body)),
+  });
+
+  if (body.apiKey.trim()) {
+    await apiRequest("/credentials", {
+      method: "POST",
+      body: JSON.stringify({
+        tool_id: created.id,
+        team_id: null,
+        environment: "production",
+        secret_value: body.apiKey,
+        label: `${body.name} default key`,
+        description: body.description,
+      }),
+    });
+
+    const synced = await syncTool(created.id);
+    return synced.tool;
+  }
+
+  return mapToolFromBackend(created);
 }
 
 export async function updateTool(
   id: string,
   body: UpdateToolRequest,
 ): Promise<AiTool> {
-  const index = mockTools.findIndex((tool) => tool.id === id);
-  if (index === -1) {
-    throw new Error("Tool not found");
-  }
-
-  const existing = mockTools[index];
-  const updated: AiTool = {
-    ...existing,
-    ...(body.name !== undefined ? { name: body.name } : {}),
-    ...(body.provider !== undefined ? { provider: body.provider } : {}),
-    ...(body.description !== undefined ? { description: body.description } : {}),
-    ...(body.pricing !== undefined ? { pricing: body.pricing } : {}),
-    ...(body.apiKey ? { apiKeyMasked: maskApiKey(body.apiKey) } : {}),
-  };
-
-  mockTools = mockTools.map((tool) => (tool.id === id ? updated : tool));
-  return delay(updated);
+  const updated = await apiRequest<BackendTool>(`/tools/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(mapToolUpdateToBackend(body)),
+  });
+  return mapToolFromBackend(updated);
 }
 
 export async function deleteTool(id: string): Promise<void> {
-  mockTools = mockTools.filter((tool) => tool.id !== id);
-  await delay(undefined);
+  await apiRequest<void>(`/tools/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ active: false }),
+  });
 }
 
-export async function syncTool(id: string): Promise<AiTool> {
-  const index = mockTools.findIndex((tool) => tool.id === id);
+export function mergeSyncedToolIntoList(
+  tools: AiTool[],
+  synced: AiTool,
+): AiTool[] {
+  const index = tools.findIndex((tool) => tool.id === synced.id);
   if (index === -1) {
-    throw new Error("Tool not found");
+    return [...tools, synced];
+  }
+  return tools.map((tool) => (tool.id === synced.id ? synced : tool));
+}
+
+export async function syncTool(id: string): Promise<{
+  valid: boolean;
+  message: string;
+  tool: AiTool;
+}> {
+  const response = await apiRequest<{
+    valid: boolean;
+    message: string;
+    tool: BackendTool;
+  }>(`/tools/${id}/sync`, { method: "POST" });
+  return {
+    valid: response.valid,
+    message: response.message,
+    tool: mapToolFromBackend(response.tool),
+  };
+}
+
+export async function inspectToolCsvImport(file: File): Promise<ToolCsvInspectResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await apiFormRequest<BackendToolCsvInspect>(
+    "/tools/import-csv/inspect",
+    formData,
+  );
+  return {
+    headers: response.headers,
+    rowCount: response.row_count,
+    formatHint: response.format_hint,
+    suggestedMapping: mapCsvMappingFromBackend(response.suggested_mapping),
+  };
+}
+
+export async function previewToolCsvImport(
+  file: File,
+  mapping: ToolCsvColumnMapping,
+): Promise<ToolCsvImportPreview> {
+  const formData = new FormData();
+  formData.append("file", file);
+  appendCsvMappingToFormData(formData, mapping);
+  const preview = await apiFormRequest<BackendToolCsvPreview>(
+    "/tools/import-csv/preview",
+    formData,
+  );
+  return mapCsvPreviewFromBackend(preview);
+}
+
+export interface ImportToolCsvRequest {
+  file: File;
+  name: string;
+  provider: string;
+  mode: ToolCsvImportMode;
+  toolId?: string;
+  replaceExisting: boolean;
+  columnMapping: ToolCsvColumnMapping;
+}
+
+export async function importToolCsv(
+  body: ImportToolCsvRequest,
+): Promise<ToolCsvImportResult> {
+  const formData = new FormData();
+  formData.append("file", body.file);
+  formData.append("name", body.name);
+  formData.append("provider", body.provider);
+  formData.append("mode", body.mode);
+  formData.append("replace_existing", String(body.replaceExisting));
+  appendCsvMappingToFormData(formData, body.columnMapping);
+  if (body.toolId) {
+    formData.append("tool_id", body.toolId);
   }
 
-  const updated: AiTool = {
-    ...mockTools[index],
-    lastSyncAt: new Date().toISOString(),
-  };
+  const response = await apiFormRequest<{
+    message: string;
+    tool: BackendTool;
+    preview: BackendToolCsvPreview;
+  }>("/tools/import-csv", formData);
 
-  mockTools = mockTools.map((tool) => (tool.id === id ? updated : tool));
-  return delay(updated);
+  return {
+    message: response.message,
+    tool: mapToolFromBackend(response.tool),
+    preview: mapCsvPreviewFromBackend(response.preview),
+  };
 }
 
 export const toolsApi = {
@@ -247,4 +322,7 @@ export const toolsApi = {
   updateTool,
   deleteTool,
   syncTool,
+  inspectToolCsvImport,
+  previewToolCsvImport,
+  importToolCsv,
 };

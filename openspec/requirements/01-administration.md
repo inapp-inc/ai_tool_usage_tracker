@@ -4,6 +4,17 @@ Module 1: Platform administration for AI tools, teams, credentials, and alert th
 
 ---
 
+## Terminology (UI vs API — 2026-06-15)
+
+| UI label | REST API | DB table | Notes |
+|----------|----------|----------|-------|
+| **Teams** | `/api/v1/tools` | `admin.tools` | Vendor API connections; usage sync / CSV import |
+| **Groups** | `/api/v1/teams` | `admin.teams` | Member org units; optional `settings.toolIds` links to API teams |
+
+OpenAPI path names (`/teams`, `/tools`) predate the UI rename. Documentation and tests MUST use the glossary above when describing user-facing behaviour.
+
+---
+
 ## FR-ADM-001: AI Tool Management
 
 ### Description
@@ -49,15 +60,18 @@ The system SHALL allow Super Admins to register, configure, and deactivate AI to
 
 ### Description
 
-The system SHALL allow Super Admins to create and manage teams, assign and remove members, and support users belonging to multiple teams so that usage and costs can be attributed to organizational units.
+The system SHALL allow Super Admins to create and manage **groups** (member org units), assign and remove members, and support users belonging to multiple groups so that usage and costs can be attributed to organizational units.
+
+> **UI note:** This requirement maps to **Groups** in the SPA (`/admin/groups`, API `/teams`). **Teams** in the UI refer to API tool connections (`/tools`).
 
 ### Business Rules
 
-- Each team MUST have a unique name within the organization.
-- A user MAY belong to one or more teams simultaneously.
-- Deactivated teams MUST NOT accept new usage attribution but MUST retain historical data.
-- Removing a user from a team MUST NOT delete that user's historical usage attributed to the team.
-- Team Admins MAY manage members only for teams they administer; Super Admins MAY manage all teams.
+- Each group MUST have a unique name within the organization.
+- A user MAY belong to one or more groups simultaneously.
+- Deactivated groups MUST NOT accept new usage attribution but MUST retain historical data.
+- Removing a user from a group MUST NOT delete that user's historical usage attributed to the group.
+- Group Admins MAY manage members only for groups they administer; Super Admins MAY manage all groups.
+- Assigning linked API teams (`settings.toolIds`) MAY be optional at group creation time.
 
 ### User Stories
 
@@ -142,7 +156,8 @@ The system SHALL allow Super Admins and Team Admins to configure usage and cost 
 ### Business Rules
 
 - Threshold types MUST include: token count, package utilization percentage, and cost amount.
-- Threshold scope MUST be one of: tool level, team level, or user level.
+- Threshold scope in the UI MUST support: **Organization**, **Group** (member org unit), **Team** (API connection), and **User**.
+- Stored alert scope values: `organization`, `team` (Group), `tool` (Team), `user`.
 - Severity MUST be classified as Warning or Critical.
 - Notification channels MUST include in-app notifications and email.
 - Team Admins MAY configure thresholds only within their administered teams; Super Admins MAY configure thresholds at any scope.

@@ -4,6 +4,7 @@ import {
   IconPlus,
   IconRefresh,
   IconTrash,
+  IconUpload,
 } from "@tabler/icons-react";
 import {
   Alert,
@@ -13,6 +14,7 @@ import {
   CircularProgress,
   Collapse,
   FormControl,
+  FormHelperText,
   IconButton,
   InputLabel,
   MenuItem,
@@ -25,36 +27,32 @@ import { useEffect, useMemo, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { ApiClientError } from "@/api/client";
 import {
   createTool,
   deleteTool,
   fetchTools,
+  mergeSyncedToolIntoList,
   syncTool,
+  isCsvImportedTool,
   updateTool,
   type AiTool,
+  type CollectionSchedule,
   type PricingModel,
   type ToolPricing,
-  type ToolProvider,
 } from "@/api/tools";
+import { fetchProviders, validateProviderToken, type Provider } from "@/api/providers";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { StatusBadge } from "@/components/data-display/StatusBadge";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
+import { LIVE_DATA_POLL_MS } from "@/config/apiPolling";
 import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { formatCost, formatRelativeTime, formatTokens } from "@/utils/formatters";
-
-const PROVIDER_OPTIONS: Array<{ value: ToolProvider; label: string }> = [
-  { value: "openai", label: "OpenAI" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "google", label: "Google" },
-  { value: "azure_openai", label: "Azure OpenAI" },
-  { value: "cohere", label: "Cohere" },
-  { value: "mistral", label: "Mistral" },
-  { value: "custom", label: "Custom" },
-];
+import { ToolCsvImportDialog } from "@/pages/admin/ToolCsvImportDialog";
 
 const PRICING_MODEL_OPTIONS: Array<{ value: PricingModel; label: string }> = [
   { value: "per_token", label: "Per token" },
@@ -72,16 +70,6 @@ const PRICING_MODEL_CHIP_COLORS: Record<
   flat_fee: { background: "#ECFDF5", color: "#059669", label: "Flat fee" },
   hybrid: { background: "#FFF7ED", color: "#C2410C", label: "Hybrid" },
 };
-
-const providerValues = [
-  "openai",
-  "anthropic",
-  "google",
-  "azure_openai",
-  "cohere",
-  "mistral",
-  "custom",
-] as const;
 
 function parseNullableNumber(value: unknown): number | null {
   if (value === "" || value == null) {
@@ -124,18 +112,25 @@ const pricingSchema = z.object({
   overageRate: nullableNumberField,
 });
 
+const SCHEDULE_OPTIONS: Array<{ value: CollectionSchedule; label: string }> = [
+  { value: "hourly", label: "Hourly" },
+  { value: "daily", label: "Daily" },
+];
+
 const createSchema = z.object({
   name: z.string().min(1, "Name is required").max(80),
-  provider: z.enum(providerValues),
+  provider: z.string().min(1, "Select a provider"),
   apiKey: z.string().min(1, "API key is required"),
+  collectionSchedule: z.enum(["hourly", "daily"]),
   description: z.string().max(200).default(""),
   pricing: pricingSchema,
 });
 
 const editSchema = z.object({
   name: z.string().min(1, "Name is required").max(80),
-  provider: z.enum(providerValues),
+  provider: z.string().min(1, "Select a provider"),
   apiKey: z.string().optional().or(z.literal("")),
+  collectionSchedule: z.enum(["hourly", "daily"]),
   description: z.string().max(200).default(""),
   pricing: pricingSchema,
 });
@@ -158,21 +153,22 @@ function defaultPricing(): ToolPricing {
   };
 }
 
-function defaultFormValues(): CreateFormValues {
+function defaultFormValues(defaultProvider = "openai"): CreateFormValues {
   return {
     name: "",
-    provider: "openai",
+    provider: defaultProvider,
     apiKey: "",
+    collectionSchedule: "daily",
     description: "",
     pricing: defaultPricing(),
   };
 }
 
-function formatProviderLabel(provider: ToolProvider): string {
-  return provider
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+function formatProviderLabel(
+  slug: string,
+  providerBySlug: Map<string, Provider>,
+): string {
+  return providerBySlug.get(slug)?.name ?? slug.replace(/_/g, " ");
 }
 
 function formatRate(value: number | null, decimals = 3): string {
@@ -228,16 +224,47 @@ export function ToolsPage() {
   });
   const [deleteTarget, setDeleteTarget] = useState<AiTool | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [syncFeedback, setSyncFeedback] = useState<{
+    toolId: string;
+    severity: "success" | "error";
+    message: string;
+  } | null>(null);
+  const [csvDialogOpen, setCsvDialogOpen] = useState(false);
+  const [csvImportTarget, setCsvImportTarget] = useState<AiTool | null>(null);
+  const [tokenValidated, setTokenValidated] = useState(false);
+  const [validationMessage, setValidationMessage] = useState<{
+    severity: "success" | "error";
+    text: string;
+  } | null>(null);
 
   const toolsQuery = useQuery({
     queryKey: ["tools"],
     queryFn: fetchTools,
+    refetchInterval: syncingId ? false : LIVE_DATA_POLL_MS,
   });
+
+  const providersQuery = useQuery({
+    queryKey: ["providers", "active"],
+    queryFn: () => fetchProviders({ active: true }),
+    refetchInterval: LIVE_DATA_POLL_MS,
+  });
+
+  const providerBySlug = useMemo(() => {
+    const map = new Map<string, Provider>();
+    for (const provider of providersQuery.data ?? []) {
+      map.set(provider.slug, provider);
+    }
+    return map;
+  }, [providersQuery.data]);
+
+  const connectProviderOptions = providersQuery.data ?? [];
 
   const createMutation = useMutation({
     mutationFn: createTool,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["tools"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      await queryClient.invalidateQueries({ queryKey: ["insights"] });
       setSlideOver({ open: false, tool: null });
     },
   });
@@ -268,16 +295,65 @@ export function ToolsPage() {
     mutationFn: syncTool,
     onMutate: (id) => {
       setSyncingId(id);
+      setSyncFeedback(null);
     },
     onSettled: () => {
       setSyncingId(null);
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      queryClient.setQueryData<AiTool[]>(["tools"], (current) =>
+        mergeSyncedToolIntoList(current ?? [], result.tool),
+      );
+      setSyncFeedback({
+        toolId: result.tool.id,
+        severity: "success",
+        message: result.message,
+      });
       await queryClient.invalidateQueries({ queryKey: ["tools"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      await queryClient.invalidateQueries({ queryKey: ["insights"] });
+    },
+    onError: (error: Error, toolId) => {
+      const message =
+        error instanceof ApiClientError
+          ? error.apiError.detail
+          : error.message || "Live usage sync failed.";
+      setSyncFeedback({
+        toolId,
+        severity: "error",
+        message,
+      });
+      void queryClient.invalidateQueries({ queryKey: ["tools"] });
+    },
+  });
+
+  const validateMutation = useMutation({
+    mutationFn: ({
+      providerSlug,
+      apiToken,
+    }: {
+      providerSlug: string;
+      apiToken: string;
+    }) => validateProviderToken(providerSlug, apiToken),
+    onSuccess: (result) => {
+      setTokenValidated(result.valid);
+      setValidationMessage({
+        severity: result.valid ? "success" : "error",
+        text: result.message,
+      });
+    },
+    onError: (error: Error) => {
+      setTokenValidated(false);
+      setValidationMessage({
+        severity: "error",
+        text: error.message || "Could not validate API key.",
+      });
     },
   });
 
   const isEditMode = slideOver.tool !== null;
+  const csvImportedEdit =
+    isEditMode && slideOver.tool !== null && isCsvImportedTool(slideOver.tool);
   const savePending = createMutation.isPending || updateMutation.isPending;
 
   const {
@@ -293,10 +369,21 @@ export function ToolsPage() {
   });
 
   const pricingModel = watch("pricing.model");
+  const selectedProvider = watch("provider");
+  const apiKeyValue = watch("apiKey");
+
+  useEffect(() => {
+    setTokenValidated(false);
+    setValidationMessage(null);
+  }, [selectedProvider, apiKeyValue]);
 
   useEffect(() => {
     if (!slideOver.open) {
-      reset(defaultFormValues());
+      const defaultProvider =
+        connectProviderOptions[0]?.slug ?? "openai";
+      reset(defaultFormValues(defaultProvider));
+      setTokenValidated(false);
+      setValidationMessage(null);
       return;
     }
 
@@ -305,20 +392,26 @@ export function ToolsPage() {
         name: slideOver.tool.name,
         provider: slideOver.tool.provider,
         apiKey: "",
+        collectionSchedule: slideOver.tool.collectionSchedule,
         description: slideOver.tool.description,
         pricing: { ...slideOver.tool.pricing },
       });
+      setTokenValidated(true);
+      setValidationMessage(null);
       return;
     }
 
-    reset(defaultFormValues());
-  }, [reset, slideOver]);
+    const defaultProvider = connectProviderOptions[0]?.slug ?? "openai";
+    reset(defaultFormValues(defaultProvider));
+    setTokenValidated(false);
+    setValidationMessage(null);
+  }, [reset, slideOver, connectProviderOptions]);
 
   const columns: Column<AiTool>[] = useMemo(
     () => [
       {
         key: "name",
-        header: "Tool",
+        header: "Team",
         sortable: true,
         render: (row) => (
           <Box>
@@ -326,7 +419,7 @@ export function ToolsPage() {
               {row.name}
             </Typography>
             <Typography variant="caption" sx={{ color: tokens.textMuted }}>
-              {formatProviderLabel(row.provider)}
+              {formatProviderLabel(row.provider, providerBySlug)}
             </Typography>
           </Box>
         ),
@@ -367,14 +460,38 @@ export function ToolsPage() {
       },
       {
         key: "lastSyncAt",
-        header: "Last synced",
-        render: (row) =>
-          row.lastSyncAt ? (
-            formatRelativeTime(row.lastSyncAt)
+        header: "Last updated",
+        render: (row) => {
+          const timestamp = isCsvImportedTool(row)
+            ? row.lastCsvImportAt
+            : row.lastSyncAt;
+          return timestamp ? (
+            formatRelativeTime(timestamp)
           ) : (
             <Typography variant="caption" sx={{ color: tokens.textMuted }}>
               Never
             </Typography>
+          );
+        },
+      },
+      {
+        key: "collectionSchedule",
+        header: "Data source",
+        render: (row) =>
+          isCsvImportedTool(row) ? (
+            <Chip
+              size="small"
+              variant="outlined"
+              label="CSV import"
+              sx={{ fontSize: "0.6875rem", height: 20 }}
+            />
+          ) : (
+            <Chip
+              size="small"
+              variant="outlined"
+              label={row.collectionSchedule === "hourly" ? "Hourly pull" : "Daily pull"}
+              sx={{ fontSize: "0.6875rem", height: 20 }}
+            />
           ),
       },
       {
@@ -385,19 +502,34 @@ export function ToolsPage() {
           <Box sx={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
             <IconButton
               size="small"
-              aria-label={`Sync ${row.name}`}
+              aria-label={`Import CSV for ${row.name}`}
+              title="Import usage from CSV"
               onClick={(event) => {
                 event.stopPropagation();
-                syncMutation.mutate(row.id);
+                setCsvImportTarget(row);
+                setCsvDialogOpen(true);
               }}
-              disabled={syncingId === row.id}
             >
-              {syncingId === row.id ? (
-                <CircularProgress size={12} />
-              ) : (
-                <IconRefresh size={15} />
-              )}
+              <IconUpload size={15} />
             </IconButton>
+            {!isCsvImportedTool(row) && (
+              <IconButton
+                size="small"
+                aria-label={`Pull live usage for ${row.name}`}
+                title="Pull live usage from provider"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  syncMutation.mutate(row.id);
+                }}
+                disabled={syncingId === row.id}
+              >
+                {syncingId === row.id ? (
+                  <CircularProgress size={12} />
+                ) : (
+                  <IconRefresh size={15} />
+                )}
+              </IconButton>
+            )}
             <IconButton
               size="small"
               aria-label={`Edit ${row.name}`}
@@ -423,15 +555,27 @@ export function ToolsPage() {
         ),
       },
     ],
-    [syncMutation, syncingId],
+    [providerBySlug, syncMutation, syncingId],
   );
 
   const onSubmit = (data: FormValues) => {
+    const needsValidation =
+      !csvImportedEdit &&
+      (!isEditMode || Boolean(data.apiKey && data.apiKey.trim().length > 0));
+    if (needsValidation && !tokenValidated) {
+      setValidationMessage({
+        severity: "error",
+        text: "Test the connection before saving.",
+      });
+      return;
+    }
+
     const payload = {
       name: data.name,
       provider: data.provider,
       description: data.description,
       pricing: data.pricing as ToolPricing,
+      collectionSchedule: data.collectionSchedule,
     };
 
     if (slideOver.tool) {
@@ -449,6 +593,26 @@ export function ToolsPage() {
     });
   };
 
+  const handleTestConnection = () => {
+    const provider = selectedProvider;
+    const apiKey = apiKeyValue?.trim();
+    if (!provider) {
+      setValidationMessage({
+        severity: "error",
+        text: "Select a provider first.",
+      });
+      return;
+    }
+    if (!apiKey) {
+      setValidationMessage({
+        severity: "error",
+        text: "Enter an API key to test the connection.",
+      });
+      return;
+    }
+    validateMutation.mutate({ providerSlug: provider, apiToken: apiKey });
+  };
+
   const showTokenRates =
     pricingModel === "per_token" || pricingModel === "hybrid";
   const showSeatFields = pricingModel === "per_seat";
@@ -460,7 +624,7 @@ export function ToolsPage() {
       fallback={
         <EmptyState
           title="Access denied"
-          description="You don't have permission to manage tools."
+          description="You don't have permission to manage teams."
         />
       }
     >
@@ -475,45 +639,89 @@ export function ToolsPage() {
         >
           <Box>
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              AI Tools
+              Teams
             </Typography>
             <Typography variant="body2" sx={{ color: tokens.textMuted }}>
-              Manage your connected AI provider integrations
+              Connect provider API keys and track usage per team
             </Typography>
           </Box>
-          <Button
-            variant="contained"
-            size="small"
-            startIcon={<IconPlus size={15} />}
-            onClick={() => setSlideOver({ open: true, tool: null })}
-          >
-            Connect Tool
-          </Button>
+          <Box sx={{ display: "flex", gap: 1 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<IconUpload size={15} />}
+              onClick={() => {
+                setCsvImportTarget(null);
+                setCsvDialogOpen(true);
+              }}
+            >
+              Import CSV
+            </Button>
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<IconPlus size={15} />}
+              onClick={() => setSlideOver({ open: true, tool: null })}
+            >
+              Connect Team
+            </Button>
+          </Box>
         </Box>
 
         {toolsQuery.isError && (
           <Alert severity="error" sx={{ mb: 2 }}>
-            Failed to load tools. Please refresh.
+            Failed to load teams. Please refresh.
           </Alert>
         )}
+
+        {syncFeedback && (
+          <Alert
+            severity={syncFeedback.severity}
+            sx={{ mb: 2 }}
+            onClose={() => setSyncFeedback(null)}
+          >
+            {syncFeedback.message}
+          </Alert>
+        )}
+
+        <ToolCsvImportDialog
+          open={csvDialogOpen}
+          onClose={() => {
+            setCsvDialogOpen(false);
+            setCsvImportTarget(null);
+          }}
+          providers={connectProviderOptions}
+          tools={toolsQuery.data ?? []}
+          initialTool={csvImportTarget}
+          onSuccess={async (message) => {
+            setSyncFeedback({
+              toolId: csvImportTarget?.id ?? "",
+              severity: "success",
+              message,
+            });
+            await queryClient.invalidateQueries({ queryKey: ["tools"] });
+            await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+            await queryClient.invalidateQueries({ queryKey: ["insights"] });
+          }}
+        />
 
         <DataTable
           columns={columns}
           rows={toolsQuery.data ?? []}
           rowKey={(row) => row.id}
           loading={toolsQuery.isPending}
-          emptyTitle="No tools connected"
-          emptyDescription="Connect your first AI provider to start tracking usage."
+          emptyTitle="No teams connected"
+          emptyDescription="Connect your first team API key to start tracking usage."
         />
 
         <SlideOver
           open={slideOver.open}
           onClose={() => setSlideOver({ open: false, tool: null })}
-          title={isEditMode ? "Edit Tool" : "Connect Tool"}
+          title={isEditMode ? "Edit Team" : "Connect Team"}
           subtitle={
             isEditMode
-              ? "Update tool configuration"
-              : "Add an AI provider API key"
+              ? "Update team configuration"
+              : "Add a provider API key for a team"
           }
           width={520}
           footer={
@@ -521,14 +729,28 @@ export function ToolsPage() {
               <Button
                 variant="text"
                 onClick={() => setSlideOver({ open: false, tool: null })}
-                disabled={savePending}
+                disabled={savePending || validateMutation.isPending}
               >
                 Cancel
               </Button>
+              {!csvImportedEdit && (
+                <Button
+                  variant="outlined"
+                  onClick={handleTestConnection}
+                  disabled={validateMutation.isPending || savePending}
+                  startIcon={
+                    validateMutation.isPending ? (
+                      <CircularProgress size={14} color="inherit" />
+                    ) : undefined
+                  }
+                >
+                  Test connection
+                </Button>
+              )}
               <Button
                 variant="contained"
                 onClick={handleSubmit(onSubmit)}
-                disabled={savePending}
+                disabled={savePending || validateMutation.isPending}
                 startIcon={
                   savePending ? (
                     <CircularProgress size={14} color="inherit" />
@@ -540,6 +762,11 @@ export function ToolsPage() {
             </>
           }
         >
+          {createMutation.isPending && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Saving and pulling live usage from the provider…
+            </Alert>
+          )}
           <Box
             component="form"
             onSubmit={handleSubmit(onSubmit)}
@@ -548,7 +775,7 @@ export function ToolsPage() {
             <TextField
               {...register("name")}
               fullWidth
-              label="Tool name"
+              label="Team name"
               size="small"
               placeholder="Production OpenAI"
               error={Boolean(errors.name)}
@@ -559,19 +786,34 @@ export function ToolsPage() {
               name="provider"
               control={control}
               render={({ field }) => (
-                <FormControl fullWidth size="small">
+                <FormControl fullWidth size="small" error={Boolean(errors.provider)}>
                   <InputLabel id="tool-provider-label">Provider</InputLabel>
                   <Select
                     {...field}
                     labelId="tool-provider-label"
                     label="Provider"
+                    disabled={providersQuery.isPending}
                   >
-                    {PROVIDER_OPTIONS.map((option) => (
-                      <MenuItem key={option.value} value={option.value}>
-                        {option.label}
+                    {connectProviderOptions.map((option) => (
+                      <MenuItem key={option.slug} value={option.slug}>
+                        {option.name}
                       </MenuItem>
                     ))}
                   </Select>
+                  {errors.provider?.message && (
+                    <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
+                      {errors.provider.message}
+                    </Typography>
+                  )}
+                  {selectedProvider && providerBySlug.get(selectedProvider) && (
+                    <Typography
+                      variant="caption"
+                      sx={{ color: tokens.textMuted, mt: 0.5, display: "block" }}
+                    >
+                      Usage API:{" "}
+                      {providerBySlug.get(selectedProvider)?.usageApiUrl}
+                    </Typography>
+                  )}
                 </FormControl>
               )}
             />
@@ -587,7 +829,47 @@ export function ToolsPage() {
               }
               error={Boolean(errors.apiKey)}
               helperText={errors.apiKey?.message}
+              sx={{ display: csvImportedEdit ? "none" : undefined }}
             />
+
+            {csvImportedEdit && (
+              <Alert severity="info">
+                Usage for this team comes from CSV imports. Use Import CSV on the
+                teams table to update metrics — no API pull is required.
+              </Alert>
+            )}
+
+            {validationMessage && !csvImportedEdit && (
+              <Alert severity={validationMessage.severity}>
+                {validationMessage.text}
+              </Alert>
+            )}
+
+            {!csvImportedEdit && (
+              <Controller
+                name="collectionSchedule"
+                control={control}
+                render={({ field }) => (
+                  <FormControl fullWidth size="small">
+                    <InputLabel id="tool-schedule-label">Usage pull schedule</InputLabel>
+                    <Select
+                      {...field}
+                      labelId="tool-schedule-label"
+                      label="Usage pull schedule"
+                    >
+                      {SCHEDULE_OPTIONS.map((option) => (
+                        <MenuItem key={option.value} value={option.value}>
+                          {option.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    <FormHelperText>
+                      How often usage data will be collected from the provider
+                    </FormHelperText>
+                  </FormControl>
+                )}
+              />
+            )}
 
             <TextField
               {...register("description")}
@@ -596,7 +878,7 @@ export function ToolsPage() {
               size="small"
               multiline
               rows={2}
-              placeholder="Brief description of this tool"
+              placeholder="Brief description of this team"
               error={Boolean(errors.description)}
               helperText={errors.description?.message}
             />
@@ -768,7 +1050,7 @@ export function ToolsPage() {
 
         <ConfirmDialog
           open={deleteTarget !== null}
-          title="Delete tool?"
+          title="Delete team?"
           description={`"${deleteTarget?.name ?? ""}" will be disconnected and all its configuration removed. Usage history is preserved.`}
           dangerous
           confirmLabel="Delete"

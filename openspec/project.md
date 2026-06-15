@@ -164,11 +164,12 @@ Support alerts based on:
 * Package utilization percentage
 * Cost amount
 
-Threshold scope:
+Threshold scope (UI):
 
-* Tool level
-* Team level
-* User level
+* Organization
+* Group (member org unit — API `/teams`)
+* Team (API connection — API `/tools`, stored as scope `tool`)
+* User
 
 Severity:
 
@@ -570,3 +571,71 @@ Phase 1 excludes:
 # Future Vision
 
 Become the organization's system of record for AI consumption, enabling governance, budgeting, optimization, and strategic decision-making across all AI investments.
+
+---
+
+# Frontend Application (Implemented — 2026-06-15)
+
+The React SPA lives in `frontend/`. Production is served from the `frontend` Docker container (nginx) with optional dev Vite profile.
+
+## UI terminology vs API
+
+| UI label | Route | Backend API | Purpose |
+|----------|-------|-------------|---------|
+| **Teams** | `/admin/teams` | `/api/v1/tools` | Vendor API connections (Cursor, OpenAI, …) |
+| **Groups** | `/admin/groups` | `/api/v1/teams` | Member org units, budgets, tool access |
+| **Members** | `/admin/members` | `/api/v1/members` | Platform users |
+| **Credentials** | `/admin/credentials` | `/api/v1/credentials` | Encrypted vendor keys |
+
+Legacy redirect: `/admin/tools` → `/admin/teams`.
+
+## Active routes
+
+| Route | Page | Access |
+|-------|------|--------|
+| `/login` | Login | Public |
+| `/insights` | Insights hub (Overview, By Team, Reports) | Authenticated |
+| `/alerts`, `/alerts/history` | Alerts | Super Admin, Team Admin |
+| `/uploads`, `/uploads/:uploadId/preview` | Uploads + preview | Authenticated |
+| `/admin/teams` | Teams (API connections) | Super Admin |
+| `/admin/groups` | Groups | Super Admin |
+| `/admin/providers` | Providers | Super Admin |
+| `/admin/members` | Members | Super Admin |
+| `/admin/credentials` | Credentials | Super Admin |
+| `/admin/audit-log` | Audit log | Super Admin |
+
+## Redirects
+
+| From | To |
+|------|-----|
+| `/` | `/insights` if authenticated, else `/login` |
+| `/dashboard`, `/usage/*`, `/reports/*` | `/insights` |
+| `/admin/tools` | `/admin/teams` |
+| `*` (unknown) | `/insights` |
+
+## Insights hub
+
+- **Overview** — stats, cost-by-team chart, top users, recent alerts
+- **By Team** — usage table from `GET /dashboard/usage-by-team` (API team / tool metrics)
+- **Reports** — generate, download, subscribe, delete
+
+Team filter on Insights lists **API teams** (`/tools`), not member groups.
+
+## Auth behaviour
+
+- Tokens persisted in `sessionStorage`; session restored on reload via `/auth/me`
+- Default landing after login or restore: `/insights`
+- Router basename from `VITE_BASE_PATH` (e.g. `/aitool` in production)
+
+## Production URLs (foundry.inapp.com)
+
+| URL | Purpose |
+|-----|---------|
+| `https://foundry.inapp.com/aitool/` | SPA |
+| `https://foundry.inapp.com/aitool/api/v1/` | API (proxied by frontend nginx) |
+
+Host port: `4501` (`APP_PORT`). See repository `README.md` and `openspec/specifications/deployment.md`.
+
+## OpenSpec change
+
+Detailed delta specs: `openspec/changes/frontend-ux-deployment-alignment/`
