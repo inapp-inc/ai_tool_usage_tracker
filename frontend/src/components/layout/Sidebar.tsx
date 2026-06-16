@@ -1,6 +1,7 @@
 import {
     IconActivity,
     IconBell,
+    IconChartBar,
     IconChevronLeft,
     IconChevronRight,
   IconKey,
@@ -44,6 +45,17 @@ import {
           path: "/insights",
           roles: "all",
           pageId: "insights",
+        },
+      ],
+    },
+    {
+      heading: "My Data",
+      items: [
+        {
+          label: "My Usage",
+          icon: IconChartBar,
+          path: "/my-usage",
+          roles: [Role.TeamMember],
         },
       ],
     },

@@ -1,1 +1,0 @@
-"""Usage tracking bounded context."""

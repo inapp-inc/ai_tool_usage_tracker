@@ -186,6 +186,31 @@ export async function fetchDailyBreakdown(
   return [];
 }
 
+export interface MyUsageTeam {
+  team_id: string;
+  team_name: string;
+  total_tokens: number;
+  estimated_cost: number;
+}
+
+export interface MyUsageResponse {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  role: string;
+  period: { from: string; to: string };
+  teams: MyUsageTeam[];
+}
+
+export async function fetchMyUsage(
+  from: string,
+  to: string,
+): Promise<MyUsageResponse> {
+  return apiRequest<MyUsageResponse>(
+    `/usage/me?${new URLSearchParams({ from, to })}`,
+  );
+}
+
 export const usageApi = {
   fetchUsageSummary,
   fetchTeamUsage,
@@ -194,4 +219,5 @@ export const usageApi = {
   fetchTeamDrilldown,
   fetchToolOptions,
   fetchDailyBreakdown,
+  fetchMyUsage,
 };

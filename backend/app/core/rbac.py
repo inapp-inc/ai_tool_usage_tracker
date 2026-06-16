@@ -54,6 +54,21 @@ async def require_finance_viewer_access(
     return current_user
 
 
+async def require_auditor_access(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> AuthenticatedUser:
+    """Allow Super Admin or Auditor. All other roles get 403.
+
+    Use this guard on read-only audit/compliance endpoints.
+    """
+    if current_user.role not in ("super_admin", "auditor"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to perform this action.",
+        )
+    return current_user
+
+
 async def get_managed_team_ids(
     current_user: AuthenticatedUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),

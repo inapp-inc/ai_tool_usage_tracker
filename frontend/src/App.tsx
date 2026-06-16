@@ -18,6 +18,9 @@ const LoginPage = lazy(() =>
 const InsightsPage = lazy(() =>
   import("@/pages/insights/InsightsPage").then((m) => ({ default: m.InsightsPage })),
 );
+const MyUsagePage = lazy(() =>
+  import("@/pages/usage/MyUsagePage").then((m) => ({ default: m.MyUsagePage })),
+);
 
 // ─── Alerts ───────────────────────────────────────────────────────────────────
 const AlertsPage = lazy(() =>
@@ -113,6 +116,7 @@ export function AppRoutes() {
         }
       >
         <Route path="/insights" element={<InsightsPage />} />
+        <Route path="/my-usage" element={<MyUsagePage />} />
 
         <Route path="/dashboard" element={<Navigate to="/insights" replace />} />
         <Route path="/usage/teams" element={<Navigate to="/insights" replace />} />
