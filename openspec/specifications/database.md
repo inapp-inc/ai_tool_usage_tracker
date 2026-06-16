@@ -58,7 +58,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro  # optional extensions
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"  # restrict bind address in production
+      - "${POSTGRES_PORT:-5433}:5432"  # restrict bind address in production
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s

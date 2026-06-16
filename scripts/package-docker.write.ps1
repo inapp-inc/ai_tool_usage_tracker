@@ -76,7 +76,7 @@ APP_LOG_LEVEL=INFO
 
 FRONTEND_URL=https://foundry.inapp.com/aitool
 
-VITE_BASE_PATH=/aitool/
+VITE_BASE_PATH=/aitool
 
 BACKEND_PORT=4500
 
@@ -150,7 +150,7 @@ Production env (.env):
 
   APP_PORT=4501
 
-  VITE_BASE_PATH=/aitool/
+  VITE_BASE_PATH=/aitool
 
 
 

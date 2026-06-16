@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { useAuth } from "@/auth/AuthContext";
 import { AuthProvider } from "@/auth/AuthProvider";
+import { normalizeBasePath } from "@/config/basePath";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageSkeleton } from "@/components/feedback/PageSkeleton";
 
@@ -74,8 +75,7 @@ function GuestRoute({ children }: { children: ReactElement }) {
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
-const routerBasename =
-  import.meta.env.VITE_BASE_PATH?.replace(/\/$/, "") || undefined;
+const routerBasename = normalizeBasePath(import.meta.env.VITE_BASE_PATH);
 
 export function AppRoutes() {
   return (

@@ -29,7 +29,7 @@ Centralized platform for monitoring AI tool consumption, costs, and adoption acr
 | `api` | `backend/Dockerfile` | FastAPI at `/api/v1` |
 | `worker` | `backend/Dockerfile` | Celery worker (5 queues) |
 | `beat` | `backend/Dockerfile` | Celery Beat |
-| `frontend` | `frontend/Dockerfile` | nginx SPA + API proxy at `/aitool/` on port **4501** |
+| `frontend` | `frontend/Dockerfile` | Vite preview SPA on port **4501** (proxies API via Vite) |
 | `frontend-dev` | `node:20-alpine` | Vite dev server (profile `dev` only) |
 
 ### Quick start
@@ -86,7 +86,7 @@ Open http://localhost:5173 — API requests go to `http://localhost:8000/api/v1`
 docker compose up --build
 ```
 
-Open http://localhost:4501/aitool/ — nginx serves the SPA and proxies `/aitool/api/v1` to the API container.
+Open http://localhost:4501/aitool/ — Vite preview serves the SPA and proxies `/aitool/api/v1` to the API container.
 
 **Docker Vite hot reload (optional):**
 
@@ -183,7 +183,7 @@ Set `CREDENTIAL_ENCRYPTION_KEY` in `.env` for AES-256 credential storage.
 
 ## Production deployment (foundry.inapp.com)
 
-Single public port **4501** — nginx in the `frontend` container serves the app and proxies the API:
+Single public port **4501** — the `frontend` container runs Vite preview and proxies API requests:
 
 | URL | Purpose |
 |-----|---------|

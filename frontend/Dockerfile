@@ -16,12 +16,19 @@ ENV VITE_BASE_PATH=$VITE_BASE_PATH
 
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
+FROM node:20-alpine AS runtime
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html/aitool
+WORKDIR /app
 
-EXPOSE 80
+COPY package.json package-lock.json vite.config.ts ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
 
-HEALTHCHECK --interval=15s --timeout=5s --retries=3 --start-period=10s \
-  CMD wget -qO- http://127.0.0.1/healthz || exit 1
+ENV VITE_PREVIEW_API_TARGET=http://api:8000
+
+EXPOSE 4501
+
+HEALTHCHECK --interval=15s --timeout=5s --retries=3 --start-period=15s \
+  CMD wget -qO- http://127.0.0.1:4501/aitool/ || exit 1
+
+CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "4501"]

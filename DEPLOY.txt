@@ -61,7 +61,7 @@ Production env (.env):
 
   APP_PORT=4501
 
-  VITE_BASE_PATH=/aitool/
+  VITE_BASE_PATH=/aitool
 
 
 

@@ -210,9 +210,9 @@ APP_PORT="$(choose_distinct_port "$PREFERRED_APP_PORT" "$PORT_RANGE_START" "$POR
 set_env_value "$DEST_ENV_FILE" "APP_PORT" "$APP_PORT"
 
 BASE_PATH="$(env_value "$DEST_ENV_FILE" VITE_BASE_PATH || true)"
-BASE_PATH="${BASE_PATH:-/aitool/}"
+BASE_PATH="${BASE_PATH:-/aitool}"
 BASE_PATH="${BASE_PATH%/}"
-set_env_value "$DEST_ENV_FILE" "VITE_BASE_PATH" "${BASE_PATH}/"
+set_env_value "$DEST_ENV_FILE" "VITE_BASE_PATH" "$BASE_PATH"
 
 if [[ "$PUBLIC_ORIGIN" == "http://localhost" ]]; then
   PUBLIC_ORIGIN="http://127.0.0.1:${APP_PORT}${BASE_PATH}"

@@ -6,7 +6,32 @@ import { defineConfig } from "vite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const basePath = process.env.VITE_BASE_PATH?.replace(/\/$/, "") ?? "";
+function normalizeBasePath(value: string | undefined): string {
+  if (!value) {
+    return "";
+  }
+  return value.trim().replace(/\/+$/, "");
+}
+
+const basePath = normalizeBasePath(process.env.VITE_BASE_PATH);
+const previewApiTarget =
+  process.env.VITE_PREVIEW_API_TARGET ?? "http://localhost:8000";
+
+const apiProxy = basePath
+  ? {
+      [`${basePath}/api`]: {
+        target: previewApiTarget,
+        changeOrigin: true,
+        rewrite: (path: string) =>
+          path.replace(new RegExp(`^${basePath}/api`), "/api"),
+      },
+    }
+  : {
+      "/api": {
+        target: previewApiTarget,
+        changeOrigin: true,
+      },
+    };
 
 export default defineConfig({
   base: basePath ? `${basePath}/` : "/",
@@ -24,6 +49,13 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+    allowedHosts: ['foundry.inapp.com']
+  },
+  preview: {
+    port: 4501,
+    host: "0.0.0.0",
+    allowedHosts: ["foundry.inapp.com"],
+    proxy: apiProxy,
   },
   test: {
     environment: "jsdom",

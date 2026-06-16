@@ -1,4 +1,4 @@
-# Production overrides — single public port (4501) via nginx frontend gateway.
+# Production overrides — public frontend on APP_PORT; API not published (use host reverse proxy).
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
@@ -16,4 +16,4 @@ services:
 
   frontend:
     ports:
-      - "${APP_PORT:-4501}:80"
+      - "${APP_PORT:-4501}:4501"
