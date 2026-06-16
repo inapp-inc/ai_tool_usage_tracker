@@ -12,41 +12,6 @@ export interface LoginResponse {
   accessToken: string;
 }
 
-const MOCK_LOGIN_LATENCY_MS = 600;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-function deriveNameFromEmail(email: string): string {
-  const localPart = email.split("@")[0] ?? email;
-  if (!localPart) {
-    return email;
-  }
-  return localPart.charAt(0).toUpperCase() + localPart.slice(1);
-}
-
-export async function login(body: LoginRequest): Promise<LoginResponse> {
-  await delay(MOCK_LOGIN_LATENCY_MS);
-
-  if (body.password.length < 1 || body.email.trim().length < 1) {
-    throw new Error("Invalid credentials");
-  }
-
-  return {
-    user: {
-      id: "u_1",
-      name: deriveNameFromEmail(body.email),
-      email: body.email,
-      platformRole: Role.SuperAdmin,
-      teamMemberships: [],
-    },
-    accessToken: `mock_token_${Date.now()}`,
-  };
-}
-
 interface TokenResponse {
   access_token: string;
   refresh_token?: string;
@@ -63,14 +28,49 @@ interface UserProfileResponse {
   team_ids?: string[];
 }
 
+const REFRESH_TOKEN_STORAGE_KEY = "ai_tool_tracker_refresh_token";
+
 let inMemoryRefreshToken: string | null = null;
+
+function loadPersistedRefreshToken(): string | null {
+  try {
+    return sessionStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function persistRefreshToken(token: string | null): void {
+  try {
+    if (token) {
+      sessionStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, token);
+    } else {
+      sessionStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage failures (private browsing, etc.)
+  }
+}
 
 export function setRefreshToken(token: string | null): void {
   inMemoryRefreshToken = token;
+  persistRefreshToken(token);
 }
 
 export function getRefreshToken(): string | null {
+  if (inMemoryRefreshToken) {
+    return inMemoryRefreshToken;
+  }
+  const stored = loadPersistedRefreshToken();
+  if (stored) {
+    inMemoryRefreshToken = stored;
+  }
   return inMemoryRefreshToken;
+}
+
+export function clearPersistedRefreshToken(): void {
+  inMemoryRefreshToken = null;
+  persistRefreshToken(null);
 }
 
 function mapUserProfile(profile: UserProfileResponse): User {
@@ -91,14 +91,57 @@ function mapUserProfile(profile: UserProfileResponse): User {
   };
 }
 
+async function parseApiError(response: Response): Promise<string> {
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (contentType.includes("json") || contentType.includes("problem")) {
+    try {
+      const body: unknown = await response.json();
+      if (body && typeof body === "object") {
+        const record = body as Record<string, unknown>;
+        if (typeof record.detail === "string" && record.detail.trim()) {
+          return record.detail.trim();
+        }
+        if (typeof record.title === "string" && record.title.trim()) {
+          return record.title.trim();
+        }
+      }
+    } catch {
+      // fall through
+    }
+  }
+  return response.statusText || "Request failed";
+}
+
+export async function login(body: LoginRequest): Promise<LoginResponse> {
+  const response = await apiFetch("/auth/login", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseApiError(response));
+  }
+
+  const tokens = (await response.json()) as TokenResponse;
+  setAccessToken(tokens.access_token);
+  if (tokens.refresh_token) {
+    setRefreshToken(tokens.refresh_token);
+  }
+
+  const user = await fetchCurrentUser();
+  return { user, accessToken: tokens.access_token };
+}
+
 export async function refreshToken(): Promise<TokenResponse> {
-  if (!inMemoryRefreshToken) {
+  const refresh = getRefreshToken();
+  if (!refresh) {
     throw new Error("No refresh token available");
   }
 
   const response = await apiFetch("/auth/refresh", {
     method: "POST",
-    body: JSON.stringify({ refresh_token: inMemoryRefreshToken }),
+    body: JSON.stringify({ refresh_token: refresh }),
+    headers: { "Content-Type": "application/json" },
   });
 
   if (!response.ok) {
@@ -108,7 +151,7 @@ export async function refreshToken(): Promise<TokenResponse> {
   const tokens = (await response.json()) as TokenResponse;
   setAccessToken(tokens.access_token);
   if (tokens.refresh_token) {
-    inMemoryRefreshToken = tokens.refresh_token;
+    setRefreshToken(tokens.refresh_token);
   }
 
   return tokens;
@@ -128,7 +171,7 @@ export async function restoreAuthSession(): Promise<{
   user: User;
   accessToken: string;
 } | null> {
-  if (!inMemoryRefreshToken) {
+  if (!getRefreshToken()) {
     return null;
   }
 

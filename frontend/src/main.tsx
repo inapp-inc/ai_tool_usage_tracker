@@ -5,6 +5,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 
 import { App } from "@/App";
+import { AuthBootstrap } from "@/auth/AuthBootstrap";
 import { theme } from "@/theme";
 
 const queryClient = new QueryClient();
@@ -14,7 +15,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <App />
+        <AuthBootstrap>
+          <App />
+        </AuthBootstrap>
       </ThemeProvider>
     </QueryClientProvider>
   </React.StrictMode>,

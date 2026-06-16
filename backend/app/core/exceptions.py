@@ -9,6 +9,35 @@ from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR
 
 PROBLEM_BASE = "https://api.ai-tool-tracker.example/problems"
 
+HTTP_STATUS_TITLES: dict[int, str] = {
+    400: "Invalid request",
+    401: "Authentication required",
+    403: "Forbidden",
+    404: "Not found",
+    409: "Conflict",
+    422: "Validation error",
+    429: "Rate limit exceeded",
+}
+
+
+def _normalize_detail(detail: object) -> str:
+    if isinstance(detail, str):
+        return detail.strip() or "An error occurred."
+    if isinstance(detail, list):
+        messages: list[str] = []
+        for item in detail:
+            if isinstance(item, dict):
+                msg = item.get("msg")
+                if msg:
+                    messages.append(str(msg))
+        if messages:
+            return "; ".join(messages)
+    if isinstance(detail, dict):
+        msg = detail.get("message") or detail.get("msg")
+        if msg:
+            return str(msg)
+    return str(detail)
+
 
 def problem_response(
     *,
@@ -39,16 +68,19 @@ def register_exception_handlers(app: FastAPI) -> None:
         _request: Request,
         exc: HTTPException,
     ) -> JSONResponse:
-        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        detail = _normalize_detail(exc.detail)
         type_suffix = {
+            400: "bad-request",
             401: "unauthorized",
             403: "forbidden",
             404: "not-found",
+            409: "conflict",
+            422: "validation-error",
             429: "rate-limit-exceeded",
         }.get(exc.status_code, "error")
         return problem_response(
             status=exc.status_code,
-            title=detail or "Error",
+            title=HTTP_STATUS_TITLES.get(exc.status_code, "Error"),
             detail=detail,
             type_suffix=type_suffix,
         )
@@ -60,7 +92,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         return problem_response(
             status=422,
-            title="Validation Error",
+            title=HTTP_STATUS_TITLES[422],
             detail="One or more fields failed validation.",
             type_suffix="validation-error",
             extra={"errors": exc.errors()},

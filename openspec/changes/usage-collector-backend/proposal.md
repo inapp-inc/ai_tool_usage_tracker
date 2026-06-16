@@ -1,5 +1,7 @@
 # Proposal: Usage Collector Backend
 
+> **MVP path:** A minimal postgres + API implementation with in-process scheduling lives in [token-collector-mvp](../token-collector-mvp/proposal.md). This change describes the full Phase 1 Celery-based collector.
+
 ## Why
 
 FR-ING-004 and FR-USG-002 require automated usage sync from vendor AI tool APIs — not only manual file uploads. Administrators need to connect providers with API tokens, choose **hourly** or **daily** collection schedules, and have the frontend support a **provider-managed connect** flow. Without a collector module, dashboards, reporting, and threshold evaluation lack timely data.

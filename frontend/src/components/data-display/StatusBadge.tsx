@@ -8,6 +8,7 @@ type StatusVariant =
   | "paused"
   | "error"
   | "pending"
+  | "mapping"
   | "processing"
   | "completed"
   | "cancelled";
@@ -26,12 +27,16 @@ const STATUS_COLORS: Record<
   paused: { background: "#FEF9C3", color: "#A16207" },
   error: { background: "#FEE2E2", color: "#DC2626" },
   pending: { background: "#EFF6FF", color: "#2563EB" },
+  mapping: { background: "#FEF9C3", color: "#A16207" },
   processing: { background: "#EFF6FF", color: "#2563EB" },
   completed: { background: "#DCFCE7", color: "#16A34A" },
   cancelled: { background: tokens.bgDefault, color: tokens.textMuted },
 };
 
 function defaultLabel(status: StatusVariant): string {
+  if (status === "mapping") {
+    return "Map columns";
+  }
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 

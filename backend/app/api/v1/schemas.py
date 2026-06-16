@@ -13,4 +13,3 @@ class HealthResponse(BaseModel):
 
     status: HealthStatus
     database: DependencyStatus | None = None
-    redis: DependencyStatus | None = None

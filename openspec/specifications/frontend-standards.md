@@ -66,6 +66,7 @@ This document defines implementation standards for the React SPA under `frontend
 - Components and pages **must not** call `fetch` directly.
 - Shared client behaviour (correlation ID, auth header, 401 refresh, error parsing) lives in `src/api/client.ts`.
 - Runtime validation with **Zod** at API boundaries is required when implementing domain methods.
+- Target REST contract and mock→OpenAPI mapping: [openspec/specifications/apis/frontend-mapping.md](../../openspec/specifications/apis/frontend-mapping.md).
 
 ---
 

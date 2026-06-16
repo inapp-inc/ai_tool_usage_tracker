@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
+import { ToastHost } from "@/components/feedback/ToastHost";
 
 const SIDEBAR_WIDTH = 240;
 const SIDEBAR_COLLAPSED_WIDTH = 64;
@@ -39,6 +40,7 @@ export function AppShell() {
           <Outlet />
         </Box>
       </Box>
+      <ToastHost />
     </Box>
   );
 }

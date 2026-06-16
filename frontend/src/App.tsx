@@ -29,6 +29,11 @@ const UploadPreviewPage = lazy(() =>
     default: m.UploadPreviewPage,
   })),
 );
+const UploadMappingPage = lazy(() =>
+  import("@/pages/uploads/UploadMappingPage").then((m) => ({
+    default: m.UploadMappingPage,
+  })),
+);
 
 // ─── Admin ───────────────────────────────────────────────────────────────────
 const ToolsPage = lazy(() =>
@@ -83,6 +88,7 @@ export function AppRoutes() {
         <Route path="/alerts/history" element={<AlertsPage />} />
 
         <Route path="/uploads" element={<UploadsPage />} />
+        <Route path="/uploads/:uploadId/map" element={<UploadMappingPage />} />
         <Route path="/uploads/:uploadId/preview" element={<UploadPreviewPage />} />
 
         <Route path="/admin/tools" element={<ToolsPage />} />

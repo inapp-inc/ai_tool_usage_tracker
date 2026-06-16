@@ -275,11 +275,13 @@ export function AlertsPage() {
   const rulesQuery = useQuery({
     queryKey: ["alerts", "rules"],
     queryFn: fetchAlertRules,
+    enabled: activeTab === 0,
   });
 
   const historyQuery = useQuery({
     queryKey: ["alerts", "history"],
     queryFn: fetchAlertHistory,
+    enabled: activeTab === 1,
   });
 
   const teamsQuery = useQuery({

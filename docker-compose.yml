@@ -1,5 +1,7 @@
 name: ai-tool-tracker
 
+# Minimal stack: PostgreSQL + API (migrations run on API startup; collector scheduler in-process).
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -27,41 +29,6 @@ services:
     networks:
       - ai-tracker
 
-  redis:
-    image: redis:7-alpine
-    container_name: ai-tracker-redis
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis_data:/data
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-    restart: unless-stopped
-    networks:
-      - ai-tracker
-
-  migrate:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: ai-tracker-migrate
-    command: ["alembic", "upgrade", "head"]
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aitracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aitracker}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - ai-tracker
-    restart: "no"
-
   api:
     build:
       context: ./backend
@@ -69,31 +36,21 @@ services:
     container_name: ai-tracker-api
     command:
       [
-        "uvicorn",
-        "app.main:app",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8000",
+        "sh",
+        "-c",
+        "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000",
       ]
     env_file:
       - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aitracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aitracker}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      STORAGE_BACKEND: local
-      LOCAL_STORAGE_ROOT: /var/lib/ai-tracker/storage
+      COLLECTOR_SCHEDULER_ENABLED: "true"
       ENVIRONMENT: development
-    volumes:
-      - storage_data:/var/lib/ai-tracker/storage
+      FRONTEND_PORT: ${FRONTEND_PORT:-5173}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test:
@@ -107,74 +64,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    restart: unless-stopped
-    networks:
-      - ai-tracker
-
-  worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: ai-tracker-worker
-    command:
-      [
-        "celery",
-        "-A",
-        "app.celery_app:celery_app",
-        "worker",
-        "--loglevel=info",
-        "-Q",
-        "ingestion,reports,alerts,email,maintenance",
-      ]
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aitracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aitracker}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      STORAGE_BACKEND: local
-      LOCAL_STORAGE_ROOT: /var/lib/ai-tracker/storage
-      ENVIRONMENT: development
-    volumes:
-      - storage_data:/var/lib/ai-tracker/storage
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      api:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - ai-tracker
-
-  beat:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: ai-tracker-beat
-    command:
-      [
-        "celery",
-        "-A",
-        "app.celery_app:celery_app",
-        "beat",
-        "--loglevel=info",
-      ]
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aitracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aitracker}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      ENVIRONMENT: development
-    depends_on:
-      redis:
-        condition: service_healthy
-      worker:
-        condition: service_started
     restart: unless-stopped
     networks:
       - ai-tracker
@@ -204,9 +93,3 @@ networks:
 volumes:
   postgres_data:
     name: ai-tracker-postgres-data
-  redis_data:
-    name: ai-tracker-redis-data
-  storage_data:
-    name: ai-tracker-storage-data
-  backups_data:
-    name: ai-tracker-backups-data

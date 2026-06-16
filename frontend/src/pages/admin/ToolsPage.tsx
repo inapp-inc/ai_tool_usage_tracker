@@ -4,6 +4,7 @@ import {
   IconPlus,
   IconRefresh,
   IconTrash,
+  IconUsers,
 } from "@tabler/icons-react";
 import {
   Alert,
@@ -18,6 +19,7 @@ import {
   MenuItem,
   Select,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,14 +30,18 @@ import { z } from "zod";
 import {
   createTool,
   deleteTool,
+  fetchToolMembers,
   fetchTools,
+  normalizePricing,
   syncTool,
   updateTool,
   type AiTool,
   type PricingModel,
+  type ToolMember,
   type ToolPricing,
   type ToolProvider,
 } from "@/api/tools";
+import { ApiClientError } from "@/api/client";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { StatusBadge } from "@/components/data-display/StatusBadge";
@@ -45,6 +51,7 @@ import { SlideOver } from "@/components/layout/SlideOver";
 import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { formatCost, formatRelativeTime, formatTokens } from "@/utils/formatters";
+import { useToast } from "@/hooks/useToast";
 
 const PROVIDER_OPTIONS: Array<{ value: ToolProvider; label: string }> = [
   { value: "openai", label: "OpenAI" },
@@ -53,6 +60,9 @@ const PROVIDER_OPTIONS: Array<{ value: ToolProvider; label: string }> = [
   { value: "azure_openai", label: "Azure OpenAI" },
   { value: "cohere", label: "Cohere" },
   { value: "mistral", label: "Mistral" },
+  { value: "cursor", label: "Cursor" },
+  { value: "mabl", label: "Mabl" },
+  { value: "windsurf", label: "Windsurf" },
   { value: "custom", label: "Custom" },
 ];
 
@@ -80,6 +90,9 @@ const providerValues = [
   "azure_openai",
   "cohere",
   "mistral",
+  "cursor",
+  "mabl",
+  "windsurf",
   "custom",
 ] as const;
 
@@ -95,6 +108,23 @@ function parseNullableString(value: unknown): string | null {
     return null;
   }
   return String(value);
+}
+
+function parseFormNumber(value: string): number | null {
+  if (value.trim() === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function parseFormPositiveInt(value: string): number | null {
+  const parsed = parseFormNumber(value);
+  if (parsed == null) {
+    return null;
+  }
+  const intValue = Math.trunc(parsed);
+  return intValue > 0 ? intValue : null;
 }
 
 const nullableNumberField = z.preprocess(
@@ -119,20 +149,23 @@ const pricingSchema = z.object({
   costPerSeat: nullableNumberField,
   seatCount: nullablePositiveIntField,
   flatMonthlyCost: nullableNumberField,
-  planName: nullableStringField,
+  planName: z
+    .string()
+    .max(100)
+    .nullable()
+    .optional()
+    .transform((value) => {
+      if (value == null || value === "") {
+        return null;
+      }
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    }),
   includedTokens: nullablePositiveIntField,
   overageRate: nullableNumberField,
 });
 
-const createSchema = z.object({
-  name: z.string().min(1, "Name is required").max(80),
-  provider: z.enum(providerValues),
-  apiKey: z.string().min(1, "API key is required"),
-  description: z.string().max(200).default(""),
-  pricing: pricingSchema,
-});
-
-const editSchema = z.object({
+const toolFormSchema = z.object({
   name: z.string().min(1, "Name is required").max(80),
   provider: z.enum(providerValues),
   apiKey: z.string().optional().or(z.literal("")),
@@ -140,9 +173,9 @@ const editSchema = z.object({
   pricing: pricingSchema,
 });
 
-type CreateFormValues = z.infer<typeof createSchema>;
-type EditFormValues = z.infer<typeof editSchema>;
-type FormValues = CreateFormValues | EditFormValues;
+type CreateFormValues = z.infer<typeof toolFormSchema>;
+type EditFormValues = CreateFormValues;
+type FormValues = CreateFormValues;
 
 function defaultPricing(): ToolPricing {
   return {
@@ -220,25 +253,59 @@ interface SlideOverState {
   tool: AiTool | null;
 }
 
+interface MembersPanelState {
+  open: boolean;
+  tool: AiTool | null;
+}
+
+function getApiErrorMessage(error: unknown): string {
+  if (error instanceof ApiClientError) {
+    return error.apiError.detail;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Something went wrong. Please try again.";
+}
+
 export function ToolsPage() {
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const [slideOver, setSlideOver] = useState<SlideOverState>({
+    open: false,
+    tool: null,
+  });
+  const [membersPanel, setMembersPanel] = useState<MembersPanelState>({
     open: false,
     tool: null,
   });
   const [deleteTarget, setDeleteTarget] = useState<AiTool | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const toolsQuery = useQuery({
     queryKey: ["tools"],
     queryFn: fetchTools,
   });
 
+  const membersQuery = useQuery({
+    queryKey: ["tools", membersPanel.tool?.id, "members"],
+    queryFn: () => fetchToolMembers(membersPanel.tool!.id),
+    enabled: membersPanel.open && membersPanel.tool !== null,
+  });
+
   const createMutation = useMutation({
     mutationFn: createTool,
     onSuccess: async () => {
+      showToast("API key verified. Tool connected successfully.", "success");
+      setSaveError(null);
       await queryClient.invalidateQueries({ queryKey: ["tools"] });
       setSlideOver({ open: false, tool: null });
+    },
+    onError: (error) => {
+      const message = getApiErrorMessage(error);
+      setSaveError(message);
+      showToast(message, "error");
     },
   });
 
@@ -250,17 +317,31 @@ export function ToolsPage() {
       id: string;
       body: Parameters<typeof updateTool>[1];
     }) => updateTool(id, body),
-    onSuccess: async () => {
+    onSuccess: async (_data, variables) => {
+      const message = variables.body.apiKey
+        ? "API key verified and updated successfully."
+        : "Tool updated successfully.";
+      showToast(message, "success");
+      setSaveError(null);
       await queryClient.invalidateQueries({ queryKey: ["tools"] });
       setSlideOver({ open: false, tool: null });
+    },
+    onError: (error) => {
+      const message = getApiErrorMessage(error);
+      setSaveError(message);
+      showToast(message, "error");
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: deleteTool,
     onSuccess: async () => {
+      showToast("Tool deleted.", "success");
       await queryClient.invalidateQueries({ queryKey: ["tools"] });
       setDeleteTarget(null);
+    },
+    onError: (error) => {
+      showToast(getApiErrorMessage(error), "error");
     },
   });
 
@@ -273,9 +354,19 @@ export function ToolsPage() {
       setSyncingId(null);
     },
     onSuccess: async () => {
+      showToast("Usage synced from provider.", "success");
       await queryClient.invalidateQueries({ queryKey: ["tools"] });
     },
+    onError: (error) => {
+      showToast(getApiErrorMessage(error), "error");
+    },
   });
+
+  useEffect(() => {
+    if (membersPanel.open && membersQuery.isSuccess) {
+      void queryClient.invalidateQueries({ queryKey: ["tools"] });
+    }
+  }, [membersPanel.open, membersQuery.isSuccess, membersQuery.dataUpdatedAt, queryClient]);
 
   const isEditMode = slideOver.tool !== null;
   const savePending = createMutation.isPending || updateMutation.isPending;
@@ -288,7 +379,7 @@ export function ToolsPage() {
     watch,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(isEditMode ? editSchema : createSchema),
+    resolver: zodResolver(toolFormSchema),
     defaultValues: defaultFormValues(),
   });
 
@@ -297,16 +388,21 @@ export function ToolsPage() {
   useEffect(() => {
     if (!slideOver.open) {
       reset(defaultFormValues());
+      setSaveError(null);
       return;
     }
 
     if (slideOver.tool) {
+      const pricing = slideOver.tool.pricing;
       reset({
         name: slideOver.tool.name,
         provider: slideOver.tool.provider,
-        apiKey: "",
+        apiKey: slideOver.tool.apiKeyMasked,
         description: slideOver.tool.description,
-        pricing: { ...slideOver.tool.pricing },
+        pricing: {
+          ...pricing,
+          planName: pricing.planName ?? "",
+        },
       });
       return;
     }
@@ -342,6 +438,17 @@ export function ToolsPage() {
         sortable: true,
         align: "right",
         render: (row) => formatTokens(row.tokenCount),
+      },
+      {
+        key: "memberCount",
+        header: "Members",
+        sortable: true,
+        render: (row) => (
+          <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}>
+            <IconUsers size={13} />
+            <Typography variant="body2">{row.memberCount}</Typography>
+          </Box>
+        ),
       },
       {
         key: "pricing",
@@ -383,6 +490,18 @@ export function ToolsPage() {
         align: "right",
         render: (row) => (
           <Box sx={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+            <Tooltip title="View token members">
+              <IconButton
+                size="small"
+                aria-label={`View members for ${row.name}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMembersPanel({ open: true, tool: row });
+                }}
+              >
+                <IconUsers size={15} />
+              </IconButton>
+            </Tooltip>
             <IconButton
               size="small"
               aria-label={`Sync ${row.name}`}
@@ -427,26 +546,42 @@ export function ToolsPage() {
   );
 
   const onSubmit = (data: FormValues) => {
-    const payload = {
-      name: data.name,
-      provider: data.provider,
-      description: data.description,
-      pricing: data.pricing as ToolPricing,
-    };
+    setSaveError(null);
 
-    if (slideOver.tool) {
-      const body: Parameters<typeof updateTool>[1] = { ...payload };
-      if (data.apiKey) {
-        body.apiKey = data.apiKey;
-      }
-      updateMutation.mutate({ id: slideOver.tool.id, body });
+    if (!slideOver.tool && !data.apiKey?.trim()) {
+      setSaveError("API key is required.");
+      showToast("API key is required.", "error");
       return;
     }
 
-    createMutation.mutate({
-      ...payload,
+    const pricing = normalizePricing(data.pricing as ToolPricing);
+    const formBody = {
+      name: data.name,
+      provider: data.provider,
+      description: data.description,
       apiKey: data.apiKey ?? "",
-    });
+      pricing,
+    };
+
+    if (slideOver.tool) {
+      const apiKeyChanged =
+        Boolean(data.apiKey?.trim()) &&
+        data.apiKey.trim() !== slideOver.tool.apiKeyMasked;
+
+      updateMutation.mutate({
+        id: slideOver.tool.id,
+        body: {
+          name: formBody.name,
+          provider: formBody.provider,
+          description: formBody.description,
+          pricing: formBody.pricing,
+          ...(apiKeyChanged ? { apiKey: data.apiKey.trim() } : {}),
+        },
+      });
+      return;
+    }
+
+    createMutation.mutate(formBody);
   };
 
   const showTokenRates =
@@ -545,6 +680,12 @@ export function ToolsPage() {
             onSubmit={handleSubmit(onSubmit)}
             sx={{ display: "flex", flexDirection: "column", gap: 2 }}
           >
+            {saveError && (
+              <Alert severity="error" onClose={() => setSaveError(null)}>
+                {saveError}
+              </Alert>
+            )}
+
             <TextField
               {...register("name")}
               fullWidth
@@ -581,12 +722,15 @@ export function ToolsPage() {
               fullWidth
               label="API Key"
               size="small"
-              type="password"
-              placeholder={
-                isEditMode ? "Leave blank to keep existing key" : undefined
+              type={isEditMode ? "text" : "password"}
+              placeholder={isEditMode ? undefined : "sk-..."}
+              helperText={
+                errors.apiKey?.message ??
+                (isEditMode
+                  ? "Current key shown masked. Enter a new key only to replace it."
+                  : undefined)
               }
               error={Boolean(errors.apiKey)}
-              helperText={errors.apiKey?.message}
             />
 
             <TextField
@@ -704,27 +848,43 @@ export function ToolsPage() {
 
             <Collapse in={showFlatFee}>
               <Box sx={{ mt: 2 }}>
-                <TextField
-                  {...register("pricing.flatMonthlyCost", {
-                    setValueAs: parseNullableNumber,
-                  })}
-                  fullWidth
-                  label="Flat monthly cost (USD)"
-                  size="small"
-                  type="number"
-                  inputProps={{ step: "0.01" }}
+                <Controller
+                  name="pricing.flatMonthlyCost"
+                  control={control}
+                  render={({ field }) => (
+                    <TextField
+                      fullWidth
+                      label="Flat monthly cost (USD)"
+                      size="small"
+                      type="number"
+                      inputProps={{ step: "0.01" }}
+                      value={field.value ?? ""}
+                      onChange={(event) => {
+                        field.onChange(parseFormNumber(event.target.value));
+                      }}
+                    />
+                  )}
                 />
               </Box>
             </Collapse>
 
-            <TextField
-              {...register("pricing.planName", {
-                setValueAs: parseNullableString,
-              })}
-              fullWidth
-              label="Plan / package name"
-              size="small"
-              placeholder="e.g. Team Pro, Pay-as-you-go"
+            <Controller
+              name="pricing.planName"
+              control={control}
+              render={({ field }) => (
+                <TextField
+                  fullWidth
+                  label="Plan / package name"
+                  size="small"
+                  placeholder="e.g. Team Pro, Pay-as-you-go"
+                  value={field.value ?? ""}
+                  onChange={(event) => {
+                    field.onChange(event.target.value);
+                  }}
+                  error={Boolean(errors.pricing?.planName)}
+                  helperText={errors.pricing?.planName?.message}
+                />
+              )}
             />
 
             <Box
@@ -734,34 +894,127 @@ export function ToolsPage() {
                 gap: 2,
               }}
             >
-              <TextField
-                {...register("pricing.includedTokens", {
-                  setValueAs: parseNullableNumber,
-                })}
-                fullWidth
-                label="Included tokens"
-                size="small"
-                type="number"
-                placeholder="Leave blank if unlimited"
+              <Controller
+                name="pricing.includedTokens"
+                control={control}
+                render={({ field }) => (
+                  <TextField
+                    fullWidth
+                    label="Included tokens"
+                    size="small"
+                    type="number"
+                    placeholder="Leave blank if unlimited"
+                    value={field.value ?? ""}
+                    onChange={(event) => {
+                      field.onChange(parseFormPositiveInt(event.target.value));
+                    }}
+                    error={Boolean(errors.pricing?.includedTokens)}
+                    helperText={errors.pricing?.includedTokens?.message}
+                  />
+                )}
               />
-              <TextField
-                {...register("pricing.overageRate", {
-                  setValueAs: parseNullableNumber,
-                })}
-                fullWidth
-                label="Overage rate ($/1K tokens)"
-                size="small"
-                type="number"
-                placeholder="Beyond included"
-                inputProps={{ step: "0.001" }}
+              <Controller
+                name="pricing.overageRate"
+                control={control}
+                render={({ field }) => (
+                  <TextField
+                    fullWidth
+                    label="Overage rate ($/1K tokens)"
+                    size="small"
+                    type="number"
+                    placeholder="Beyond included"
+                    inputProps={{ step: "0.001" }}
+                    value={field.value ?? ""}
+                    onChange={(event) => {
+                      field.onChange(parseFormNumber(event.target.value));
+                    }}
+                    error={Boolean(errors.pricing?.overageRate)}
+                    helperText={errors.pricing?.overageRate?.message}
+                  />
+                )}
               />
             </Box>
 
             {!isEditMode && (
               <Alert severity="info" sx={{ mt: 1 }}>
-                Pricing rates are used to calculate cost attribution. You can
-                update these at any time.
+                Your API key is verified with the provider when you save. Invalid
+                keys are rejected before the tool is connected.
               </Alert>
+            )}
+          </Box>
+        </SlideOver>
+
+        <SlideOver
+          open={membersPanel.open}
+          onClose={() => setMembersPanel({ open: false, tool: null })}
+          title="Token members"
+          subtitle={
+            membersPanel.tool
+              ? `${membersPanel.tool.name} · ${formatProviderLabel(membersPanel.tool.provider)}`
+              : undefined
+          }
+          width={420}
+          footer={
+            <Button
+              variant="contained"
+              onClick={() => setMembersPanel({ open: false, tool: null })}
+            >
+              Close
+            </Button>
+          }
+        >
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {membersQuery.isPending && (
+              <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+                <CircularProgress size={24} />
+              </Box>
+            )}
+
+            {membersQuery.isError && (
+              <Alert severity="error">
+                {getApiErrorMessage(membersQuery.error)}
+              </Alert>
+            )}
+
+            {membersQuery.isSuccess && membersQuery.data.length === 0 && (
+              <EmptyState
+                title="No members found"
+                description="This provider did not return any member emails for this API key. Sync the tool or verify the key has team admin access."
+              />
+            )}
+
+            {membersQuery.isSuccess && membersQuery.data.length > 0 && (
+              <>
+                <Typography variant="body2" sx={{ color: tokens.textMuted }}>
+                  {membersQuery.data.length} distinct email
+                  {membersQuery.data.length === 1 ? "" : "s"} on this token
+                </Typography>
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  {membersQuery.data.map((member: ToolMember) => (
+                    <Box
+                      key={member.email}
+                      sx={{
+                        px: 1.5,
+                        py: 1,
+                        borderRadius: 1,
+                        border: `1px solid ${tokens.border}`,
+                      }}
+                    >
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        {member.email}
+                      </Typography>
+                      {member.name && (
+                        <Typography
+                          variant="caption"
+                          sx={{ color: tokens.textMuted }}
+                        >
+                          {member.name}
+                        </Typography>
+                      )}
+                    </Box>
+                  ))}
+                </Box>
+              </>
             )}
           </Box>
         </SlideOver>

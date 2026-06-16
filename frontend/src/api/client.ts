@@ -4,6 +4,22 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
 
 let accessToken: string | null = null;
 
+const GENERIC_ERROR_TITLES = new Set([
+  "Error",
+  "Bad Request",
+  "Invalid request",
+  "Unauthorized",
+  "Authentication required",
+  "Forbidden",
+  "Not Found",
+  "Not found",
+  "Conflict",
+  "Validation Error",
+  "Validation error",
+  "Request failed",
+  "Internal Server Error",
+]);
+
 export function setAccessToken(token: string | null): void {
   accessToken = token;
 }
@@ -26,38 +42,105 @@ export class ApiClientError extends Error {
   }
 }
 
-async function parseApiError(response: Response): Promise<ApiError> {
-  const contentType = response.headers.get("Content-Type") ?? "";
-  if (contentType.includes("application/json")) {
-    const body: unknown = await response.json();
-    if (body && typeof body === "object" && "status" in body && "detail" in body) {
-      const record = body as Record<string, unknown>;
-      const apiError: ApiError = {
-        type: String(record.type ?? "about:blank"),
-        title: String(record.title ?? "Request failed"),
-        status: Number(record.status ?? response.status),
-        detail: String(record.detail ?? response.statusText),
-      };
-      if (Array.isArray(record.errors)) {
-        return {
-          ...apiError,
-          errors: record.errors as Array<{ field: string; message: string }>,
-        };
-      }
-      return apiError;
+function extractDetailFromBody(
+  record: Record<string, unknown>,
+  status: number,
+): string {
+  const detail = record.detail;
+
+  if (typeof detail === "string" && detail.trim()) {
+    return detail.trim();
+  }
+
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => {
+        if (item && typeof item === "object" && "msg" in item) {
+          return String((item as { msg: unknown }).msg);
+        }
+        return null;
+      })
+      .filter((value): value is string => Boolean(value));
+    if (messages.length > 0) {
+      return messages.join("; ");
     }
+  }
+
+  const title = record.title;
+  if (typeof title === "string" && title.trim() && !GENERIC_ERROR_TITLES.has(title.trim())) {
+    return title.trim();
+  }
+
+  if (typeof record.message === "string" && record.message.trim()) {
+    return record.message.trim();
+  }
+
+  if (status === 400) {
+    return "The request could not be completed. Check your API key and try again.";
+  }
+
+  return `Request failed (${status})`;
+}
+
+async function parseApiError(response: Response): Promise<ApiError> {
+  const status = response.status;
+  const contentType = response.headers.get("Content-Type") ?? "";
+  let body: unknown = null;
+
+  if (contentType.includes("json") || contentType.includes("problem")) {
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+  }
+
+  if (body && typeof body === "object") {
+    const record = body as Record<string, unknown>;
+    const detail = extractDetailFromBody(record, status);
+    const apiError: ApiError = {
+      type: String(record.type ?? "about:blank"),
+      title: String(record.title ?? "Request failed"),
+      status: Number(record.status ?? status),
+      detail,
+    };
+    if (Array.isArray(record.errors)) {
+      return {
+        ...apiError,
+        errors: record.errors as Array<{ field: string; message: string }>,
+      };
+    }
+    return apiError;
   }
 
   return {
     type: "about:blank",
     title: response.statusText || "Request failed",
-    status: response.status,
-    detail: response.statusText || "An unexpected error occurred",
+    status,
+    detail:
+      status === 400
+        ? "The request could not be completed. Check your API key and try again."
+        : response.statusText || "An unexpected error occurred",
   };
 }
 
 function logRequestOutcome(method: string, url: string, status: number): void {
   console.warn(`${method} ${url} ${status}`);
+}
+
+async function resolveAccessToken(): Promise<string | null> {
+  if (accessToken) {
+    return accessToken;
+  }
+
+  const { useAuthStore } = await import("@/stores/authStore");
+  const storeToken = useAuthStore.getState().accessToken;
+  if (storeToken) {
+    setAccessToken(storeToken);
+    return storeToken;
+  }
+
+  return null;
 }
 
 export async function apiFetch(
@@ -66,10 +149,17 @@ export async function apiFetch(
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("X-Correlation-ID", createCorrelationId());
-  if (accessToken) {
-    headers.set("Authorization", `Bearer ${accessToken}`);
+
+  const token = await resolveAccessToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
   }
-  if (!headers.has("Content-Type") && init.body) {
+
+  if (
+    !headers.has("Content-Type") &&
+    init.body &&
+    !(init.body instanceof FormData)
+  ) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -88,6 +178,14 @@ interface ApiRequestInit extends RequestInit {
   skipAuthRetry?: boolean;
 }
 
+async function clearSessionAndRedirect(): Promise<void> {
+  const { clearPersistedRefreshToken } = await import("./auth");
+  const { useAuthStore } = await import("@/stores/authStore");
+  clearPersistedRefreshToken();
+  useAuthStore.getState().clearAuth();
+  window.location.assign("/login");
+}
+
 export async function apiRequest<T>(
   path: string,
   init: ApiRequestInit = {},
@@ -96,19 +194,38 @@ export async function apiRequest<T>(
   let response = await apiFetch(path, fetchInit);
 
   if (response.status === 401 && !skipAuthRetry) {
-    try {
-      const { refreshToken } = await import("./auth");
-      await refreshToken();
-      return apiRequest<T>(path, { ...init, skipAuthRetry: true });
-    } catch {
-      const { useAuthStore } = await import("@/stores/authStore");
-      useAuthStore.getState().clearAuth();
-      window.location.assign("/login");
+    const { refreshToken, getRefreshToken } = await import("./auth");
+    const { useAuthStore } = await import("@/stores/authStore");
+
+    if (!getRefreshToken() && !useAuthStore.getState().accessToken) {
+      await clearSessionAndRedirect();
       throw new ApiClientError({
         type: "about:blank",
         title: "Unauthorized",
         status: 401,
-        detail: "Session expired",
+        detail: "Session expired. Please sign in again.",
+      });
+    }
+
+    try {
+      await refreshToken();
+      return apiRequest<T>(path, { ...init, skipAuthRetry: true });
+    } catch {
+      if (useAuthStore.getState().isAuthenticated) {
+        throw new ApiClientError({
+          type: "about:blank",
+          title: "Unauthorized",
+          status: 401,
+          detail: "Your session could not be renewed. Please sign in again.",
+        });
+      }
+
+      await clearSessionAndRedirect();
+      throw new ApiClientError({
+        type: "about:blank",
+        title: "Unauthorized",
+        status: 401,
+        detail: "Session expired. Please sign in again.",
       });
     }
   }
@@ -129,4 +246,4 @@ export async function apiRequest<T>(
   return payload as T;
 }
 
-export { API_BASE };
+export { API_BASE, parseApiError };

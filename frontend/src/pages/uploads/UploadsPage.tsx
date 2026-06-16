@@ -111,6 +111,13 @@ export function UploadsPage() {
     onSuccess: async (record) => {
       await queryClient.invalidateQueries({ queryKey: ["uploads"] });
       handleCloseDialog();
+      if (record.status === "error") {
+        return;
+      }
+      if (record.status === "mapping") {
+        navigate(`/uploads/${record.id}/map`);
+        return;
+      }
       navigate(`/uploads/${record.id}/preview`);
     },
   });
@@ -233,10 +240,18 @@ export function UploadsPage() {
           <Box sx={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
             <IconButton
               size="small"
-              aria-label={`Preview ${row.fileName}`}
+              aria-label={
+                row.status === "mapping"
+                  ? `Map columns for ${row.fileName}`
+                  : `Preview ${row.fileName}`
+              }
               onClick={(event) => {
                 event.stopPropagation();
-                navigate(`/uploads/${row.id}/preview`);
+                navigate(
+                  row.status === "mapping"
+                    ? `/uploads/${row.id}/map`
+                    : `/uploads/${row.id}/preview`,
+                );
               }}
             >
               <IconEye size={15} />
@@ -430,8 +445,8 @@ export function UploadsPage() {
 
             {selectedFile && (
               <Alert severity="info" sx={{ mt: 1 }}>
-                File will be validated before import. Review errors before
-                confirming.
+                CSV files will prompt you to map columns before validation.
+                JSON files are validated automatically.
               </Alert>
             )}
           </DialogContent>

@@ -7,6 +7,8 @@ OpenAPI 3.0 contracts for the **AI Tool Usage Tracker** platform.
 | File | Description |
 |------|-------------|
 | [openapi.yaml](./openapi.yaml) | Main OpenAPI entry point — paths, tags, `$ref` to components |
+| [frontend-mapping.md](./frontend-mapping.md) | Frontend `src/api/*` inventory mapped to OpenAPI operations (mock vs wired, gaps) |
+| [tools/](./tools/README.md) | **Tools module** — API mapping, payloads, adapter rules, examples (FR-ADM-001) |
 | [local-development.md](../local-development.md) | Docker Compose stack, env vars, interim `/health` probe |
 | [testing.md](../testing.md) | Test strategy — unit, integration, contract, E2E, performance, security, acceptance |
 | [deployment.md](../deployment.md) | Docker, CI/CD, secrets, rollback, monitoring, alerting, backup, DR |
@@ -45,6 +47,20 @@ OpenAPI 3.0 contracts for the **AI Tool Usage Tracker** platform.
 | `/reports/*` | Bearer JWT | Role-scoped read |
 | `/notifications/*` | Bearer JWT | Any authenticated (scoped) |
 | `/audit-logs/*` | Bearer JWT | `super_admin`, `auditor` |
+| `/users/*` (planned) | Bearer JWT | `super_admin` — see [frontend-mapping.md](./frontend-mapping.md) |
+
+## Frontend integration
+
+The React SPA (`frontend/src/api/`) implements **53 domain functions** across 11 modules. **Completed backend wiring:** `auth.ts` (4/4) and `teams.ts` (4/4). Remaining modules are mock-only on branch `develop`.
+
+See **[frontend-mapping.md](./frontend-mapping.md)** for:
+
+- Per-function mapping to OpenAPI `operationId` and HTTP path
+- **Request payloads, query params, and response field shapes** (frontend TypeScript ↔ OpenAPI `schemas.yaml`)
+- Enum and naming deltas (camelCase vs snake_case, FE-only fields)
+- Page/route → API usage index
+- Contract gaps (`/users`, alert history, report subscriptions, tool sync, etc.)
+- OpenAPI paths not yet consumed by the frontend
 
 ## Related Documents
 

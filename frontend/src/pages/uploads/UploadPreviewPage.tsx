@@ -12,7 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -21,6 +21,7 @@ import {
   submitUpload,
   type UploadPreviewRow,
 } from "@/api/uploads";
+import { ApiClientError } from "@/api/client";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
@@ -41,7 +42,22 @@ export function UploadPreviewPage() {
     queryKey: ["uploads", uploadId, "preview"],
     queryFn: () => fetchUploadPreview(uploadId),
     enabled: Boolean(uploadId),
+    retry: (failureCount, error) => {
+      if (error instanceof ApiClientError && error.apiError.status === 409) {
+        return false;
+      }
+      return failureCount < 2;
+    },
   });
+
+  useEffect(() => {
+    if (
+      previewQuery.error instanceof ApiClientError &&
+      previewQuery.error.apiError.status === 409
+    ) {
+      navigate(`/uploads/${uploadId}/map`, { replace: true });
+    }
+  }, [previewQuery.error, uploadId, navigate]);
 
   const deleteMutation = useMutation({
     mutationFn: deleteUpload,

@@ -8,28 +8,17 @@ Centralized platform for monitoring AI tool consumption, costs, and adoption acr
 - Git
 - Node.js 20+ (frontend local dev without Docker)
 
-## Deployment model
-
-**All environments** run on **Docker Compose** with **local persistent volumes** (PostgreSQL, Redis, file storage, backups). See [openspec/specifications/deployment.md](openspec/specifications/deployment.md) and [ADR-013](openspec/decisions/ADR-013-docker-compose-local-storage.md).
-
-| Volume | Purpose |
-|--------|---------|
-| `ai-tracker-postgres-data` | Database |
-| `ai-tracker-redis-data` | Redis AOF |
-| `ai-tracker-storage-data` | Uploads, reports (`/var/lib/ai-tracker/storage`) |
-| `ai-tracker-backups-data` | pg_dump and storage tarballs |
-
-## Local development stack (TASK-INF-001 – INF-006)
+## Local development stack (minimal — token collector MVP)
 
 | Service | Image / build | Purpose |
 |---------|---------------|---------|
 | `postgres` | `postgres:15-alpine` | PostgreSQL 15 |
-| `redis` | `redis:7-alpine` | Cache/broker |
-| `migrate` | `backend/Dockerfile` | One-shot Alembic `upgrade head` |
-| `api` | `backend/Dockerfile` | FastAPI at `/api/v1` |
-| `worker` | `backend/Dockerfile` | Celery worker (5 queues) |
-| `beat` | `backend/Dockerfile` | Celery Beat |
+| `api` | `backend/Dockerfile` | FastAPI + Alembic migrations on startup + **in-process token collector scheduler** |
 | `frontend` | `node:20-alpine` | Vite dev server (profile `dev` only) |
+
+The API container runs scheduled token pulls (APScheduler). Configure pull interval from the frontend via `POST/PATCH /api/v1/collectors` (`pull_interval_minutes`).
+
+OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collector-mvp/proposal.md)
 
 ### Quick start
 
@@ -41,19 +30,20 @@ Centralized platform for monitoring AI tool consumption, costs, and adoption acr
 
    Edit `.env` and replace placeholder values. At minimum, set `POSTGRES_PASSWORD`.
 
-2. Run database migrations (first time or after schema changes):
+2. Start the stack (runs migrations automatically before the API starts):
 
    ```bash
-   docker compose run --rm migrate
+   docker compose up --build postgres api
    ```
 
-3. Start the stack:
+   **If you see migration errors** such as `Can't locate revision identified by '007_role_permissions'`, your database volume is from an older branch. Reset it:
 
    ```bash
-   docker compose up --build
+   docker compose down -v
+   docker compose up --build postgres api
    ```
 
-4. Verify services:
+3. Verify services:
 
    ```bash
    docker compose exec postgres pg_isready -U aitracker -d aitracker
@@ -63,7 +53,29 @@ Centralized platform for monitoring AI tool consumption, costs, and adoption acr
    Expected API response:
 
    ```json
-   {"status": "ok", "database": "ok", "redis": "ok"}
+   {"status": "ok", "database": "ok"}
+   ```
+
+5. Sign in (dev seed user):
+
+   ```bash
+   curl -X POST http://localhost:8000/api/v1/auth/login \
+     -H "Content-Type: application/json" \
+     -d "{\"email\":\"admin@example.com\",\"password\":\"change_me_dev_only\"}"
+
+   curl http://localhost:8000/api/v1/auth/me \
+     -H "Authorization: Bearer <access_token>"
+   ```
+
+6. Create a collector and run a manual pull:
+
+   ```bash
+   curl -X POST http://localhost:8000/api/v1/collectors \
+     -H "Content-Type: application/json" \
+     -d "{\"name\":\"OpenAI Dev\",\"provider\":\"openai\",\"api_token\":\"sk-test\",\"pull_interval_minutes\":60}"
+
+   curl -X POST http://localhost:8000/api/v1/collectors/{id}/run
+   curl http://localhost:8000/api/v1/usage/summary
    ```
 
 ### Frontend development
@@ -81,7 +93,7 @@ Open http://localhost:5173 — API requests proxy to `http://localhost:8000/api/
 **Docker (optional):**
 
 ```bash
-docker compose --profile dev up --build frontend api postgres redis migrate
+docker compose --profile dev up --build frontend api postgres
 ```
 
 ### Apply order for OpenSpec changes

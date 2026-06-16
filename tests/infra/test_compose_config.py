@@ -12,11 +12,16 @@ def _load_compose() -> dict:
     return yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
 
 
-def test_migrate_service_runs_alembic_upgrade() -> None:
+def test_api_startup_runs_alembic_upgrade() -> None:
     compose = _load_compose()
-    migrate = compose["services"]["migrate"]
-    assert migrate["command"] == ["alembic", "upgrade", "head"]
-    assert migrate["restart"] == "no"
+    api = compose["services"]["api"]
+    command = api["command"]
+    if isinstance(command, str):
+        command_str = command
+    else:
+        command_str = " ".join(command)
+    assert "alembic upgrade head" in command_str
+    assert "uvicorn" in command_str
 
 
 def test_api_healthcheck_uses_v1_path() -> None:

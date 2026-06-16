@@ -333,13 +333,9 @@ export async function fetchTeamDrilldown(
 }
 
 export async function fetchToolOptions(): Promise<{ id: string; name: string }[]> {
-  return delay([
-    { id: "tool_1", name: "Production OpenAI" },
-    { id: "tool_2", name: "Claude Enterprise" },
-    { id: "tool_3", name: "Gemini Workspace" },
-    { id: "tool_4", name: "Azure OpenAI EU" },
-    { id: "tool_5", name: "Internal LLM Gateway" },
-  ]);
+  const { apiRequest } = await import("./client");
+  const rows = await apiRequest<Array<{ id: string; name: string }>>("/tools?active=true");
+  return rows.map((row) => ({ id: row.id, name: row.name }));
 }
 
 export interface DailyBreakdownTeam {

@@ -34,6 +34,7 @@ import { z } from "zod";
 import {
   createCredential,
   fetchCredentials,
+  revealCredentialSecret,
   revokeCredential,
   updateCredential,
   type Credential,
@@ -62,7 +63,9 @@ const createSchema = z.object({
   expiresAt: z.string().nullable(),
 });
 
-const editSchema = createSchema.omit({ apiKey: true });
+const editSchema = createSchema.omit({ apiKey: true }).extend({
+  apiKey: z.string().optional(),
+});
 
 type CreateFormValues = z.infer<typeof createSchema>;
 type EditFormValues = z.infer<typeof editSchema>;
@@ -173,6 +176,7 @@ function credentialToFormValues(credential: Credential): EditFormValues {
     environment: credential.environment,
     rotationReminderDays: credential.rotationReminderDays,
     expiresAt: toDateInputValue(credential.expiresAt),
+    apiKey: credential.keyMasked,
   };
 }
 
@@ -185,6 +189,8 @@ export function CredentialsPage() {
   const [plainKey, setPlainKey] = useState<string | null>(null);
   const [showCloseWarning, setShowCloseWarning] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copyingId, setCopyingId] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<Credential | null>(null);
 
   const credentialsQuery = useQuery({
@@ -263,9 +269,25 @@ export function CredentialsPage() {
   const teams = teamsQuery.data ?? [];
   const toolOptions = toolOptionsQuery.data ?? [];
 
-  const handleCopy = useCallback(async (text: string, id: string) => {
+  const handleCopyPlainText = useCallback(async (text: string, id: string) => {
     await navigator.clipboard.writeText(text);
     setCopiedId(id);
+  }, []);
+
+  const handleCopyCredential = useCallback(async (credentialId: string) => {
+    setCopyError(null);
+    setCopyingId(credentialId);
+    try {
+      const secret = await revealCredentialSecret(credentialId);
+      await navigator.clipboard.writeText(secret);
+      setCopiedId(credentialId);
+    } catch {
+      setCopyError(
+        "Could not copy the API key. Refresh and try again, or rotate the key in Edit.",
+      );
+    } finally {
+      setCopyingId(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -327,9 +349,16 @@ export function CredentialsPage() {
 
   const onSubmit = (data: FormValues) => {
     if (slideOver.credential) {
+      const apiKeyChanged =
+        Boolean(data.apiKey?.trim()) &&
+        data.apiKey.trim() !== slideOver.credential.keyMasked;
+
       updateMutation.mutate({
         id: slideOver.credential.id,
-        body: buildPayload(data),
+        body: {
+          ...buildPayload(data),
+          ...(apiKeyChanged ? { apiKey: data.apiKey!.trim() } : {}),
+        },
       });
       return;
     }
@@ -449,13 +478,16 @@ export function CredentialsPage() {
             <Box sx={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
               <IconButton
                 size="small"
-                aria-label={`Copy masked key for ${row.label}`}
+                aria-label={`Copy API key for ${row.label}`}
+                disabled={copyingId === row.id}
                 onClick={(event) => {
                   event.stopPropagation();
-                  void handleCopy(row.keyMasked, row.id);
+                  void handleCopyCredential(row.id);
                 }}
               >
-                {copiedId === row.id ? (
+                {copyingId === row.id ? (
+                  <CircularProgress size={14} />
+                ) : copiedId === row.id ? (
                   <IconCheck size={15} color={tokens.success} />
                 ) : (
                   <IconCopy size={15} />
@@ -490,7 +522,7 @@ export function CredentialsPage() {
         },
       },
     ],
-    [copiedId, handleCopy],
+    [copiedId, copyingId, handleCopyCredential],
   );
 
   return (
@@ -517,7 +549,7 @@ export function CredentialsPage() {
               API Credentials
             </Typography>
             <Typography variant="body2" sx={{ color: tokens.textMuted }}>
-              AI provider keys assigned per team
+              API keys for connected AI tools — masked, expiry, and status
             </Typography>
           </Box>
           <Button
@@ -533,6 +565,12 @@ export function CredentialsPage() {
         {credentialsQuery.isError && (
           <Alert severity="error" sx={{ mb: 2 }}>
             Failed to load credentials. Please refresh.
+          </Alert>
+        )}
+
+        {copyError && (
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setCopyError(null)}>
+            {copyError}
           </Alert>
         )}
 
@@ -553,7 +591,7 @@ export function CredentialsPage() {
           rowKey={(row) => row.id}
           loading={credentialsQuery.isPending}
           emptyTitle="No credentials yet"
-          emptyDescription="Add an AI provider key scoped to a team and tool."
+          emptyDescription="Connect an AI tool under Tools, then manage its API key here."
         />
 
         <SlideOver
@@ -634,7 +672,7 @@ export function CredentialsPage() {
                 <IconButton
                   size="small"
                   aria-label="Copy API key"
-                  onClick={() => void handleCopy(plainKey, "reveal")}
+                  onClick={() => void handleCopyPlainText(plainKey, "reveal")}
                 >
                   {copiedId === "reveal" ? (
                     <IconCheck size={16} color={tokens.success} />
@@ -728,7 +766,7 @@ export function CredentialsPage() {
                         {...field}
                         labelId="credential-tool-label"
                         label="AI Tool"
-                        disabled={toolOptionsQuery.isPending}
+                        disabled={toolOptionsQuery.isPending || isEditMode}
                       >
                         {toolOptions.map((tool) => (
                           <MenuItem key={tool.id} value={tool.id}>
@@ -814,9 +852,15 @@ export function CredentialsPage() {
               />
 
               {isEditMode ? (
-                <Alert severity="info" sx={{ mb: 2 }}>
-                  API key cannot be changed. Revoke and re-add to rotate.
-                </Alert>
+                <TextField
+                  {...register("apiKey")}
+                  fullWidth
+                  label="API Key"
+                  size="small"
+                  type="text"
+                  helperText="Leave as the masked value to keep the current key, or enter a new key to rotate."
+                  sx={{ mb: 2 }}
+                />
               ) : (
                 <TextField
                   {...register("apiKey")}

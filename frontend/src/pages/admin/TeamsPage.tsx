@@ -20,8 +20,8 @@ import {
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
-import { useNavigate } from "react-router-dom";
+import { Controller, useForm } from "react-hook-form";
+import { Link as RouterLink } from "react-router-dom";
 import { z } from "zod";
 
 import {
@@ -47,7 +47,7 @@ const schema = z.object({
   description: z.string().max(200),
   tokenBudget: z.number().int().positive().nullable(),
   costBudget: z.number().positive().nullable(),
-  toolIds: z.array(z.string()).min(1, "Assign at least one tool"),
+  toolIds: z.array(z.string()),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -163,7 +163,6 @@ function BudgetUsageBar({
 }
 
 export function TeamsPage() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [slideOver, setSlideOver] = useState<SlideOverState>({
     open: false,
@@ -228,8 +227,7 @@ export function TeamsPage() {
     register,
     handleSubmit,
     reset,
-    watch,
-    setValue,
+    control,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -242,17 +240,8 @@ export function TeamsPage() {
     },
   });
 
-  const selectedToolIds = watch("toolIds");
-
   useEffect(() => {
     if (!slideOver.open) {
-      reset({
-        name: "",
-        description: "",
-        tokenBudget: null,
-        costBudget: null,
-        toolIds: [],
-      });
       return;
     }
 
@@ -262,7 +251,7 @@ export function TeamsPage() {
         description: slideOver.team.description,
         tokenBudget: slideOver.team.tokenBudget,
         costBudget: slideOver.team.costBudget,
-        toolIds: slideOver.team.toolIds,
+        toolIds: [...slideOver.team.toolIds],
       });
       return;
     }
@@ -274,7 +263,7 @@ export function TeamsPage() {
       costBudget: null,
       toolIds: [],
     });
-  }, [reset, slideOver]);
+  }, [reset, slideOver.open, slideOver.team?.id]);
 
   const columns: Column<Team>[] = useMemo(
     () => [
@@ -347,11 +336,10 @@ export function TeamsPage() {
             <Tooltip title="View members">
               <IconButton
                 size="small"
+                component={RouterLink}
+                to={`/admin/members?team=${encodeURIComponent(row.id)}`}
                 aria-label={`View members of ${row.name}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  navigate(`/admin/members?team=${row.id}`);
-                }}
+                onClick={(event) => event.stopPropagation()}
               >
                 <IconUsers size={15} />
               </IconButton>
@@ -381,7 +369,7 @@ export function TeamsPage() {
         ),
       },
     ],
-    [navigate, toolNameById],
+    [toolNameById],
   );
 
   const onSubmit = (data: FormValues) => {
@@ -478,6 +466,7 @@ export function TeamsPage() {
           }
         >
           <Box
+            key={slideOver.team?.id ?? "new-team"}
             component="form"
             onSubmit={handleSubmit(onSubmit)}
             sx={{ display: "flex", flexDirection: "column", gap: 2 }}
@@ -515,53 +504,57 @@ export function TeamsPage() {
               Tool access
             </Typography>
 
-            <FormControl
-              fullWidth
-              size="small"
-              error={Boolean(errors.toolIds)}
-              disabled={toolOptionsQuery.isPending}
-            >
-              <InputLabel id="team-tools-label">Assigned tools</InputLabel>
-              <Select
-                multiple
-                labelId="team-tools-label"
-                label="Assigned tools"
-                value={selectedToolIds}
-                onChange={(event) => {
-                  setValue("toolIds", event.target.value as string[], {
-                    shouldValidate: true,
-                  });
-                }}
-                renderValue={(selected) => {
-                  const names = (selected as string[])
-                    .map((id) => toolNameById.get(id) ?? id)
-                    .join(", ");
-                  return (
-                    <Typography noWrap sx={{ fontSize: "0.8125rem" }}>
-                      {names || (toolOptionsQuery.isPending ? "Loading tools…" : "")}
-                    </Typography>
-                  );
-                }}
-              >
-                {toolOptions.map((tool) => (
-                  <MenuItem key={tool.id} value={tool.id}>
-                    <Checkbox
-                      size="small"
-                      checked={selectedToolIds.includes(tool.id)}
-                      sx={{ mr: 1, p: 0 }}
-                    />
-                    {tool.name}
-                  </MenuItem>
-                ))}
-              </Select>
-              {errors.toolIds ? (
-                <FormHelperText error>{errors.toolIds.message}</FormHelperText>
-              ) : (
-                <FormHelperText>
-                  Members of this team will only be tracked against these tools
-                </FormHelperText>
+            <Controller
+              name="toolIds"
+              control={control}
+              render={({ field }) => (
+                <FormControl
+                  fullWidth
+                  size="small"
+                  error={Boolean(errors.toolIds)}
+                  disabled={toolOptionsQuery.isPending}
+                >
+                  <InputLabel id="team-tools-label">Assigned tools</InputLabel>
+                  <Select
+                    multiple
+                    labelId="team-tools-label"
+                    label="Assigned tools"
+                    value={field.value}
+                    onChange={(event) => {
+                      field.onChange(event.target.value as string[]);
+                    }}
+                    renderValue={(selected) => {
+                      const names = (selected as string[])
+                        .map((id) => toolNameById.get(id) ?? id)
+                        .join(", ");
+                      return (
+                        <Typography noWrap sx={{ fontSize: "0.8125rem" }}>
+                          {names || (toolOptionsQuery.isPending ? "Loading tools…" : "")}
+                        </Typography>
+                      );
+                    }}
+                  >
+                    {toolOptions.map((tool) => (
+                      <MenuItem key={tool.id} value={tool.id}>
+                        <Checkbox
+                          size="small"
+                          checked={field.value.includes(tool.id)}
+                          sx={{ mr: 1, p: 0 }}
+                        />
+                        {tool.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  {errors.toolIds ? (
+                    <FormHelperText error>{errors.toolIds.message}</FormHelperText>
+                  ) : (
+                    <FormHelperText>
+                      Members of this team will only be tracked against these tools
+                    </FormHelperText>
+                  )}
+                </FormControl>
               )}
-            </FormControl>
+            />
 
             <Typography
               variant="caption"
@@ -583,29 +576,43 @@ export function TeamsPage() {
                 gap: 2,
               }}
             >
-              <TextField
-                {...register("tokenBudget", {
-                  setValueAs: parseBudgetValue,
-                })}
-                fullWidth
-                label="Token limit"
-                size="small"
-                type="number"
-                placeholder="Unlimited"
-                error={Boolean(errors.tokenBudget)}
-                helperText={errors.tokenBudget?.message}
+              <Controller
+                name="tokenBudget"
+                control={control}
+                render={({ field }) => (
+                  <TextField
+                    fullWidth
+                    label="Token limit"
+                    size="small"
+                    type="number"
+                    placeholder="Unlimited"
+                    value={field.value ?? ""}
+                    onChange={(event) => {
+                      field.onChange(parseBudgetValue(event.target.value));
+                    }}
+                    error={Boolean(errors.tokenBudget)}
+                    helperText={errors.tokenBudget?.message}
+                  />
+                )}
               />
-              <TextField
-                {...register("costBudget", {
-                  setValueAs: parseBudgetValue,
-                })}
-                fullWidth
-                label="Cost limit (USD)"
-                size="small"
-                type="number"
-                placeholder="Unlimited"
-                error={Boolean(errors.costBudget)}
-                helperText={errors.costBudget?.message}
+              <Controller
+                name="costBudget"
+                control={control}
+                render={({ field }) => (
+                  <TextField
+                    fullWidth
+                    label="Cost limit (USD)"
+                    size="small"
+                    type="number"
+                    placeholder="Unlimited"
+                    value={field.value ?? ""}
+                    onChange={(event) => {
+                      field.onChange(parseBudgetValue(event.target.value));
+                    }}
+                    error={Boolean(errors.costBudget)}
+                    helperText={errors.costBudget?.message}
+                  />
+                )}
               />
             </Box>
 

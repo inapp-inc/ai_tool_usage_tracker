@@ -117,6 +117,8 @@ export function MembersPage() {
   const [removeTarget, setRemoveTarget] = useState<Member | null>(null);
 
   const teamFilter = searchParams.get("team") ?? "";
+  const invitedFilter = searchParams.get("filter") === "invited";
+  const filterValue = teamFilter || (invitedFilter ? "__invited__" : "");
 
   const teamsQuery = useQuery({
     queryKey: ["teams"],
@@ -126,9 +128,18 @@ export function MembersPage() {
   const membersQuery = useQuery({
     queryKey: teamFilter
       ? ["members", "team", teamFilter]
-      : ["members"],
-    queryFn: () =>
-      teamFilter ? fetchMembersByTeam(teamFilter) : fetchMembers(),
+      : invitedFilter
+        ? ["members", "invited"]
+        : ["members", "all"],
+    queryFn: () => {
+      if (teamFilter) {
+        return fetchMembersByTeam(teamFilter);
+      }
+      if (invitedFilter) {
+        return fetchMembers("invited");
+      }
+      return fetchMembers("all");
+    },
   });
 
   const createMutation = useMutation({
@@ -223,6 +234,7 @@ export function MembersPage() {
   }, [membersQuery.data, search]);
 
   const teams = teamsQuery.data ?? [];
+  const activeTeam = teams.find((team) => team.id === teamFilter);
 
   const columns: Column<Member>[] = useMemo(
     () => [
@@ -250,9 +262,18 @@ export function MembersPage() {
               {getInitials(row.name)}
             </Box>
             <Box>
-              <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                {row.name}
-              </Typography>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                  {row.name}
+                </Typography>
+                {row.source === "tool" && (
+                  <Chip
+                    size="small"
+                    label={row.toolName ? `Tool · ${row.toolName}` : "Tool member"}
+                    sx={{ height: 18, fontSize: "0.625rem" }}
+                  />
+                )}
+              </Box>
               <Typography variant="caption" sx={{ color: tokens.textMuted }}>
                 {row.email}
               </Typography>
@@ -263,7 +284,14 @@ export function MembersPage() {
       {
         key: "platformRole",
         header: "Role",
-        render: (row) => <RoleChip role={row.platformRole} />,
+        render: (row) =>
+          row.source === "tool" ? (
+            <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+              —
+            </Typography>
+          ) : (
+            <RoleChip role={row.platformRole} />
+          ),
       },
       {
         key: "teams",
@@ -302,27 +330,31 @@ export function MembersPage() {
         align: "right",
         render: (row) => (
           <Box sx={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-            <IconButton
-              size="small"
-              aria-label={`Edit ${row.name}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                setSlideOver({ open: true, member: row });
-              }}
-            >
-              <IconPencil size={15} />
-            </IconButton>
-            <IconButton
-              size="small"
-              aria-label={`Remove ${row.name}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                setRemoveTarget(row);
-              }}
-              sx={{ color: tokens.critical }}
-            >
-              <IconUserMinus size={15} />
-            </IconButton>
+            {row.source !== "tool" && (
+              <>
+                <IconButton
+                  size="small"
+                  aria-label={`Edit ${row.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSlideOver({ open: true, member: row });
+                  }}
+                >
+                  <IconPencil size={15} />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  aria-label={`Remove ${row.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setRemoveTarget(row);
+                  }}
+                  sx={{ color: tokens.critical }}
+                >
+                  <IconUserMinus size={15} />
+                </IconButton>
+              </>
+            )}
           </Box>
         ),
       },
@@ -330,12 +362,18 @@ export function MembersPage() {
     [],
   );
 
-  const handleTeamFilterChange = (value: string) => {
-    if (value) {
-      setSearchParams({ team: value });
-      return;
-    }
-    setSearchParams({});
+  const handleFilterChange = (value: string) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("team");
+      next.delete("filter");
+      if (value === "__invited__") {
+        next.set("filter", "invited");
+      } else if (value) {
+        next.set("team", value);
+      }
+      return next;
+    });
   };
 
   const onSubmit = (data: FormValues) => {
@@ -383,7 +421,11 @@ export function MembersPage() {
               Members
             </Typography>
             <Typography variant="body2" sx={{ color: tokens.textMuted }}>
-              Manage user access and role assignments
+              {activeTeam
+                ? `Showing members for ${activeTeam.name}`
+                : invitedFilter
+                  ? "Manually invited platform members"
+                  : "All platform and tool members across teams"}
             </Typography>
           </Box>
           <Button
@@ -414,15 +456,16 @@ export function MembersPage() {
             }}
           />
 
-          <FormControl size="small" sx={{ width: 200 }}>
+          <FormControl size="small" sx={{ width: 220 }}>
             <Select
-              value={teamFilter}
+              value={filterValue}
               onChange={(event) =>
-                handleTeamFilterChange(event.target.value as string)
+                handleFilterChange(event.target.value as string)
               }
               displayEmpty
             >
               <MenuItem value="">All teams</MenuItem>
+              <MenuItem value="__invited__">Invited members</MenuItem>
               {teams.map((team) => (
                 <MenuItem key={team.id} value={team.id}>
                   {team.name}
