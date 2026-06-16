@@ -63,3 +63,16 @@ class UploadRepository:
         for row in result.scalars().all():
             await self._session.delete(row)
         await self._session.flush()
+
+    async def keep_parsed_rows(self, upload_id: UUID, row_numbers: set[int]) -> int:
+        result = await self._session.execute(
+            select(ParsedRow).where(ParsedRow.upload_id == upload_id)
+        )
+        kept = 0
+        for row in result.scalars().all():
+            if row.row_number in row_numbers:
+                kept += 1
+            else:
+                await self._session.delete(row)
+        await self._session.flush()
+        return kept

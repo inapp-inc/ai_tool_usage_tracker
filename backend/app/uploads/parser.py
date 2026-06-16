@@ -163,6 +163,14 @@ def _parse_decimal(value: Any) -> Decimal | None:
         return None
 
 
+def _is_valid_email(value: str) -> bool:
+    text = value.strip()
+    if "@" not in text:
+        return False
+    local, _, domain = text.partition("@")
+    return bool(local and domain and "." in domain)
+
+
 def _parse_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -290,18 +298,20 @@ def map_row_to_usage(
         "total_tokens": input_tokens + output_tokens,
         "estimated_cost": float(cost) if cost is not None else 0.0,
         "occurred_at": occurred_at.isoformat() if occurred_at else None,
+        "user_linked": matched_user_id is not None,
     }
 
-    errors: list[str] = []
-    if email and matched_user_id is None:
-        errors.append(f"Unknown user email: {email}")
+    warnings: list[str] = []
+    if not email:
+        warnings.append("Email not mapped or empty")
+    elif not _is_valid_email(email):
+        warnings.append(f"Email format may be invalid: {email}")
     if input_tokens + output_tokens <= 0:
-        errors.append("Token count must be greater than zero")
+        warnings.append("No token count mapped")
     if tool is None and tools:
-        errors.append("Could not match row to a configured AI tool")
+        warnings.append("Tool not matched to a configured AI tool")
 
-    match_status = "matched" if not errors else "unmatched"
-    error_reason = "; ".join(errors) if errors else None
+    mapped_payload["warnings"] = warnings
 
     return ParsedUploadRow(
         row_number=row_number,
@@ -312,8 +322,8 @@ def map_row_to_usage(
         occurred_at=occurred_at,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-        match_status=match_status,
-        error_reason=error_reason,
+        match_status="matched",
+        error_reason="; ".join(warnings) if warnings else None,
     )
 
 

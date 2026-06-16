@@ -63,6 +63,8 @@ class ParsedUsageRowResponse(BaseModel):
 class UploadPreviewResponse(BaseModel):
     upload_id: UUID
     filename: str
+    team_id: UUID | None = None
+    team_name: str | None = None
     total_rows: int
     matched_rows: int
     unmatched_rows: int
@@ -71,6 +73,7 @@ class UploadPreviewResponse(BaseModel):
 
 class UploadCommitRequest(BaseModel):
     team_id: UUID | None = None
+    row_numbers: list[int] | None = None
 
 
 class UploadColumnMappingRequest(BaseModel):

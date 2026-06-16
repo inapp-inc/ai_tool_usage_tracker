@@ -18,6 +18,7 @@ import { format } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  exportAuditLog,
   fetchAuditLog,
   type AuditCategory,
   type AuditLogEntry,
@@ -252,7 +253,13 @@ export function AuditLogPage() {
             size="small"
             startIcon={<IconDownload size={15} />}
             disabled={entries.length === 0}
-            onClick={() => exportAuditLogCsv(entries)}
+            onClick={() => {
+              if (filters.from && filters.to) {
+                void exportAuditLog(filters).catch(() => exportAuditLogCsv(entries));
+              } else {
+                exportAuditLogCsv(entries);
+              }
+            }}
           >
             Export CSV
           </Button>

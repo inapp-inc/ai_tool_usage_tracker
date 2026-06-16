@@ -1,5 +1,4 @@
 import {
-  IconAlertCircle,
   IconArrowLeft,
   IconCircleCheck,
 } from "@tabler/icons-react";
@@ -7,8 +6,11 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   CircularProgress,
-  Tooltip,
+  Step,
+  StepLabel,
+  Stepper,
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -32,11 +34,14 @@ import {
   formatTokens,
 } from "@/utils/formatters";
 
+const UPLOAD_STEPS = ["Upload file", "Map columns", "Preview & import"];
+
 export function UploadPreviewPage() {
   const { uploadId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
 
   const previewQuery = useQuery({
     queryKey: ["uploads", uploadId, "preview"],
@@ -59,6 +64,15 @@ export function UploadPreviewPage() {
     }
   }, [previewQuery.error, uploadId, navigate]);
 
+  useEffect(() => {
+    if (!previewQuery.data) {
+      return;
+    }
+    setSelectedRows(
+      new Set(previewQuery.data.rows.map((row) => row.rowIndex)),
+    );
+  }, [previewQuery.data]);
+
   const deleteMutation = useMutation({
     mutationFn: deleteUpload,
     onSuccess: async () => {
@@ -69,18 +83,60 @@ export function UploadPreviewPage() {
   });
 
   const submitMutation = useMutation({
-    mutationFn: () => submitUpload(uploadId, { teamId: null }),
+    mutationFn: () =>
+      submitUpload(uploadId, {
+        teamId: preview?.teamId ?? null,
+        rowNumbers: Array.from(selectedRows).sort((a, b) => a - b),
+      }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["uploads"] });
+      await queryClient.invalidateQueries({ queryKey: ["members"] });
+      await queryClient.invalidateQueries({ queryKey: ["teams"] });
       navigate("/uploads");
     },
   });
 
   const preview = previewQuery.data;
-  const hasErrors = (preview?.errorRows ?? 0) > 0;
+  const allRows = preview?.rows ?? [];
+  const allSelected =
+    allRows.length > 0 && selectedRows.size === allRows.length;
+  const someSelected = selectedRows.size > 0 && !allSelected;
+
+  const toggleRow = (rowIndex: number) => {
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      if (next.has(rowIndex)) {
+        next.delete(rowIndex);
+      } else {
+        next.add(rowIndex);
+      }
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelectedRows(new Set());
+      return;
+    }
+    setSelectedRows(new Set(allRows.map((row) => row.rowIndex)));
+  };
 
   const columns: Column<UploadPreviewRow>[] = useMemo(
     () => [
+      {
+        key: "select",
+        header: "",
+        width: 48,
+        render: (row) => (
+          <Checkbox
+            size="small"
+            checked={selectedRows.has(row.rowIndex)}
+            onChange={() => toggleRow(row.rowIndex)}
+            onClick={(event) => event.stopPropagation()}
+          />
+        ),
+      },
       {
         key: "rowIndex",
         header: "#",
@@ -97,7 +153,7 @@ export function UploadPreviewPage() {
           <Box>
             <Typography variant="body2">{row.userName}</Typography>
             <Typography variant="caption" sx={{ color: tokens.textMuted }}>
-              {row.userId}
+              {row.userId || "From mapped CSV data"}
             </Typography>
           </Box>
         ),
@@ -106,7 +162,7 @@ export function UploadPreviewPage() {
         key: "model",
         header: "Model",
         render: (row) => (
-          <Typography variant="caption">{row.model}</Typography>
+          <Typography variant="caption">{row.model || "—"}</Typography>
         ),
       },
       {
@@ -122,25 +178,23 @@ export function UploadPreviewPage() {
       {
         key: "timestamp",
         header: "Timestamp",
-        render: (row) => formatDateTime(row.timestamp),
+        render: (row) =>
+          row.timestamp ? formatDateTime(row.timestamp) : "—",
       },
       {
-        key: "status",
-        header: "Status",
+        key: "notes",
+        header: "Notes",
         render: (row) =>
-          row.status === "error" ? (
-            <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5 }}>
-              <IconAlertCircle size={14} color={tokens.critical} />
-              <Typography variant="caption" sx={{ color: tokens.critical }}>
-                {row.errorReason}
-              </Typography>
-            </Box>
+          row.errorReason ? (
+            <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+              {row.errorReason}
+            </Typography>
           ) : (
             <IconCircleCheck size={14} color={tokens.success} />
           ),
       },
     ],
-    [],
+    [selectedRows],
   );
 
   if (!uploadId) {
@@ -163,6 +217,14 @@ export function UploadPreviewPage() {
         Back to Uploads
       </Button>
 
+      <Stepper activeStep={2} alternativeLabel sx={{ mb: 3 }}>
+        {UPLOAD_STEPS.map((label) => (
+          <Step key={label}>
+            <StepLabel>{label}</StepLabel>
+          </Step>
+        ))}
+      </Stepper>
+
       <Box
         sx={{
           display: "flex",
@@ -179,13 +241,16 @@ export function UploadPreviewPage() {
           </Typography>
           {preview && (
             <Typography variant="body2" sx={{ color: tokens.textMuted }}>
-              {preview.totalRows} rows •{" "}
-              <Box
-                component="span"
-                sx={{ color: hasErrors ? tokens.critical : tokens.textMuted }}
-              >
-                {preview.errorRows} errors
-              </Box>
+              {preview.totalRows} mapped rows • {selectedRows.size} selected for
+              import
+              {preview.teamName ? (
+                <>
+                  {" "}
+                  • Team: <strong>{preview.teamName}</strong>
+                </>
+              ) : (
+                <> • Org-wide (no team)</>
+              )}
             </Typography>
           )}
         </Box>
@@ -198,26 +263,21 @@ export function UploadPreviewPage() {
           >
             Discard
           </Button>
-          <Tooltip
-            title={hasErrors ? "Fix errors before importing" : ""}
-            disableHoverListener={!hasErrors}
+          <Button
+            variant="contained"
+            size="small"
+            disabled={
+              selectedRows.size === 0 || submitMutation.isPending || !preview
+            }
+            onClick={() => submitMutation.mutate()}
+            startIcon={
+              submitMutation.isPending ? (
+                <CircularProgress size={14} color="inherit" />
+              ) : undefined
+            }
           >
-            <span>
-              <Button
-                variant="contained"
-                size="small"
-                disabled={hasErrors || submitMutation.isPending || !preview}
-                onClick={() => submitMutation.mutate()}
-                startIcon={
-                  submitMutation.isPending ? (
-                    <CircularProgress size={14} color="inherit" />
-                  ) : undefined
-                }
-              >
-                Confirm Import
-              </Button>
-            </span>
-          </Tooltip>
+            {`Import ${selectedRows.size} row${selectedRows.size === 1 ? "" : "s"}`}
+          </Button>
         </Box>
       </Box>
 
@@ -228,59 +288,39 @@ export function UploadPreviewPage() {
       )}
 
       {preview && (
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: hasErrors ? "1fr 1fr" : "1fr",
-            gap: 2,
-            mb: 3,
-          }}
-        >
-          <Box
-            sx={{
-              backgroundColor: "#DCFCE7",
-              border: "1px solid #BBF7D0",
-              borderRadius: "10px",
-              p: 2,
-            }}
-          >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-              <IconCircleCheck size={20} color="#16A34A" />
-              <Typography variant="body2" sx={{ fontWeight: 600, color: "#16A34A" }}>
-                {preview.validRows} valid rows
-              </Typography>
-            </Box>
-            <Typography variant="caption" sx={{ color: "#16A34A" }}>
-              Ready to import
-            </Typography>
-          </Box>
-
-          {hasErrors && (
-            <Box
-              sx={{
-                backgroundColor: "#FEE2E2",
-                border: "1px solid #FECACA",
-                borderRadius: "10px",
-                p: 2,
-              }}
-            >
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-                <IconAlertCircle size={20} color="#DC2626" />
-                <Typography variant="body2" sx={{ fontWeight: 600, color: "#DC2626" }}>
-                  {preview.errorRows} rows with errors
-                </Typography>
-              </Box>
-              <Typography variant="caption" sx={{ color: "#DC2626" }}>
-                These rows will be skipped
-              </Typography>
-            </Box>
+        <Alert severity="info" sx={{ mb: 2 }}>
+          {preview.teamName ? (
+            <>
+              Usage and members from selected rows will be bound to{" "}
+              <strong>{preview.teamName}</strong>. Platform users in the import
+              are added to that team automatically.
+            </>
+          ) : (
+            <>
+              Rows are extracted from your column mapping. Select which rows to
+              import. Choose a team when uploading to bind usage to a team.
+            </>
           )}
+        </Alert>
+      )}
+
+      {preview && allRows.length > 0 && (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
+          <Checkbox
+            size="small"
+            checked={allSelected}
+            indeterminate={someSelected}
+            onChange={toggleAll}
+          />
+          <Typography variant="body2">
+            {allSelected ? "Deselect all" : "Select all mapped rows"}
+          </Typography>
         </Box>
       )}
 
       <DataTable
         columns={columns}
-        rows={preview?.rows ?? []}
+        rows={allRows}
         rowKey={(row) => String(row.rowIndex)}
         loading={previewQuery.isPending}
         stickyHeader

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.auth.schemas import Role
 
-MemberSource = Literal["platform", "tool"]
+MemberSource = Literal["platform", "tool", "upload"]
 MembersView = Literal["all", "invited"]
 
 

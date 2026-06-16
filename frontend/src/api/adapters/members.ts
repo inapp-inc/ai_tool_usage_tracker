@@ -27,7 +27,7 @@ export interface ApiTeamMember {
   email: string;
   display_name?: string | null;
   joined_at?: string | null;
-  source?: "platform" | "tool";
+  source?: "platform" | "tool" | "upload";
   tool_id?: string | null;
   tool_name?: string | null;
 }
@@ -42,7 +42,7 @@ export interface ApiMember {
   last_login_at?: string | null;
   created_at?: string | null;
   joined_at?: string | null;
-  source?: "platform" | "tool";
+  source?: "platform" | "tool" | "upload";
   tool_id?: string | null;
   tool_name?: string | null;
   teams?: ApiUserTeam[];
@@ -83,7 +83,27 @@ export function mapApiUser(api: ApiUser): Member {
 }
 
 export function mapApiMember(api: ApiMember): Member {
-  const isToolMember = api.source === "tool" || !api.user_id;
+  if (api.source === "upload") {
+    const teams = (api.teams ?? []).map((team) => ({
+      id: team.id,
+      name: team.name,
+    }));
+    return {
+      id: `upload:${api.email.toLowerCase()}`,
+      name: api.display_name?.trim() || api.email,
+      email: api.email,
+      platformRole: Role.TeamMember,
+      teams,
+      status: "active",
+      lastActiveAt: null,
+      createdAt: api.joined_at ?? new Date(0).toISOString(),
+      source: "upload",
+      label: "Imported from file",
+    };
+  }
+
+  const isToolMember =
+    api.source === "tool" || (!api.user_id && api.source !== "upload");
   const teams = (api.teams ?? []).map((team) => ({
     id: team.id,
     name: team.name,
@@ -124,6 +144,21 @@ export function mapApiTeamMember(
   api: ApiTeamMember,
   team?: { id: string; name: string },
 ): Member {
+  if (api.source === "upload") {
+    return {
+      id: `upload:${api.email.toLowerCase()}`,
+      name: api.display_name?.trim() || api.email,
+      email: api.email,
+      platformRole: Role.TeamMember,
+      teams: team ? [{ id: team.id, name: team.name }] : [],
+      status: "active",
+      lastActiveAt: null,
+      createdAt: api.joined_at ?? new Date(0).toISOString(),
+      source: "upload",
+      label: "Imported from file",
+    };
+  }
+
   const isToolMember = api.source === "tool" || !api.user_id;
   const toolSuffix = api.tool_name ? ` · ${api.tool_name}` : "";
   return {

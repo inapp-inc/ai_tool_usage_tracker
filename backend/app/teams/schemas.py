@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-MemberSource = Literal["platform", "tool"]
+MemberSource = Literal["platform", "tool", "upload"]
 
 
 def _normalize_tool_ids(tool_ids: list[str]) -> list[str]:

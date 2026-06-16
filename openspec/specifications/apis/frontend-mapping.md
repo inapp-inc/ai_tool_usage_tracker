@@ -49,10 +49,10 @@ This document inventories every API function exported from the frontend, maps it
 | `credentials.ts` | 4 | 0 | 4 | Admin → Credentials |
 | `alerts.ts` | 6 | 0 | 6 | Alerts |
 | `uploads.ts` | 5 | 0 | 5 | Uploads, Upload preview |
-| `dashboard.ts` | 5 | 0 | 5 | Insights (overview tab) |
-| `usage.ts` | 7 | 0 | 7 | Insights (usage tab), Admin dropdowns |
-| `reports.ts` | 7 | 0 | 7 | Insights (reports tab) |
-| `auditLog.ts` | 1 | 0 | 1 | Admin → Audit log |
+| `dashboard.ts` | 5 | 5 | 0 | Insights (overview tab) |
+| `usage.ts` | 7 | 7 | 0 | Insights (usage tab), Admin dropdowns |
+| `reports.ts` | 7 | 7 | 0 | Insights (reports tab) |
+| `auditLog.ts` | 2 | 2 | 0 | Admin → Audit log |
 | `notifications.ts` | 0 | — | — | Placeholder (empty export) |
 
 **Total frontend API surface:** 53 exported functions across 11 domain modules.
@@ -64,6 +64,8 @@ This document inventories every API function exported from the frontend, maps it
 | Auth | `auth.ts` (4/4 wired) | [authentication-backend](../../changes/authentication-backend/) | 2026-06-16 |
 | Teams | `teams.ts` (4/4 wired) | [teams-backend](../../changes/teams-backend/) | 2026-06-16 |
 | Tools | `tools.ts` (5/5 wired) | [apis/tools/](./tools/) | 2026-06-16 |
+| Dashboard / Insights | `dashboard.ts` (5/5 wired), `usage.ts` (7/7 wired) | `backend/app/dashboard/` | 2026-06-16 |
+| Audit log | `auditLog.ts` (2/2 wired) | `backend/app/audit/` | 2026-06-16 |
 
 ---
 
@@ -484,13 +486,15 @@ Headers: `Idempotency-Key` (OpenAPI required for commit).
 
 ## Dashboard — `frontend/src/api/dashboard.ts`
 
+**Status:** **wired** — queries `usage.usage_events` via `/dashboard/*` endpoints. Adapters in `frontend/src/api/adapters/dashboard.ts`.
+
 | Function | Query params | Response type | OpenAPI endpoint |
 |----------|--------------|---------------|------------------|
-| `fetchDashboardStats(from, to)` | `from`, `to` | `DashboardStats` | composite — see below |
-| `fetchTokenTimeseries(from, to)` | `from`, `to` | `TokenDataPoint[]` | `GET /dashboard/trends` |
+| `fetchDashboardStats(from, to)` | `from`, `to` | `DashboardStats` | composite — `GET /dashboard/tokens`, `/cost`, `/usage-by-tool`, `/usage-by-team` + prior-period comparison |
+| `fetchTokenTimeseries(from, to)` | `from`, `to`, `granularity=daily` | `TokenDataPoint[]` | `GET /dashboard/trends` |
 | `fetchTeamCost(from, to)` | `from`, `to` | `TeamCostDataPoint[]` | `GET /dashboard/usage-by-team` |
-| `fetchTopUsers(from, to)` | `from`, `to` | `TopUser[]` | `GET /dashboard/top-consumers?entity=users` |
-| `fetchRecentAlerts()` | — | `RecentAlert[]` | `GET /dashboard/alerts` |
+| `fetchTopUsers(from, to)` | `from`, `to`, `entity=users`, `limit=8` | `TopUser[]` | `GET /dashboard/top-consumers?entity=users` |
+| `fetchRecentAlerts()` | `limit=5` | `RecentAlert[]` | `GET /dashboard/alerts` |
 
 ### `DashboardStats`
 
@@ -536,7 +540,7 @@ Headers: `Idempotency-Key` (OpenAPI required for commit).
 | Field | Type | OpenAPI `ActiveAlertSummary` |
 |-------|------|------------------------------|
 | `id` | string | `alert_id` |
-| `title` | string | derived from threshold type |
+| `title` | string | `title` (threshold name) |
 | `severity` | `critical` \| `warning` \| `info` | `severity` |
 | `triggeredAt` | string | `triggered_at` |
 | `team` | string | `team_name` |
@@ -545,15 +549,17 @@ Headers: `Idempotency-Key` (OpenAPI required for commit).
 
 ## Usage / insights — `frontend/src/api/usage.ts`
 
+**Status:** **wired** — adapters in `frontend/src/api/adapters/usage.ts`. Team budgets/member counts merged from `GET /teams`.
+
 | Function | Args | Response | OpenAPI |
 |----------|------|----------|---------|
-| `fetchUsageSummary(from, to)` | ISO dates | `UsageSummary` | composite tokens + cost |
-| `fetchTeamUsage(from, to)` | ISO dates | `TeamUsageRow[]` | `GET /dashboard/usage-by-team` |
-| `fetchDailyUsage(from, to)` | ISO dates | `DailyUsagePoint[]` | `GET /dashboard/trends` |
-| `fetchUserUsage(teamId, from, to)` | team + dates | `UserUsageRow[]` | top-consumers + filter |
+| `fetchUsageSummary(from, to)` | ISO dates | `UsageSummary` | composite `GET /dashboard/tokens` + `/cost` |
+| `fetchTeamUsage(from, to)` | ISO dates | `TeamUsageRow[]` | `GET /dashboard/usage-by-team` + `/teams` |
+| `fetchDailyUsage(from, to)` | ISO dates | `DailyUsagePoint[]` | `GET /dashboard/trends?granularity=daily` |
+| `fetchUserUsage(teamId, from, to)` | team + dates | `UserUsageRow[]` | `GET /dashboard/top-consumers?entity=users&team_id=` |
 | `fetchTeamDrilldown(teamId, from, to, toolId)` | + optional tool | `UserUsageRow[]` | same + `tool_id` query |
-| `fetchToolOptions()` | — | `{ id, name }[]` | `GET /tools?active=true` |
-| `fetchDailyBreakdown(date, teamId, toolId)` | date + filters | `DailyBreakdownTeam[]` | **gap** — planned |
+| `fetchToolOptions()` | — | `{ id, name }[]` | `GET /tools?active=true` ✅ |
+| `fetchDailyBreakdown(date, teamId, toolId)` | date + filters | `DailyBreakdownTeam[]` | `GET /dashboard/daily-breakdown` ✅ |
 
 ### `UsageSummary`
 
@@ -573,11 +579,11 @@ Headers: `Idempotency-Key` (OpenAPI required for commit).
 | `tokens` | number | `total_tokens` |
 | `cost` | number | `estimated_cost` |
 | `percentOfTotal` | number | derived |
-| `memberCount` | number | — | **FE only** |
-| `tokenBudget` | number \| null | — | **FE only** |
-| `costBudget` | number \| null | — | **FE only** |
-| `budgetUtilization` | number \| null | — | **FE only** |
-| `trend` | number (%) | — | **FE only** |
+| `memberCount` | number | — | merged from `GET /teams` |
+| `tokenBudget` | number \| null | — | merged from `GET /teams` |
+| `costBudget` | number \| null | — | merged from `GET /teams` |
+| `budgetUtilization` | number \| null | — | derived (tokens / tokenBudget) |
+| `trend` | number (%) | — | derived vs prior period token totals |
 
 ### `DailyUsagePoint`
 
@@ -616,15 +622,17 @@ Headers: `Idempotency-Key` (OpenAPI required for commit).
 
 ## Reports — `frontend/src/api/reports.ts`
 
+**Status:** **wired** — adapters in `frontend/src/api/adapters/reports.ts`. CSV generation is synchronous; PDF/XLSX requests are mapped to CSV.
+
 | Function | Method | Path | Status |
 |----------|--------|------|--------|
-| `fetchReports` | GET | `/reports` *(planned)* | mock |
-| `createReport` | POST | `/reports/generate` | mock |
-| `deleteReport` | DELETE | `/reports/{id}` *(planned)* | mock |
-| `downloadReport` | GET | `/reports/jobs/{jobId}/download` | mock |
-| `fetchSubscriptions` | GET | `/reports/{id}/subscriptions` *(planned)* | mock |
-| `createSubscription` | POST | `/reports/{id}/subscriptions` *(planned)* | mock |
-| `deleteSubscription` | DELETE | `/reports/{id}/subscriptions/{subId}` *(planned)* | mock |
+| `fetchReports` | GET | `/reports` | **wired** |
+| `createReport` | POST | `/reports/generate` | **wired** |
+| `deleteReport` | DELETE | `/reports/{id}` | **wired** |
+| `downloadReport` | GET | `/reports/jobs/{jobId}/download` | **wired** |
+| `fetchSubscriptions` | GET | `/reports/{id}/subscriptions` | **wired** |
+| `createSubscription` | POST | `/reports/{id}/subscriptions` | **wired** |
+| `deleteSubscription` | DELETE | `/reports/{id}/subscriptions/{subId}` | **wired** |
 
 ### `Report` response
 
@@ -696,36 +704,43 @@ Headers: `Idempotency-Key` (OpenAPI required for commit).
 
 ## Audit log — `frontend/src/api/auditLog.ts`
 
+**Status:** **wired** — adapters in `frontend/src/api/adapters/auditLog.ts`. Append-only events recorded on login, teams, tools, users, credentials, alerts, uploads, and reports.
+
 | Function | Method | Path | Status |
 |----------|--------|------|--------|
-| `fetchAuditLog(filters)` | GET | `/audit-logs` | mock |
+| `fetchAuditLog(filters)` | GET | `/audit-logs` | **wired** |
+| `exportAuditLog(filters)` | POST | `/audit-logs/export` | **wired** |
 
 ### Query (`AuditLogFilters` → OpenAPI params)
 
 | Frontend filter | Type | OpenAPI query param |
 |-----------------|------|---------------------|
-| `search` | string | `q` or `search` *(client-side in mock)* |
-| `category` | `AuditCategory` \| `""` | `resource_type` / category |
-| `from` | string (ISO date) | `from` |
-| `to` | string (ISO date) | `to` |
+| `search` | string | `q` |
+| `category` | `AuditCategory` \| `""` | `resource_type` |
+| `from` | string (ISO date) | `from` (date expanded to UTC start) |
+| `to` | string (ISO date) | `to` (date expanded to UTC end) |
+
+Default window when no dates supplied: **last 90 days**.
 
 ### `AuditLogEntry` response
 
-| Field | Type | OpenAPI `AuditLogEntry` | Delta |
-|-------|------|------------------------|-------|
+| Field | Type | OpenAPI / stored | Delta |
+|-------|------|------------------|-------|
 | `id` | string | `id` | |
-| `action` | `AuditAction` | `action` | FE uses dotted names |
-| `category` | `AuditCategory` | derived from `resource_type` | |
-| `actorName` | string | — | from user lookup |
+| `action` | `AuditAction` | `action` | alias map for minor variants |
+| `category` | `AuditCategory` | `resource_type` | |
+| `actorName` | string | `actor_display_name` | stored at write time |
 | `actorEmail` | string | `actor_email` | |
-| `actorRole` | string | — | **FE only** |
-| `targetType` | string \| null | `resource_type` | |
-| `targetName` | string \| null | — | **FE only** |
-| `description` | string | — | **FE only** |
-| `ipAddress` | string | `source_ip` | rename |
+| `actorRole` | string | `actor_role` | stored at write time |
+| `targetType` | string \| null | derived from `resource_type` | |
+| `targetName` | string \| null | `resource_name` | |
+| `description` | string | `description` | stored at write time |
+| `ipAddress` | string | `source_ip` | |
 | `createdAt` | string | `created_at` | |
 
-OpenAPI also includes: `actor_id`, `resource_id`, `outcome`, `correlation_id` — not surfaced in FE UI today.
+**Roles:** `super_admin`, `auditor` only (`403` for others).
+
+**Export:** When from/to dates are set, uses `POST /audit-logs/export`; otherwise falls back to client-side CSV of the loaded rows.
 
 ---
 
@@ -798,10 +813,10 @@ See [token-collector-mvp](../../changes/token-collector-mvp/specs/collector-api/
 
 | Path | `operationId` | Notes |
 |------|---------------|-------|
-| `GET /dashboard/tokens` | `getDashboardTokens` | Aggregated into `fetchDashboardStats` |
-| `GET /dashboard/cost` | `getDashboardCost` | Aggregated into stats / usage summary |
-| `GET /dashboard/usage-by-tool` | `getDashboardUsageByTool` | Not in current Insights UI |
-| `GET /dashboard/my-usage` | `getDashboardMyUsage` | Routes redirect to Insights |
+| `GET /dashboard/tokens` | `getDashboardTokens` | Used by `fetchDashboardStats`, `fetchUsageSummary` |
+| `GET /dashboard/cost` | `getDashboardCost` | Used by stats / usage summary |
+| `GET /dashboard/usage-by-tool` | `getDashboardUsageByTool` | Used by `fetchDashboardStats` (active tool count) |
+| `GET /dashboard/my-usage` | `getDashboardMyUsage` | Routes redirect to Insights; endpoint available for team members |
 | `POST /credentials/{credentialId}/rotate` | `rotateCredential` | No rotate UI action |
 | `POST /uploads/{uploadId}/reprocess` | `reprocessUpload` | Not in Uploads UI |
 | `GET /reports/jobs/{jobId}` | `getReportJob` | Mock uses inline `Report.status` |
@@ -837,7 +852,7 @@ Priority gaps (payloads documented above as *planned*):
 3. **Report catalog + subscriptions** — `Report`, `ReportSubscription` persistence
 4. **`PATCH /credentials/{credentialId}`** — `UpdateCredentialRequest`
 5. **`POST /tools/{toolId}/sync`** — returns updated tool/sync metadata
-6. **`GET /dashboard/daily-breakdown`** — `DailyBreakdownTeam[]`
+6. ~~**`GET /dashboard/daily-breakdown`** — `DailyBreakdownTeam[]`~~ ✅ implemented 2026-06-16
 
 Extend [schemas.yaml](./components/schemas.yaml) with frontend-aligned schemas or document adapter mappings when integrating.
 

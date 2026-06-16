@@ -41,6 +41,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { endOfDay, startOfDay, subDays } from "date-fns";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -89,12 +90,16 @@ import {
 } from "@/api/reports";
 import { fetchTeams, type Team } from "@/api/teams";
 import {
+  ALL_TEAMS,
+  ALL_TOOLS,
   fetchDailyBreakdown,
   fetchDailyUsage,
   fetchTeamDrilldown,
   fetchTeamUsage,
   fetchToolOptions,
   type DailyBreakdownTeam,
+  type DailyUsagePoint,
+  type DashboardFilters,
   type TeamUsageRow,
   type UserUsageRow,
 } from "@/api/usage";
@@ -262,8 +267,8 @@ function createDefaultFilters(): InsightsFilters {
       from: startOfDay(subDays(today, 30)).toISOString(),
       to: endOfDay(today).toISOString(),
     },
-    teamId: "",
-    toolId: "",
+    teamId: ALL_TEAMS,
+    toolId: ALL_TOOLS,
   };
 }
 
@@ -380,6 +385,37 @@ function InlineStat({
   );
 }
 
+function resolveDailyChartPoint(
+  rows: DailyUsagePoint[],
+  state: unknown,
+): DailyUsagePoint | undefined {
+  const chartState = state as {
+    activeLabel?: string | number;
+    activeTooltipIndex?: number;
+    activeIndex?: number;
+    activePayload?: Array<{ payload?: DailyUsagePoint }>;
+  };
+
+  const fromPayload = chartState.activePayload?.[0]?.payload;
+  if (fromPayload?.isoDate) {
+    return fromPayload;
+  }
+
+  if (chartState.activeLabel != null) {
+    const match = rows.find((row) => row.date === String(chartState.activeLabel));
+    if (match?.isoDate) {
+      return match;
+    }
+  }
+
+  const index = chartState.activeTooltipIndex ?? chartState.activeIndex;
+  if (typeof index === "number" && rows[index]?.isoDate) {
+    return rows[index];
+  }
+
+  return undefined;
+}
+
 export function InsightsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -398,8 +434,9 @@ export function InsightsPage() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [dateDrilldown, setDateDrilldown] = useState<{
     open: boolean;
-    date: string | null;
-  }>({ open: false, date: null });
+    dateIso: string | null;
+    dateLabel: string | null;
+  }>({ open: false, dateIso: null, dateLabel: null });
 
   const { from, to, teamId, toolId } = {
     from: filters.period.from,
@@ -408,34 +445,86 @@ export function InsightsPage() {
     toolId: filters.toolId,
   };
 
+  const dashboardFilters: DashboardFilters = { teamId, toolId };
+
   const statsQuery = useQuery({
     queryKey: ["insights", "stats", from, to, teamId, toolId],
-    queryFn: () => fetchDashboardStats(from, to),
+    queryFn: () => fetchDashboardStats(from, to, dashboardFilters),
   });
 
   const dailyQuery = useQuery({
     queryKey: ["insights", "daily", from, to, teamId, toolId],
-    queryFn: () => fetchDailyUsage(from, to),
+    queryFn: () => fetchDailyUsage(from, to, dashboardFilters),
   });
+
+  const openDateDrilldown = useCallback((point: DailyUsagePoint) => {
+    setDateDrilldown({
+      open: true,
+      dateIso: point.isoDate,
+      dateLabel: point.date,
+    });
+  }, []);
+
+  const handleDailyChartClick = useCallback(
+    (state: unknown) => {
+      const point = resolveDailyChartPoint(dailyQuery.data ?? [], state);
+      if (point) {
+        openDateDrilldown(point);
+      }
+    },
+    [dailyQuery.data, openDateDrilldown],
+  );
+
+  const renderClickableActiveDot = useCallback(
+    (stroke: string) =>
+      function ClickableActiveDot(props: {
+        cx?: number;
+        cy?: number;
+        payload?: DailyUsagePoint;
+      }) {
+        const { cx = 0, cy = 0, payload } = props;
+        if (payload == null) {
+          return null;
+        }
+        return (
+          <circle
+            cx={cx}
+            cy={cy}
+            r={6}
+            fill={stroke}
+            stroke="#fff"
+            strokeWidth={2}
+            style={{ cursor: "pointer" }}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (payload.isoDate) {
+                openDateDrilldown(payload);
+              }
+            }}
+          />
+        );
+      },
+    [openDateDrilldown],
+  );
 
   const teamCostQuery = useQuery({
     queryKey: ["insights", "teamCost", from, to, teamId, toolId],
-    queryFn: () => fetchTeamCost(from, to),
+    queryFn: () => fetchTeamCost(from, to, dashboardFilters),
   });
 
   const topUsersQuery = useQuery({
     queryKey: ["insights", "topUsers", from, to, teamId, toolId],
-    queryFn: () => fetchTopUsers(from, to),
+    queryFn: () => fetchTopUsers(from, to, dashboardFilters),
   });
 
   const alertsQuery = useQuery({
     queryKey: ["insights", "recentAlerts", teamId, toolId],
-    queryFn: fetchRecentAlerts,
+    queryFn: () => fetchRecentAlerts(dashboardFilters),
   });
 
   const teamsUsageQuery = useQuery({
     queryKey: ["insights", "teams", from, to, teamId, toolId],
-    queryFn: () => fetchTeamUsage(from, to),
+    queryFn: () => fetchTeamUsage(from, to, dashboardFilters),
   });
 
   const reportsQuery = useQuery({
@@ -456,7 +545,13 @@ export function InsightsPage() {
   const drilldownQuery = useQuery({
     queryKey: ["insights", "drilldown", drilldown.team?.teamId, from, to, toolId],
     queryFn: () =>
-      fetchTeamDrilldown(drilldown.team!.teamId, from, to, toolId || null),
+      fetchTeamDrilldown(
+        drilldown.team!.teamId,
+        from,
+        to,
+        toolId !== ALL_TOOLS ? toolId : null,
+        dashboardFilters,
+      ),
     enabled: drilldown.open && Boolean(drilldown.team?.teamId),
   });
 
@@ -468,17 +563,18 @@ export function InsightsPage() {
     queryKey: [
       "insights",
       "daily-breakdown",
-      dateDrilldown.date,
+      dateDrilldown.dateIso,
       filters.teamId,
       filters.toolId,
     ],
     queryFn: () =>
       fetchDailyBreakdown(
-        dateDrilldown.date!,
-        filters.teamId || null,
-        filters.toolId || null,
+        dateDrilldown.dateIso!,
+        filters.teamId,
+        filters.toolId,
+        dashboardFilters,
       ),
-    enabled: dateDrilldown.open && dateDrilldown.date !== null,
+    enabled: dateDrilldown.open && dateDrilldown.dateIso !== null,
   });
 
   const createReportMutation = useMutation({
@@ -600,7 +696,7 @@ export function InsightsPage() {
 
   const sortedTeamRows = useMemo(() => {
     let rows = teamsUsageQuery.data ?? [];
-    if (teamId) {
+    if (teamId && teamId !== ALL_TEAMS) {
       rows = rows.filter((row) => row.teamId === teamId);
     }
     return [...rows].sort((a, b) => b.cost - a.cost);
@@ -976,7 +1072,7 @@ export function InsightsPage() {
               setFilters((prev) => ({ ...prev, teamId: event.target.value }))
             }
           >
-            <MenuItem value="">All teams</MenuItem>
+            <MenuItem value={ALL_TEAMS}>All teams</MenuItem>
             {teams.map((team) => (
               <MenuItem key={team.id} value={team.id}>
                 {team.name}
@@ -995,7 +1091,7 @@ export function InsightsPage() {
               setFilters((prev) => ({ ...prev, toolId: event.target.value }))
             }
           >
-            <MenuItem value="">All tools</MenuItem>
+            <MenuItem value={ALL_TOOLS}>All tools</MenuItem>
             {toolOptions.map((tool) => (
               <MenuItem key={tool.id} value={tool.id}>
                 {tool.name}
@@ -1113,14 +1209,7 @@ export function InsightsPage() {
             <ResponsiveContainer width="100%" height={200}>
               <LineChart
                 data={dailyQuery.data ?? []}
-                onClick={(data) => {
-                  if (data?.activeLabel) {
-                    setDateDrilldown({
-                      open: true,
-                      date: String(data.activeLabel),
-                    });
-                  }
-                }}
+                onClick={handleDailyChartClick}
                 style={{ cursor: "pointer" }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
@@ -1150,9 +1239,9 @@ export function InsightsPage() {
                     borderRadius: 8,
                   }}
                 />
-                {dateDrilldown.date && (
+                {dateDrilldown.dateLabel && (
                   <ReferenceLine
-                    x={dateDrilldown.date}
+                    x={dateDrilldown.dateLabel}
                     stroke={tokens.primary}
                     strokeDasharray="4 4"
                     strokeWidth={1.5}
@@ -1165,7 +1254,7 @@ export function InsightsPage() {
                     stroke={tokens.primary}
                     strokeWidth={2}
                     dot={false}
-                    activeDot={{ r: 5, cursor: "pointer" }}
+                    activeDot={renderClickableActiveDot(tokens.primary)}
                   />
                 ) : (
                   <Line
@@ -1174,7 +1263,7 @@ export function InsightsPage() {
                     stroke={tokens.success}
                     strokeWidth={2}
                     dot={false}
-                    activeDot={{ r: 5, cursor: "pointer" }}
+                    activeDot={renderClickableActiveDot(tokens.success)}
                   />
                 )}
               </LineChart>
@@ -1344,8 +1433,8 @@ export function InsightsPage() {
 
       <SlideOver
         open={dateDrilldown.open}
-        onClose={() => setDateDrilldown({ open: false, date: null })}
-        title={dateDrilldown.date ?? ""}
+        onClose={() => setDateDrilldown({ open: false, dateIso: null, dateLabel: null })}
+        title={dateDrilldown.dateLabel ?? ""}
         subtitle="Token and cost breakdown by team and user"
         width={520}
       >

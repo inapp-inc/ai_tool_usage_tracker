@@ -1,6 +1,6 @@
 """Auth API routes — OpenAPI /auth/*."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
@@ -19,9 +19,14 @@ def get_auth_service(session: AsyncSession = Depends(get_session)) -> AuthServic
 @router.post("/login", response_model=TokenResponse)
 async def login(
     body: LoginRequest,
+    request: Request,
     service: AuthService = Depends(get_auth_service),
 ) -> TokenResponse:
-    return await service.login(body)
+    return await service.login(
+        body,
+        source_ip=get_client_ip(request),
+        correlation_id=get_correlation_id(request),
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)

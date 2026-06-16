@@ -5,6 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit.router import get_audit_recorder, record_audit_event
+from app.audit.recorder import AuditRecorder
 from app.auth.dependencies import get_current_user
 from app.db.session import get_session
 from app.models.auth import User
@@ -50,9 +52,19 @@ async def create_tool(
     request: Request,
     current_user: User = Depends(require_super_admin),
     service: ToolService = Depends(get_tool_service),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> ToolResponse:
     created = await service.create_tool(current_user.organization_id, body)
     await _reload_scheduler(request)
+    await record_audit_event(
+        recorder,
+        actor=current_user,
+        action="tool.connect",
+        resource_type="tool",
+        request=request,
+        resource_id=created.id,
+        resource_name=created.name,
+    )
     return created
 
 
@@ -81,9 +93,19 @@ async def update_tool(
     request: Request,
     current_user: User = Depends(require_super_admin),
     service: ToolService = Depends(get_tool_service),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> ToolResponse:
     updated = await service.update_tool(current_user.organization_id, tool_id, body)
     await _reload_scheduler(request)
+    await record_audit_event(
+        recorder,
+        actor=current_user,
+        action="tool.update",
+        resource_type="tool",
+        request=request,
+        resource_id=updated.id,
+        resource_name=updated.name,
+    )
     return updated
 
 
@@ -93,9 +115,20 @@ async def delete_tool(
     request: Request,
     current_user: User = Depends(require_super_admin),
     service: ToolService = Depends(get_tool_service),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> None:
+    tool = await service.get_tool(current_user.organization_id, tool_id)
     await service.delete_tool(current_user.organization_id, tool_id)
     await _reload_scheduler(request)
+    await record_audit_event(
+        recorder,
+        actor=current_user,
+        action="tool.delete",
+        resource_type="tool",
+        request=request,
+        resource_id=tool.id,
+        resource_name=tool.name,
+    )
 
 
 @router.post("/{tool_id}/sync", response_model=ToolResponse)

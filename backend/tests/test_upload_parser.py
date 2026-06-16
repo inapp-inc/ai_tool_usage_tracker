@@ -83,3 +83,42 @@ dev@acme.example,1.50,100,50,gpt-4o
     assert row.output_tokens == 50
     assert row.mapped_payload["estimated_cost"] == 1.5
     assert row.mapped_payload["model"] == "gpt-4o"
+
+
+def test_parse_csv_accepts_email_not_in_platform_users() -> None:
+    tool_id = uuid4()
+    csv_text = """email,model,input_tokens,output_tokens,cost,timestamp,tool
+gopikrishnan.sa@inapp.com,gpt-4o,100,50,0.25,2025-06-01T10:00:00Z,Cursor
+"""
+
+    result = parse_csv_content(
+        csv_text,
+        tools=[ToolLookup(id=tool_id, name="Cursor", vendor="cursor")],
+        users_by_email={},
+    )
+
+    assert result.error_message is None
+    row = result.rows[0]
+    assert row.user_email == "gopikrishnan.sa@inapp.com"
+    assert row.matched_user_id is None
+    assert row.match_status == "matched"
+    assert row.mapped_payload["user_linked"] is False
+    assert row.mapped_payload["warnings"] == []
+
+
+def test_parse_csv_keeps_row_with_warnings_instead_of_blocking() -> None:
+    tool_id = uuid4()
+    csv_text = """email,model,input_tokens,output_tokens,cost,timestamp,tool
+not-an-email,gpt-4o,0,0,0.25,2025-06-01T10:00:00Z,Cursor
+"""
+
+    result = parse_csv_content(
+        csv_text,
+        tools=[ToolLookup(id=tool_id, name="Cursor", vendor="cursor")],
+        users_by_email={},
+    )
+
+    row = result.rows[0]
+    assert row.match_status == "matched"
+    assert row.error_reason is not None
+    assert "Email format" in row.error_reason or "No token count" in row.error_reason

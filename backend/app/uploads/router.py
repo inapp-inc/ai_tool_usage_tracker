@@ -2,9 +2,11 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit.router import get_audit_recorder, record_audit_event
+from app.audit.recorder import AuditRecorder
 from app.auth.dependencies import get_current_user
 from app.db.session import get_session
 from app.models.auth import User
@@ -84,20 +86,45 @@ async def get_upload_preview(
 @router.post("/{upload_id}/commit", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
 async def commit_upload(
     upload_id: UUID,
+    request: Request,
     body: UploadCommitRequest | None = None,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     current_user: User = Depends(require_upload_admin),
     service: UploadService = Depends(get_upload_service),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> UploadResponse:
     _ = idempotency_key
     payload = body or UploadCommitRequest()
-    return await service.commit_upload(current_user.organization_id, upload_id, payload)
+    result = await service.commit_upload(current_user.organization_id, upload_id, payload)
+    await record_audit_event(
+        recorder,
+        actor=current_user,
+        action="upload.submit",
+        resource_type="upload",
+        request=request,
+        resource_id=result.id,
+        resource_name=result.filename,
+    )
+    return result
 
 
 @router.delete("/{upload_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_upload(
     upload_id: UUID,
+    request: Request,
     current_user: User = Depends(require_upload_admin),
     service: UploadService = Depends(get_upload_service),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> None:
+    uploads = await service.list_uploads(current_user.organization_id)
+    target = next((row for row in uploads.data if row.id == upload_id), None)
     await service.delete_upload(current_user.organization_id, upload_id)
+    await record_audit_event(
+        recorder,
+        actor=current_user,
+        action="upload.delete",
+        resource_type="upload",
+        request=request,
+        resource_id=upload_id,
+        resource_name=target.filename if target else None,
+    )

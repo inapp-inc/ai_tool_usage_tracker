@@ -14,6 +14,7 @@ from app.members.schemas import (
 from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.repository import TeamRepository
 from app.teams.tool_members import fetch_tool_members_for_team
+from app.teams.upload_members import fetch_upload_members_for_team
 from app.users.repository import UserAdminRepository
 
 
@@ -66,6 +67,7 @@ class MembersService:
         if view == "all":
             teams = await self._teams.list_by_organization(organization_id, active=None)
             tool_by_email: dict[str, MemberResponse] = {}
+            upload_by_email: dict[str, MemberResponse] = {}
 
             for team in teams:
                 tool_entries = await fetch_tool_members_for_team(self._session, team)
@@ -93,7 +95,35 @@ class MembersService:
                         teams=[MemberTeamSummary(id=team.id, name=team.name)],
                     )
 
+                upload_entries = await fetch_upload_members_for_team(
+                    self._session,
+                    organization_id,
+                    team,
+                )
+                for entry in upload_entries:
+                    email_lower = entry.email.lower()
+                    if email_lower in platform_emails or email_lower in tool_by_email:
+                        continue
+
+                    existing = upload_by_email.get(email_lower)
+                    if existing is not None:
+                        if not any(summary.id == team.id for summary in existing.teams):
+                            existing.teams.append(
+                                MemberTeamSummary(id=team.id, name=team.name)
+                            )
+                        continue
+
+                    upload_by_email[email_lower] = MemberResponse(
+                        user_id=None,
+                        email=entry.email,
+                        display_name=entry.name,
+                        active=True,
+                        source="upload",
+                        teams=[MemberTeamSummary(id=team.id, name=team.name)],
+                    )
+
             data.extend(tool_by_email.values())
+            data.extend(upload_by_email.values())
 
         data.sort(key=lambda row: row.email.lower())
         return MemberListResponse(

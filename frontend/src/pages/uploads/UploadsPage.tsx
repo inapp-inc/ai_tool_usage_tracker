@@ -21,17 +21,23 @@ import {
   InputLabel,
   MenuItem,
   Select,
+  Step,
+  StepLabel,
+  Stepper,
   Tooltip,
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import {
+  applyUploadMapping,
   deleteUpload,
+  fetchUploadMapping,
   fetchUploads,
   uploadFile,
+  type UploadColumnMapping,
   type UploadFormat,
   type UploadRecord,
 } from "@/api/uploads";
@@ -44,8 +50,15 @@ import { EmptyState } from "@/components/feedback/EmptyState";
 import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { formatRelativeTime } from "@/utils/formatters";
+import {
+  buildInitialColumnMapping,
+  isColumnMappingReady,
+  UploadColumnMappingForm,
+} from "./UploadColumnMappingForm";
 
 const EMPTY_TEAMS: Team[] = [];
+const UPLOAD_STEPS = ["Upload file", "Map columns", "Preview & import"];
+type UploadDialogStep = "file" | "mapping";
 
 const FORMAT_CHIP_COLORS: Record<
   UploadFormat,
@@ -89,6 +102,9 @@ export function UploadsPage() {
   const [selectedTeamId, setSelectedTeamId] = useState<string>("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<UploadRecord | null>(null);
+  const [dialogStep, setDialogStep] = useState<UploadDialogStep>("file");
+  const [activeUploadId, setActiveUploadId] = useState<string | null>(null);
+  const [columnMapping, setColumnMapping] = useState<UploadColumnMapping>({});
 
   const uploadsQuery = useQuery({
     queryKey: ["uploads"],
@@ -100,6 +116,24 @@ export function UploadsPage() {
     queryFn: fetchTeams,
   });
 
+  const mappingQuery = useQuery({
+    queryKey: ["uploads", activeUploadId, "mapping"],
+    queryFn: () => fetchUploadMapping(activeUploadId ?? ""),
+    enabled: dialogOpen && dialogStep === "mapping" && Boolean(activeUploadId),
+  });
+
+  useEffect(() => {
+    if (!mappingQuery.data) {
+      return;
+    }
+    setColumnMapping(
+      buildInitialColumnMapping(
+        mappingQuery.data.suggestedMapping,
+        mappingQuery.data.columnMapping,
+      ),
+    );
+  }, [mappingQuery.data]);
+
   const uploadMutation = useMutation({
     mutationFn: ({
       file,
@@ -110,15 +144,28 @@ export function UploadsPage() {
     }) => uploadFile(file, teamId),
     onSuccess: async (record) => {
       await queryClient.invalidateQueries({ queryKey: ["uploads"] });
-      handleCloseDialog();
       if (record.status === "error") {
         return;
       }
       if (record.status === "mapping") {
-        navigate(`/uploads/${record.id}/map`);
+        setActiveUploadId(record.id);
+        setDialogStep("mapping");
         return;
       }
+      handleCloseDialog();
       navigate(`/uploads/${record.id}/preview`);
+    },
+  });
+
+  const applyMappingMutation = useMutation({
+    mutationFn: () => applyUploadMapping(activeUploadId ?? "", columnMapping),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["uploads"] });
+      const uploadId = activeUploadId;
+      handleCloseDialog();
+      if (uploadId) {
+        navigate(`/uploads/${uploadId}/preview`);
+      }
     },
   });
 
@@ -137,7 +184,13 @@ export function UploadsPage() {
     setSelectedFile(null);
     setSelectedTeamId("");
     setIsDragOver(false);
+    setDialogStep("file");
+    setActiveUploadId(null);
+    setColumnMapping({});
   };
+
+  const isCsvUpload = selectedFile?.name.toLowerCase().endsWith(".csv") ?? false;
+  const mappingReady = isColumnMappingReady(columnMapping);
 
   const handleFileSelect = (file: File | null) => {
     if (!file) {
@@ -339,11 +392,62 @@ export function UploadsPage() {
         <Dialog
           open={dialogOpen}
           onClose={handleCloseDialog}
-          maxWidth="sm"
+          maxWidth={dialogStep === "mapping" ? "md" : "sm"}
           fullWidth
         >
-          <DialogTitle>Upload Usage File</DialogTitle>
+          <DialogTitle>
+            {dialogStep === "mapping" ? "Map CSV columns" : "Upload Usage File"}
+          </DialogTitle>
           <DialogContent>
+            <Stepper
+              activeStep={dialogStep === "mapping" ? 1 : 0}
+              alternativeLabel
+              sx={{ mb: 3, mt: 0.5 }}
+            >
+              {UPLOAD_STEPS.map((label) => (
+                <Step key={label}>
+                  <StepLabel>{label}</StepLabel>
+                </Step>
+              ))}
+            </Stepper>
+
+            {dialogStep === "mapping" ? (
+              <>
+                {mappingQuery.isPending && (
+                  <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+                    <CircularProgress size={28} />
+                  </Box>
+                )}
+                {mappingQuery.isError && (
+                  <Alert severity="error">
+                    Could not load CSV headers. Close and try uploading again.
+                  </Alert>
+                )}
+                {mappingQuery.data && (
+                  <UploadColumnMappingForm
+                    headers={mappingQuery.data.headers}
+                    fields={mappingQuery.data.fields}
+                    mapping={columnMapping}
+                    suggestedMapping={mappingQuery.data.suggestedMapping}
+                    sampleRow={mappingQuery.data.sampleRow}
+                    onMappingChange={setColumnMapping}
+                  />
+                )}
+                {applyMappingMutation.isError && (
+                  <Alert severity="error" sx={{ mt: 2 }}>
+                    {applyMappingMutation.error instanceof Error
+                      ? applyMappingMutation.error.message
+                      : "Validation failed. Check your column mapping."}
+                  </Alert>
+                )}
+                {!mappingReady && mappingQuery.data && (
+                  <Alert severity="warning" sx={{ mt: 2 }}>
+                    Map at least one CSV column to continue.
+                  </Alert>
+                )}
+              </>
+            ) : (
+              <>
             <input
               ref={fileInputRef}
               type="file"
@@ -445,15 +549,36 @@ export function UploadsPage() {
 
             {selectedFile && (
               <Alert severity="info" sx={{ mt: 1 }}>
-                CSV files will prompt you to map columns before validation.
-                JSON files are validated automatically.
+                {isCsvUpload
+                  ? "After upload, map CSV columns to fields. If you assign a team, usage and members import to that team."
+                  : "JSON files are parsed after upload. Assign a team to bind imported usage to that team."}
               </Alert>
+            )}
+              </>
             )}
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 2 }}>
             <Button variant="text" onClick={handleCloseDialog}>
               Cancel
             </Button>
+            {dialogStep === "mapping" ? (
+              <Button
+                variant="contained"
+                disabled={
+                  !mappingReady ||
+                  applyMappingMutation.isPending ||
+                  mappingQuery.isPending
+                }
+                onClick={() => applyMappingMutation.mutate()}
+                startIcon={
+                  applyMappingMutation.isPending ? (
+                    <CircularProgress size={14} color="inherit" />
+                  ) : undefined
+                }
+              >
+                Preview rows
+              </Button>
+            ) : (
             <Button
               variant="contained"
               disabled={!selectedFile || uploadMutation.isPending}
@@ -471,8 +596,9 @@ export function UploadsPage() {
                 ) : undefined
               }
             >
-              Upload & Validate
+              {isCsvUpload ? "Upload & Map Columns" : "Upload & Validate"}
             </Button>
+            )}
           </DialogActions>
         </Dialog>
 

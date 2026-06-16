@@ -54,6 +54,8 @@ export interface ApiParsedUsageRow {
 export interface ApiUploadPreview {
   upload_id: string;
   filename: string;
+  team_id?: string | null;
+  team_name?: string | null;
   total_rows: number;
   matched_rows: number;
   unmatched_rows: number;
@@ -129,6 +131,8 @@ export function mapApiUploadPreview(api: ApiUploadPreview): UploadPreview {
   return {
     uploadId: api.upload_id,
     fileName: api.filename,
+    teamId: api.team_id ?? null,
+    teamName: api.team_name ?? null,
     totalRows: api.total_rows,
     validRows: api.matched_rows,
     errorRows: api.unmatched_rows,

@@ -20,6 +20,7 @@ from app.teams.schemas import (
     TeamUpdateRequest,
 )
 from app.teams.tool_members import fetch_tool_members_for_team
+from app.teams.upload_members import fetch_upload_members_for_team
 from app.users.repository import UserAdminRepository
 
 
@@ -95,6 +96,7 @@ class TeamService:
         for entry in tool_entries:
             if entry.email.lower() in platform_emails:
                 continue
+            platform_emails.add(entry.email.lower())
             data.append(
                 TeamMemberResponse(
                     user_id=None,
@@ -104,6 +106,25 @@ class TeamService:
                     source="tool",
                     tool_id=entry.tool_id,
                     tool_name=entry.tool_name,
+                )
+            )
+
+        upload_entries = await fetch_upload_members_for_team(
+            self._session,
+            organization_id,
+            team,
+        )
+        for entry in upload_entries:
+            if entry.email.lower() in platform_emails:
+                continue
+            platform_emails.add(entry.email.lower())
+            data.append(
+                TeamMemberResponse(
+                    user_id=None,
+                    email=entry.email,
+                    display_name=entry.name,
+                    joined_at=None,
+                    source="upload",
                 )
             )
 

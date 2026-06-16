@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
@@ -11,7 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.auth import User
+from app.models.collector import UsageEvent
 from app.models.ingestion import ParsedRow, Upload
+from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.repository import TeamRepository
 from app.tools.repository import ToolRepository
 from app.uploads.parser import (
@@ -48,6 +51,7 @@ class UploadService:
         self._teams = TeamRepository(session)
         self._tools = ToolRepository(session)
         self._users = UserAdminRepository(session)
+        self._memberships = TeamMembershipRepository(session)
 
     async def list_uploads(self, organization_id: UUID) -> UploadListResponse:
         rows = await self._uploads.list_by_organization(organization_id)
@@ -149,7 +153,7 @@ class UploadService:
                 upload=response,
             )
 
-        tools = await self._tool_lookups(user.organization_id)
+        tools = await self._tool_lookups(user.organization_id, team_id)
         users = await self._users.list_by_organization(user.organization_id)
         users_by_email = {row.email.lower(): row.id for row in users}
 
@@ -191,18 +195,16 @@ class UploadService:
                 match_status=row.match_status,
                 error_reason=row.error_reason,
                 raw_payload=row.raw_payload,
-                mapped_payload=row.mapped_payload,
+                mapped_payload=self._with_team_context(row.mapped_payload, team_id),
             )
             for row in parsed.rows
         ]
         await self._uploads.add_parsed_rows(parsed_rows)
 
-        matched = sum(1 for row in parsed.rows if row.match_status == "matched")
-        unmatched = len(parsed.rows) - matched
         upload.status = "preview_ready"
         upload.total_rows = len(parsed.rows)
-        upload.matched_rows = matched
-        upload.unmatched_rows = unmatched
+        upload.matched_rows = len(parsed.rows)
+        upload.unmatched_rows = 0
 
         await self._session.commit()
         await self._session.refresh(upload)
@@ -257,7 +259,7 @@ class UploadService:
             UploadMappingField(
                 key=key,
                 label=MAPPING_FIELD_LABELS[key],
-                required=key == "email",
+                required=False,
             )
             for key in MAPPING_FIELD_LABELS
         ]
@@ -293,10 +295,10 @@ class UploadService:
             )
 
         mapping = body.model_dump(exclude_none=False)
-        if not mapping.get("email"):
+        if not any(column for column in mapping.values() if column):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email column mapping is required.",
+                detail="Map at least one CSV column before continuing.",
             )
 
         header_set = set(headers)
@@ -310,7 +312,7 @@ class UploadService:
         content = self._read_upload_file(upload)
         text = content.decode("utf-8-sig", errors="replace")
 
-        tools = await self._tool_lookups(organization_id)
+        tools = await self._tool_lookups(organization_id, upload.team_id)
         users = await self._users.list_by_organization(organization_id)
         users_by_email = {row.email.lower(): row.id for row in users}
 
@@ -349,19 +351,17 @@ class UploadService:
                 match_status=row.match_status,
                 error_reason=row.error_reason,
                 raw_payload=row.raw_payload,
-                mapped_payload=row.mapped_payload,
+                mapped_payload=self._with_team_context(row.mapped_payload, upload.team_id),
             )
             for row in parsed.rows
         ]
         await self._uploads.add_parsed_rows(parsed_rows)
 
-        matched = sum(1 for row in parsed.rows if row.match_status == "matched")
-        unmatched = len(parsed.rows) - matched
         upload.status = "preview_ready"
         upload.column_mapping = mapping
         upload.total_rows = len(parsed.rows)
-        upload.matched_rows = matched
-        upload.unmatched_rows = unmatched
+        upload.matched_rows = len(parsed.rows)
+        upload.unmatched_rows = 0
         upload.error_message = None
 
         await self._session.commit()
@@ -391,7 +391,6 @@ class UploadService:
         for row in rows:
             mapped = row.mapped_payload if isinstance(row.mapped_payload, dict) else {}
             raw = row.raw_payload if isinstance(row.raw_payload, dict) else {}
-            is_valid = row.match_status == "matched"
             preview_rows.append(
                 ParsedUsageRowResponse(
                     row_number=row.row_number,
@@ -405,20 +404,21 @@ class UploadService:
                     occurred_at=row.occurred_at,
                     model=mapped.get("model"),
                     cost=float(mapped.get("estimated_cost") or 0),
-                    status="valid" if is_valid else "error",
+                    status="valid",
                     error_reason=row.error_reason,
                     raw_data=raw,
                     mapped_data=mapped,
                 )
             )
 
-        matched = sum(1 for row in preview_rows if row.status == "valid")
         return UploadPreviewResponse(
             upload_id=upload.id,
             filename=upload.filename,
+            team_id=upload.team_id,
+            team_name=await self._resolve_team_name(organization_id, upload.team_id),
             total_rows=len(preview_rows),
-            matched_rows=matched,
-            unmatched_rows=len(preview_rows) - matched,
+            matched_rows=len(preview_rows),
+            unmatched_rows=0,
             rows=preview_rows,
         )
 
@@ -441,8 +441,45 @@ class UploadService:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found.")
             upload.team_id = body.team_id
 
+        parsed_rows = await self._uploads.list_parsed_rows(upload_id)
+        if not parsed_rows:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upload has no parsed rows to import.",
+            )
+
+        if body.row_numbers is not None:
+            if not body.row_numbers:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Select at least one row to import.",
+                )
+            available = {row.row_number for row in parsed_rows}
+            invalid = [number for number in body.row_numbers if number not in available]
+            if invalid:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unknown row numbers: {', '.join(str(n) for n in invalid)}",
+                )
+            imported_count = await self._uploads.keep_parsed_rows(
+                upload_id,
+                set(body.row_numbers),
+            )
+        else:
+            imported_count = len(parsed_rows)
+
+        upload.total_rows = imported_count
+        upload.matched_rows = imported_count
+        upload.unmatched_rows = 0
         upload.status = "committing"
         await self._session.flush()
+
+        remaining_rows = await self._uploads.list_parsed_rows(upload_id)
+        await self._import_usage_rows(
+            upload,
+            remaining_rows,
+            organization_id,
+        )
 
         upload.status = "completed"
         upload.committed_at = datetime.now(UTC)
@@ -466,12 +503,94 @@ class UploadService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found.")
         return upload
 
-    async def _tool_lookups(self, organization_id: UUID) -> list[ToolLookup]:
+    async def _tool_lookups(
+        self,
+        organization_id: UUID,
+        team_id: UUID | None = None,
+    ) -> list[ToolLookup]:
         tools = await self._tools.list_by_organization(organization_id, active=None)
+        if team_id is None:
+            return [
+                ToolLookup(id=tool.id, name=tool.name, vendor=tool.vendor)
+                for tool in tools
+            ]
+
+        team = await self._teams.get_by_id(team_id, organization_id)
+        if team is None:
+            return []
+
+        allowed_ids: set[UUID] = set()
+        tool_ids_raw = team.tool_ids if isinstance(team.tool_ids, list) else []
+        for raw_tool_id in tool_ids_raw:
+            try:
+                allowed_ids.add(UUID(str(raw_tool_id)))
+            except ValueError:
+                continue
+
+        filtered = [tool for tool in tools if tool.id in allowed_ids] if allowed_ids else tools
         return [
             ToolLookup(id=tool.id, name=tool.name, vendor=tool.vendor)
-            for tool in tools
+            for tool in filtered
         ]
+
+    async def _import_usage_rows(
+        self,
+        upload: Upload,
+        rows: list[ParsedRow],
+        organization_id: UUID,
+    ) -> None:
+        team_id = upload.team_id
+        linked_users: set[UUID] = set()
+
+        for row in rows:
+            mapped = row.mapped_payload if isinstance(row.mapped_payload, dict) else {}
+            if team_id is not None:
+                mapped = {**mapped, "team_id": str(team_id)}
+                row.mapped_payload = mapped
+
+            tool_id: UUID | None = None
+            raw_tool_id = mapped.get("tool_id")
+            if raw_tool_id:
+                try:
+                    tool_id = UUID(str(raw_tool_id))
+                except ValueError:
+                    tool_id = None
+
+            provider = str(mapped.get("vendor") or "upload")
+            occurred_at = row.occurred_at or datetime.now(UTC)
+            total_tokens = int(row.input_tokens) + int(row.output_tokens)
+
+            self._session.add(
+                UsageEvent(
+                    organization_id=organization_id,
+                    team_id=team_id,
+                    user_id=row.matched_user_id,
+                    user_email=row.user_email,
+                    upload_id=upload.id,
+                    tool_id=tool_id,
+                    collector_id=None,
+                    provider=provider,
+                    model=mapped.get("model"),
+                    occurred_at=occurred_at,
+                    input_tokens=int(row.input_tokens),
+                    output_tokens=int(row.output_tokens),
+                    total_tokens=total_tokens,
+                    estimated_cost=Decimal(str(mapped.get("estimated_cost") or 0)),
+                    vendor_event_id=f"upload-{upload.id}-{row.row_number}",
+                )
+            )
+
+            if team_id is not None and row.matched_user_id is not None:
+                linked_users.add(row.matched_user_id)
+
+        for user_id in linked_users:
+            await self._memberships.add(
+                organization_id=organization_id,
+                team_id=team_id,  # type: ignore[arg-type]
+                user_id=user_id,
+            )
+
+        await self._session.flush()
 
     async def _persist_file(
         self,
@@ -555,6 +674,13 @@ class UploadService:
         result = await self._session.execute(select(AuthUser).where(AuthUser.id == user_id))
         user = result.scalar_one_or_none()
         return self._display_name(user) if user else None
+
+    @staticmethod
+    def _with_team_context(mapped_payload: dict, team_id: UUID | None) -> dict:
+        payload = dict(mapped_payload) if isinstance(mapped_payload, dict) else {}
+        if team_id is not None:
+            payload["team_id"] = str(team_id)
+        return payload
 
     @staticmethod
     def _display_name(user: User) -> str:

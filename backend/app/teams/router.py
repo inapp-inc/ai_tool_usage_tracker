@@ -2,8 +2,11 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.audit.router import get_audit_recorder, record_audit_event
+from app.audit.recorder import AuditRecorder
 
 from app.auth.dependencies import get_current_user
 from app.db.session import get_session
@@ -49,10 +52,22 @@ async def list_teams(
 @router.post("", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
 async def create_team(
     body: TeamCreateRequest,
+    request: Request,
     current_user: User = Depends(require_super_admin),
     service: TeamService = Depends(get_team_service),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> TeamResponse:
-    return await service.create_team(current_user, body)
+    created = await service.create_team(current_user, body)
+    await record_audit_event(
+        recorder,
+        actor=current_user,
+        action="team.create",
+        resource_type="team",
+        request=request,
+        resource_id=created.id,
+        resource_name=created.name,
+    )
+    return created
 
 
 @router.get("/{team_id}/members", response_model=TeamMemberListResponse)
@@ -97,16 +112,40 @@ async def get_team(
 async def update_team(
     team_id: UUID,
     body: TeamUpdateRequest,
+    request: Request,
     current_user: User = Depends(require_super_admin),
     service: TeamService = Depends(get_team_service),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> TeamResponse:
-    return await service.update_team(current_user, team_id, body)
+    updated = await service.update_team(current_user, team_id, body)
+    await record_audit_event(
+        recorder,
+        actor=current_user,
+        action="team.update",
+        resource_type="team",
+        request=request,
+        resource_id=updated.id,
+        resource_name=updated.name,
+    )
+    return updated
 
 
 @router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_team(
     team_id: UUID,
+    request: Request,
     current_user: User = Depends(require_super_admin),
     service: TeamService = Depends(get_team_service),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> None:
+    team = await service.get_team(current_user, team_id)
     await service.delete_team(current_user, team_id)
+    await record_audit_event(
+        recorder,
+        actor=current_user,
+        action="team.delete",
+        resource_type="team",
+        request=request,
+        resource_id=team.id,
+        resource_name=team.name,
+    )

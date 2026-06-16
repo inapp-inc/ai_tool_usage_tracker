@@ -1,11 +1,26 @@
-import { format, subDays } from "date-fns";
+import { apiRequest } from "./client";
+import {
+  buildDashboardStats,
+  dashboardQuery,
+  mapRecentAlerts,
+  mapTeamCostRows,
+  mapTopUsers,
+  mapTrendPoints,
+  type ApiActiveAlertSummary,
+  type ApiCostOverviewWidget,
+  type ApiTokenUsageWidget,
+  type ApiTopConsumersResponse,
+  type ApiTrendPoint,
+  type ApiUsageByToolItem,
+  type ApiUsageByTeamItem,
+} from "./adapters/dashboard";
 
-const MOCK_LATENCY_MS = 400;
+export const ALL_TEAMS = "all";
+export const ALL_TOOLS = "all";
 
-function delay<T>(value: T): Promise<T> {
-  return new Promise((resolve) => {
-    setTimeout(() => resolve(value), MOCK_LATENCY_MS);
-  });
+export interface DashboardFilters {
+  teamId?: string;
+  toolId?: string;
 }
 
 export interface DashboardStats {
@@ -21,6 +36,7 @@ export interface DashboardStats {
 
 export interface TokenDataPoint {
   date: string;
+  isoDate: string;
   tokens: number;
   cost: number;
 }
@@ -47,185 +63,130 @@ export interface RecentAlert {
   team: string;
 }
 
-function generateTimeseries(): TokenDataPoint[] {
-  const today = new Date();
-  return Array.from({ length: 30 }, (_, index) => {
-    const date = subDays(today, 29 - index);
-    const dayFactor = 1 + Math.sin(index / 4) * 0.15;
-    const tokens = Math.round(145_000 * dayFactor + (index % 7) * 8_500);
-    return {
-      date: format(date, "MMM d"),
-      tokens,
-      cost: Number((tokens * 0.000065).toFixed(2)),
-    };
-  });
+function normalizeFilters(filters?: DashboardFilters): DashboardFilters | undefined {
+  if (!filters) {
+    return undefined;
+  }
+  return {
+    teamId: filters.teamId && filters.teamId !== ALL_TEAMS ? filters.teamId : undefined,
+    toolId: filters.toolId && filters.toolId !== ALL_TOOLS ? filters.toolId : undefined,
+  };
 }
 
-const MOCK_STATS: DashboardStats = {
-  totalTokens: 4_820_300,
-  totalCost: 312.45,
-  activeTools: 7,
-  activeTeams: 12,
-  tokensDelta: 8.4,
-  costDelta: 5.2,
-  toolsDelta: 0,
-  teamsDelta: 2.1,
-};
+async function fetchPeriodDeltas(
+  from: string,
+  to: string,
+  filters?: DashboardFilters,
+): Promise<{
+  tokens_delta: number;
+  cost_delta: number;
+  tools_delta: number;
+  teams_delta: number;
+}> {
+  const normalized = normalizeFilters(filters);
+  const prevDurationMs = new Date(to).getTime() - new Date(from).getTime();
+  const prevTo = new Date(new Date(from).getTime() - 1).toISOString();
+  const prevFrom = new Date(new Date(from).getTime() - prevDurationMs).toISOString();
 
-const MOCK_TIMESERIES = generateTimeseries();
+  const [
+    currentTokens,
+    prevTokens,
+    currentCost,
+    prevCost,
+    currentTools,
+    prevTools,
+    currentTeams,
+    prevTeams,
+  ] = await Promise.all([
+    apiRequest<ApiTokenUsageWidget>(`/dashboard/tokens?${dashboardQuery(from, to, normalized)}`),
+    apiRequest<ApiTokenUsageWidget>(`/dashboard/tokens?${dashboardQuery(prevFrom, prevTo, normalized)}`),
+    apiRequest<ApiCostOverviewWidget>(`/dashboard/cost?${dashboardQuery(from, to, normalized)}`),
+    apiRequest<ApiCostOverviewWidget>(`/dashboard/cost?${dashboardQuery(prevFrom, prevTo, normalized)}`),
+    apiRequest<ApiUsageByToolItem[]>(`/dashboard/usage-by-tool?${dashboardQuery(from, to, normalized)}`),
+    apiRequest<ApiUsageByToolItem[]>(`/dashboard/usage-by-tool?${dashboardQuery(prevFrom, prevTo, normalized)}`),
+    apiRequest<ApiUsageByTeamItem[]>(`/dashboard/usage-by-team?${dashboardQuery(from, to, normalized)}`),
+    apiRequest<ApiUsageByTeamItem[]>(`/dashboard/usage-by-team?${dashboardQuery(prevFrom, prevTo, normalized)}`),
+  ]);
 
-const MOCK_TEAM_COSTS: TeamCostDataPoint[] = [
-  { team: "Engineering", cost: 98.4 },
-  { team: "Data Science", cost: 72.15 },
-  { team: "Design", cost: 41.2 },
-  { team: "Marketing", cost: 38.6 },
-  { team: "Sales", cost: 35.1 },
-  { team: "Support", cost: 27.0 },
-];
+  const pct = (current: number, previous: number) =>
+    previous === 0 ? (current > 0 ? 100 : 0) : ((current - previous) / previous) * 100;
 
-const MOCK_TOP_USERS: TopUser[] = [
-  {
-    id: "u1",
-    name: "Alex Chen",
-    team: "Engineering",
-    tokens: 892_400,
-    cost: 58.02,
-    percentOfTotal: 0.185,
-  },
-  {
-    id: "u2",
-    name: "Jordan Lee",
-    team: "Data Science",
-    tokens: 654_200,
-    cost: 42.52,
-    percentOfTotal: 0.136,
-  },
-  {
-    id: "u3",
-    name: "Sam Rivera",
-    team: "Engineering",
-    tokens: 521_800,
-    cost: 33.92,
-    percentOfTotal: 0.108,
-  },
-  {
-    id: "u4",
-    name: "Taylor Kim",
-    team: "Design",
-    tokens: 412_300,
-    cost: 26.8,
-    percentOfTotal: 0.086,
-  },
-  {
-    id: "u5",
-    name: "Morgan Patel",
-    team: "Marketing",
-    tokens: 387_600,
-    cost: 25.19,
-    percentOfTotal: 0.08,
-  },
-  {
-    id: "u6",
-    name: "Casey Nguyen",
-    team: "Sales",
-    tokens: 298_400,
-    cost: 19.4,
-    percentOfTotal: 0.062,
-  },
-  {
-    id: "u7",
-    name: "Riley Brooks",
-    team: "Support",
-    tokens: 245_100,
-    cost: 15.93,
-    percentOfTotal: 0.051,
-  },
-  {
-    id: "u8",
-    name: "Jamie Ortiz",
-    team: "Engineering",
-    tokens: 198_700,
-    cost: 12.92,
-    percentOfTotal: 0.041,
-  },
-];
+  const activeTools = (rows: ApiUsageByToolItem[]) =>
+    rows.filter((row) => row.total_tokens > 0).length;
+  const activeTeams = (rows: ApiUsageByTeamItem[]) =>
+    rows.filter((row) => row.total_tokens > 0).length;
 
-const MOCK_RECENT_ALERTS: RecentAlert[] = [
-  {
-    id: "a1",
-    title: "Token threshold exceeded",
-    severity: "critical",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-    team: "Engineering",
-  },
-  {
-    id: "a2",
-    title: "Monthly budget at 85%",
-    severity: "warning",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
-    team: "Data Science",
-  },
-  {
-    id: "a3",
-    title: "New tool integration active",
-    severity: "info",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 8).toISOString(),
-    team: "Design",
-  },
-  {
-    id: "a4",
-    title: "Unusual usage spike detected",
-    severity: "warning",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 22).toISOString(),
-    team: "Marketing",
-  },
-  {
-    id: "a5",
-    title: "Daily limit approaching",
-    severity: "critical",
-    triggeredAt: new Date(Date.now() - 1000 * 60 * 60 * 30).toISOString(),
-    team: "Sales",
-  },
-];
+  return {
+    tokens_delta: Math.round(pct(currentTokens.total_tokens, prevTokens.total_tokens) * 10) / 10,
+    cost_delta: Math.round(pct(Number(currentCost.actual_spend), Number(prevCost.actual_spend)) * 10) / 10,
+    tools_delta: Math.round(pct(activeTools(currentTools), activeTools(prevTools)) * 10) / 10,
+    teams_delta: Math.round(pct(activeTeams(currentTeams), activeTeams(prevTeams)) * 10) / 10,
+  };
+}
 
 export async function fetchDashboardStats(
   from: string,
   to: string,
+  filters?: DashboardFilters,
 ): Promise<DashboardStats> {
-  void from;
-  void to;
-  return delay(MOCK_STATS);
+  const normalized = normalizeFilters(filters);
+  const query = dashboardQuery(from, to, normalized);
+  const [tokens, cost, tools, teams, deltas] = await Promise.all([
+    apiRequest<ApiTokenUsageWidget>(`/dashboard/tokens?${query}`),
+    apiRequest<ApiCostOverviewWidget>(`/dashboard/cost?${query}`),
+    apiRequest<ApiUsageByToolItem[]>(`/dashboard/usage-by-tool?${query}`),
+    apiRequest<ApiUsageByTeamItem[]>(`/dashboard/usage-by-team?${query}`),
+    fetchPeriodDeltas(from, to, filters),
+  ]);
+
+  return buildDashboardStats(tokens, cost, tools, teams, deltas);
 }
 
 export async function fetchTokenTimeseries(
   from: string,
   to: string,
+  filters?: DashboardFilters,
 ): Promise<TokenDataPoint[]> {
-  void from;
-  void to;
-  return delay(MOCK_TIMESERIES);
+  const normalized = normalizeFilters(filters);
+  const query = `${dashboardQuery(from, to, normalized)}&granularity=daily`;
+  const trends = await apiRequest<ApiTrendPoint[]>(`/dashboard/trends?${query}`);
+  return mapTrendPoints(trends);
 }
 
 export async function fetchTeamCost(
   from: string,
   to: string,
+  filters?: DashboardFilters,
 ): Promise<TeamCostDataPoint[]> {
-  void from;
-  void to;
-  return delay(MOCK_TEAM_COSTS);
+  const normalized = normalizeFilters(filters);
+  const teams = await apiRequest<ApiUsageByTeamItem[]>(
+    `/dashboard/usage-by-team?${dashboardQuery(from, to, normalized)}`,
+  );
+  return mapTeamCostRows(teams);
 }
 
 export async function fetchTopUsers(
   from: string,
   to: string,
+  filters?: DashboardFilters,
 ): Promise<TopUser[]> {
-  void from;
-  void to;
-  return delay(MOCK_TOP_USERS);
+  const normalized = normalizeFilters(filters);
+  const query = `${dashboardQuery(from, to, normalized)}&entity=users&limit=8`;
+  const [consumers, tokens] = await Promise.all([
+    apiRequest<ApiTopConsumersResponse>(`/dashboard/top-consumers?${query}`),
+    apiRequest<ApiTokenUsageWidget>(`/dashboard/tokens?${dashboardQuery(from, to, normalized)}`),
+  ]);
+  return mapTopUsers(consumers.users ?? [], tokens.total_tokens);
 }
 
-export async function fetchRecentAlerts(): Promise<RecentAlert[]> {
-  return delay(MOCK_RECENT_ALERTS);
+export async function fetchRecentAlerts(filters?: DashboardFilters): Promise<RecentAlert[]> {
+  const normalized = normalizeFilters(filters);
+  const params = new URLSearchParams({ limit: "5" });
+  if (normalized?.teamId) {
+    params.set("team_id", normalized.teamId);
+  }
+  const alerts = await apiRequest<ApiActiveAlertSummary[]>(`/dashboard/alerts?${params.toString()}`);
+  return mapRecentAlerts(alerts);
 }
 
 export const dashboardApi = {

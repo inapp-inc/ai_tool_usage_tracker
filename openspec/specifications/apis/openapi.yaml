@@ -1047,6 +1047,64 @@ paths:
                     type: array
                     items:
                       $ref: './components/schemas.yaml#/UsageByToolItem'
+
+  /dashboard/daily-breakdown:
+    get:
+      tags: [Dashboard]
+      summary: Single-day usage breakdown by team and user
+      operationId: getDashboardDailyBreakdown
+      parameters:
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: Calendar day (ISO 8601 UTC)
+        - $ref: './components/parameters.yaml#/TeamId'
+        - $ref: './components/parameters.yaml#/ToolId'
+      responses:
+        '200':
+          description: Team and user usage for one day
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [team_id, team_name, tokens, cost, users]
+                      properties:
+                        team_id:
+                          type: string
+                          format: uuid
+                        team_name:
+                          type: string
+                        tokens:
+                          type: integer
+                          format: int64
+                        cost:
+                          type: number
+                        users:
+                          type: array
+                          items:
+                            type: object
+                            required: [user_id, user_name, tokens, cost]
+                            properties:
+                              user_id:
+                                type: string
+                                format: uuid
+                              user_name:
+                                type: string
+                              tokens:
+                                type: integer
+                                format: int64
+                              cost:
+                                type: number
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
                   team_average_tokens:
                     type: integer
                     format: int64

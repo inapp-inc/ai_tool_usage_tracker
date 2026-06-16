@@ -21,8 +21,8 @@ export interface Member {
   status: "active" | "inactive";
   lastActiveAt: string | null;
   createdAt: string;
-  /** Platform user vs provider token email from a team tool. */
-  source?: "platform" | "tool";
+  /** Platform user vs provider token email vs file upload import. */
+  source?: "platform" | "tool" | "upload";
   toolId?: string | null;
   toolName?: string | null;
   label?: string;

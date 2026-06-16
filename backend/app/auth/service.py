@@ -19,6 +19,25 @@ from app.core.security import (
 from app.models.auth import User
 
 
+async def _record_login_audit(
+    session: AsyncSession,
+    user: User,
+    *,
+    source_ip: str | None,
+    correlation_id: str | None,
+) -> None:
+    from app.audit.recorder import AuditRecorder
+
+    await AuditRecorder(session).log(
+        organization_id=user.organization_id,
+        actor=user,
+        action="auth.login",
+        resource_type="auth",
+        source_ip=source_ip,
+        correlation_id=correlation_id,
+    )
+
+
 class AuthService:
     def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
         self._session = session
@@ -27,7 +46,13 @@ class AuthService:
         self._memberships = TeamMembershipRepository(session)
         self._refresh_tokens = RefreshTokenRepository(session)
 
-    async def login(self, body: LoginRequest) -> TokenResponse:
+    async def login(
+        self,
+        body: LoginRequest,
+        *,
+        source_ip: str | None = None,
+        correlation_id: str | None = None,
+    ) -> TokenResponse:
         user = await self._users.get_by_email(body.email)
         if user is None or not verify_password(body.password, user.password_hash):
             raise HTTPException(
@@ -41,7 +66,14 @@ class AuthService:
             )
 
         await self._users.update_last_login(user)
-        return await self._issue_tokens(user)
+        tokens = await self._issue_tokens(user)
+        await _record_login_audit(
+            self._session,
+            user,
+            source_ip=source_ip,
+            correlation_id=correlation_id,
+        )
+        return tokens
 
     async def refresh(self, body: RefreshRequest) -> TokenResponse:
         record = await self._refresh_tokens.get_valid_by_token(body.refresh_token)

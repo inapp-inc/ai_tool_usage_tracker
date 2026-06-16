@@ -273,6 +273,13 @@ export function MembersPage() {
                     sx={{ height: 18, fontSize: "0.625rem" }}
                   />
                 )}
+                {row.source === "upload" && (
+                  <Chip
+                    size="small"
+                    label="File import"
+                    sx={{ height: 18, fontSize: "0.625rem" }}
+                  />
+                )}
               </Box>
               <Typography variant="caption" sx={{ color: tokens.textMuted }}>
                 {row.email}
@@ -285,7 +292,7 @@ export function MembersPage() {
         key: "platformRole",
         header: "Role",
         render: (row) =>
-          row.source === "tool" ? (
+          row.source === "tool" || row.source === "upload" ? (
             <Typography variant="caption" sx={{ color: tokens.textMuted }}>
               —
             </Typography>
@@ -330,7 +337,7 @@ export function MembersPage() {
         align: "right",
         render: (row) => (
           <Box sx={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-            {row.source !== "tool" && (
+            {row.source === "platform" && (
               <>
                 <IconButton
                   size="small"

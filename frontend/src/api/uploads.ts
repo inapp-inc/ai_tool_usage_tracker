@@ -53,6 +53,8 @@ export interface UploadPreviewRow {
 export interface UploadPreview {
   uploadId: string;
   fileName: string;
+  teamId: string | null;
+  teamName: string | null;
   totalRows: number;
   validRows: number;
   errorRows: number;
@@ -61,6 +63,7 @@ export interface UploadPreview {
 
 export interface SubmitUploadRequest {
   teamId: string | null;
+  rowNumbers?: number[];
 }
 
 export interface UploadMappingField {
@@ -156,6 +159,7 @@ export async function submitUpload(
     },
     body: JSON.stringify({
       team_id: body.teamId,
+      row_numbers: body.rowNumbers,
     }),
   });
   return mapApiUpload(updated);
