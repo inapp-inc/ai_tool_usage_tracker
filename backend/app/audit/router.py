@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.service import AuthenticatedUser
-from app.core.rbac import require_super_admin
+from app.core.rbac import require_auditor_access
 from app.db.session import get_session
 from app.platform.org_store import OrgDataStore
 
@@ -23,7 +23,7 @@ async def list_audit_log(
     category: str = Query(default=""),
     from_value: str = Query(default="", alias="from"),
     to_value: str = Query(default="", alias="to"),
-    current_user: AuthenticatedUser = Depends(require_super_admin),
+    current_user: AuthenticatedUser = Depends(require_auditor_access),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     store = OrgDataStore(session)

@@ -1,10 +1,12 @@
 import {
     IconActivity,
     IconBell,
+    IconChartBar,
     IconChevronLeft,
     IconChevronRight,
   IconKey,
   IconLayoutDashboard,
+  IconLock,
   IconPlugConnected,
   IconSettings,
     IconShield,
@@ -16,6 +18,7 @@ import {
   import { useCallback, useState } from "react";
   import { useLocation, useNavigate } from "react-router-dom";
   
+  import { usePermissions, type PageId } from "@/permissions/PermissionsContext";
   import { useAuthStore } from "@/stores/authStore";
   import { Role } from "@/types";
   import { tokens } from "@/theme/palette";
@@ -25,6 +28,7 @@ import {
     icon: React.ElementType;
     path: string;
     roles: Role[] | "all";
+    pageId?: PageId;
   }
   
   interface NavSection {
@@ -40,6 +44,18 @@ import {
           icon: IconLayoutDashboard,
           path: "/insights",
           roles: "all",
+          pageId: "insights",
+        },
+      ],
+    },
+    {
+      heading: "My Data",
+      items: [
+        {
+          label: "My Usage",
+          icon: IconChartBar,
+          path: "/my-usage",
+          roles: [Role.TeamMember],
         },
       ],
     },
@@ -51,12 +67,14 @@ import {
           icon: IconBell,
           path: "/alerts",
           roles: [Role.SuperAdmin, Role.TeamAdmin],
+          pageId: "alerts",
         },
         {
           label: "Uploads",
           icon: IconUpload,
           path: "/uploads",
           roles: [Role.SuperAdmin, Role.TeamAdmin],
+          pageId: "uploads",
         },
       ],
     },
@@ -68,36 +86,49 @@ import {
           icon: IconTool,
           path: "/admin/teams",
           roles: [Role.SuperAdmin],
+          pageId: "admin:teams",
         },
         {
           label: "Providers",
           icon: IconPlugConnected,
           path: "/admin/providers",
           roles: [Role.SuperAdmin],
+          // No pageId — SuperAdmin-only, not permission-controlled
         },
         {
           label: "Groups",
           icon: IconUsers,
           path: "/admin/groups",
           roles: [Role.SuperAdmin],
+          pageId: "admin:groups",
         },
         {
           label: "Members",
           icon: IconUsers,
           path: "/admin/members",
           roles: [Role.SuperAdmin],
+          pageId: "admin:members",
         },
         {
           label: "Credentials",
           icon: IconKey,
           path: "/admin/credentials",
           roles: [Role.SuperAdmin],
+          pageId: "admin:credentials",
         },
         {
           label: "Audit log",
           icon: IconShield,
           path: "/admin/audit-log",
           roles: [Role.SuperAdmin, Role.Auditor],
+          pageId: "audit",
+        },
+        {
+          label: "Role Permissions",
+          icon: IconLock,
+          path: "/admin/permissions",
+          roles: [Role.SuperAdmin],
+          // No pageId — SuperAdmin-only management page, not permission-controlled
         },
       ],
     },
@@ -118,6 +149,7 @@ import {
     const location = useLocation();
     const navigate = useNavigate();
     const user = useAuthStore((s) => s.user);
+    const { canRead } = usePermissions();
   
     const toggleCollapse = useCallback(() => {
       setCollapsed((prev) => {
@@ -129,11 +161,20 @@ import {
   
     const canSeeItem = useCallback(
       (item: NavItem): boolean => {
-        if (item.roles === "all") return true;
         if (!user) return false;
+        // SuperAdmin always sees everything
+        if (user.platformRole === Role.SuperAdmin) {
+          return item.roles === "all" || (item.roles as Role[]).includes(Role.SuperAdmin);
+        }
+        // For items with a pageId, use the permissions context (DB-driven)
+        if (item.pageId) {
+          return canRead(item.pageId);
+        }
+        // Fallback to hardcoded role list for items without a pageId
+        if (item.roles === "all") return true;
         return (item.roles as Role[]).includes(user.platformRole);
       },
-      [user],
+      [user, canRead],
     );
   
     const isActive = (path: string) =>
