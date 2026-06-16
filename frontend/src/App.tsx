@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { useAuth } from "@/auth/AuthContext";
 import { AuthProvider } from "@/auth/AuthProvider";
+import { PermissionsProvider } from "@/permissions/PermissionsContext";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageSkeleton } from "@/components/feedback/PageSkeleton";
 
@@ -53,6 +54,11 @@ const ProvidersPage = lazy(() =>
 );
 const AuditLogPage = lazy(() =>
   import("@/pages/admin/AuditLogPage").then((m) => ({ default: m.AuditLogPage })),
+);
+const RolePermissionsPage = lazy(() =>
+  import("@/pages/admin/RolePermissionsPage").then((m) => ({
+    default: m.RolePermissionsPage,
+  })),
 );
 
 // ─── Guard ───────────────────────────────────────────────────────────────────
@@ -119,6 +125,7 @@ export function AppRoutes() {
         <Route path="/admin/members" element={<MembersPage />} />
         <Route path="/admin/credentials" element={<CredentialsPage />} />
         <Route path="/admin/audit-log" element={<AuditLogPage />} />
+        <Route path="/admin/permissions" element={<RolePermissionsPage />} />
       </Route>
 
       {/* Fallback */}
@@ -132,9 +139,11 @@ export function App() {
   return (
     <BrowserRouter basename={routerBasename}>
       <AuthProvider>
-        <Suspense fallback={<PageSkeleton />}>
-          <AppRoutes />
-        </Suspense>
+        <PermissionsProvider>
+          <Suspense fallback={<PageSkeleton />}>
+            <AppRoutes />
+          </Suspense>
+        </PermissionsProvider>
       </AuthProvider>
     </BrowserRouter>
   );

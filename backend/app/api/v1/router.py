@@ -10,6 +10,7 @@ from app.admin.tools.router import router as tools_router
 from app.alerts.router import router as alerts_router
 from app.audit.router import router as audit_router
 from app.dashboard.router import router as dashboard_router
+from app.permissions.router import router as permissions_router
 from app.ingestion.router import router as uploads_router
 from app.reporting.router import router as reports_router
 from app.api.v1.schemas import HealthResponse
@@ -29,6 +30,7 @@ router.include_router(alerts_router)
 router.include_router(reports_router)
 router.include_router(audit_router)
 router.include_router(dashboard_router)
+router.include_router(permissions_router)
 
 
 @router.get(
