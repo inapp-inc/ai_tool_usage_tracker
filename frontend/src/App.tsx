@@ -4,8 +4,10 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { AuthProvider } from "@/auth/AuthProvider";
 import { PermissionsProvider } from "@/permissions/PermissionsContext";
+import { RequirePage } from "@/permissions/PermissionGate";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageSkeleton } from "@/components/feedback/PageSkeleton";
+import { Role } from "@/types";
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 const LoginPage = lazy(() =>
@@ -68,6 +70,12 @@ function ProtectedRoute({ children }: { children: ReactElement }) {
   return children;
 }
 
+function SuperAdminOnly({ children }: { children: ReactElement }) {
+  const { user } = useAuth();
+  if (user?.platformRole !== Role.SuperAdmin) return <Navigate to="/insights" replace />;
+  return children;
+}
+
 function RootRedirect() {
   const { isAuthenticated } = useAuth();
   return <Navigate to={isAuthenticated ? "/insights" : "/login"} replace />;
@@ -112,20 +120,83 @@ export function AppRoutes() {
         <Route path="/reports" element={<Navigate to="/insights" replace />} />
         <Route path="/reports/new" element={<Navigate to="/insights" replace />} />
 
-        <Route path="/alerts" element={<AlertsPage />} />
+        <Route
+          path="/alerts"
+          element={
+            <RequirePage page="alerts" action="read">
+              <AlertsPage />
+            </RequirePage>
+          }
+        />
         <Route path="/alerts/history" element={<AlertsPage />} />
 
-        <Route path="/uploads" element={<UploadsPage />} />
+        <Route
+          path="/uploads"
+          element={
+            <RequirePage page="uploads" action="read">
+              <UploadsPage />
+            </RequirePage>
+          }
+        />
         <Route path="/uploads/:uploadId/preview" element={<UploadPreviewPage />} />
 
-        <Route path="/admin/teams" element={<ToolsPage />} />
+        <Route
+          path="/admin/teams"
+          element={
+            <RequirePage page="admin:teams" action="read">
+              <ToolsPage />
+            </RequirePage>
+          }
+        />
         <Route path="/admin/tools" element={<Navigate to="/admin/teams" replace />} />
-        <Route path="/admin/providers" element={<ProvidersPage />} />
-        <Route path="/admin/groups" element={<TeamsPage />} />
-        <Route path="/admin/members" element={<MembersPage />} />
-        <Route path="/admin/credentials" element={<CredentialsPage />} />
-        <Route path="/admin/audit-log" element={<AuditLogPage />} />
-        <Route path="/admin/permissions" element={<RolePermissionsPage />} />
+        <Route
+          path="/admin/providers"
+          element={
+            <SuperAdminOnly>
+              <ProvidersPage />
+            </SuperAdminOnly>
+          }
+        />
+        <Route
+          path="/admin/groups"
+          element={
+            <RequirePage page="admin:groups" action="read">
+              <TeamsPage />
+            </RequirePage>
+          }
+        />
+        <Route
+          path="/admin/members"
+          element={
+            <RequirePage page="admin:members" action="read">
+              <MembersPage />
+            </RequirePage>
+          }
+        />
+        <Route
+          path="/admin/credentials"
+          element={
+            <RequirePage page="admin:credentials" action="read">
+              <CredentialsPage />
+            </RequirePage>
+          }
+        />
+        <Route
+          path="/admin/audit-log"
+          element={
+            <RequirePage page="audit" action="read">
+              <AuditLogPage />
+            </RequirePage>
+          }
+        />
+        <Route
+          path="/admin/permissions"
+          element={
+            <SuperAdminOnly>
+              <RolePermissionsPage />
+            </SuperAdminOnly>
+          }
+        />
       </Route>
 
       {/* Fallback */}

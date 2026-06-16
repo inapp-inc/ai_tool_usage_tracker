@@ -23,6 +23,9 @@ class AlertService:
     async def list_rules(self, user: AuthenticatedUser) -> list[dict[str, Any]]:
         return await self._store.list_items(user.organization_id, RULES_KEY)
 
+    async def get_rule(self, user: AuthenticatedUser, rule_id: str) -> dict[str, Any] | None:
+        return await self._store.get_item(user.organization_id, RULES_KEY, rule_id)
+
     async def create_rule(
         self, user: AuthenticatedUser, body: dict[str, Any]
     ) -> dict[str, Any]:

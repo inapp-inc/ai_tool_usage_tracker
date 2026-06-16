@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.service import AuthenticatedUser
-from app.core.rbac import require_super_admin
+from app.core.rbac import require_finance_viewer_access, require_super_admin
 from app.db.session import get_session
 from app.reporting.service import ReportService
 
@@ -34,7 +34,7 @@ class SubscriptionCreateBody(BaseModel):
 
 @router.get("", operation_id="listReports")
 async def list_reports(
-    current_user: AuthenticatedUser = Depends(require_super_admin),
+    current_user: AuthenticatedUser = Depends(require_finance_viewer_access),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     service = ReportService(session)
@@ -66,7 +66,7 @@ async def delete_report(
 @router.get("/{report_id}/subscriptions", operation_id="listReportSubscriptions")
 async def list_subscriptions(
     report_id: uuid.UUID,
-    current_user: AuthenticatedUser = Depends(require_super_admin),
+    current_user: AuthenticatedUser = Depends(require_finance_viewer_access),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     service = ReportService(session)
