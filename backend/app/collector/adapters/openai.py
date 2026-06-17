@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from app.collector.adapters.base import ProviderMember, ProviderSnapshot, ProviderValidationError, UsageRecord
+from app.collector.adapters.base import ProviderMember, ProviderSnapshot, ProviderValidationError, UsageRecord, resolve_provider_api_url
 from app.collector.adapters.http_utils import get_json
 from app.collector.adapters.member_parsing import dedupe_members, parse_openai_org_users
 
@@ -11,9 +11,21 @@ from app.collector.adapters.member_parsing import dedupe_members, parse_openai_o
 class OpenAIUsageAdapter:
     provider = "openai"
 
-    async def validate_api_key(self, api_token: str, **_kwargs: object) -> None:
+    async def validate_api_key(
+        self,
+        api_token: str,
+        *,
+        pricing_config: dict | None = None,
+        api_endpoint: str | None = None,
+        **_kwargs: object,
+    ) -> None:
+        config = pricing_config or {}
+        url = resolve_provider_api_url(
+            api_endpoint or config.get("api_endpoint"),
+            default_url="https://api.openai.com/v1/models",
+        )
         status, _ = await get_json(
-            "https://api.openai.com/v1/models",
+            url,
             headers={"Authorization": f"Bearer {api_token}"},
         )
         if status == 401:

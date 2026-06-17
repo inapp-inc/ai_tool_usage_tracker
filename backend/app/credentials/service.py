@@ -17,6 +17,8 @@ from app.credentials.schemas import (
     CredentialListResponse,
     CredentialResponse,
     CredentialUpdateRequest,
+    CredentialValidateRequest,
+    CredentialValidateResponse,
     PaginationMeta,
 )
 from app.models.admin import Team, Tool
@@ -41,6 +43,26 @@ class CredentialService:
             meta=PaginationMeta(has_more=False),
         )
 
+    async def validate_credential(
+        self,
+        organization_id: UUID,
+        body: CredentialValidateRequest,
+    ) -> CredentialValidateResponse:
+        tool = await self._require_tool(organization_id, body.tool_id)
+        try:
+            await self._validate_secret_for_tool(tool, body.secret_value)
+        except ProviderValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+        return CredentialValidateResponse(
+            valid=True,
+            provider=tool.vendor,
+            message="API key verified.",
+        )
+
     async def create_credential(
         self,
         organization_id: UUID,
@@ -48,17 +70,12 @@ class CredentialService:
     ) -> CredentialCreateResponseBody:
         tool = await self._require_tool(organization_id, body.tool_id)
         team = await self._require_team(organization_id, body.team_id)
-        pricing_config = tool.pricing_config if isinstance(tool.pricing_config, dict) else {}
 
         try:
-            await validate_provider_api_key(
-                tool.vendor,
-                body.secret_value,
-                pricing_config=pricing_config,
-            )
+            await self._validate_secret_for_tool(tool, body.secret_value)
         except ProviderValidationError as exc:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=str(exc),
             ) from exc
 
@@ -72,6 +89,7 @@ class CredentialService:
         tool.active = True
 
         await self._ensure_tool_on_team(team, tool.id)
+        await self._ensure_collector(tool)
         await self._sync_collector_token(tool)
         await self._session.commit()
         await self._session.refresh(tool)
@@ -90,7 +108,6 @@ class CredentialService:
     ) -> CredentialResponse:
         tool = await self._require_tool(organization_id, credential_id)
         updates = body.model_fields_set
-        pricing_config = tool.pricing_config if isinstance(tool.pricing_config, dict) else {}
 
         if "label" in updates and body.label is not None:
             tool.credential_label = body.label.strip()
@@ -115,18 +132,15 @@ class CredentialService:
 
         if "secret_value" in updates and body.secret_value:
             try:
-                await validate_provider_api_key(
-                    tool.vendor,
-                    body.secret_value,
-                    pricing_config=pricing_config,
-                )
+                await self._validate_secret_for_tool(tool, body.secret_value)
             except ProviderValidationError as exc:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=str(exc),
                 ) from exc
             tool.api_token_ciphertext = encrypt_token(body.secret_value)
             tool.last_rotated_at = datetime.now(UTC)
+            await self._ensure_collector(tool)
             await self._sync_collector_token(tool)
 
         primary_team: Team | None = None
@@ -155,6 +169,15 @@ class CredentialService:
     async def reveal_secret(self, organization_id: UUID, credential_id: UUID) -> str:
         tool = await self._require_tool(organization_id, credential_id)
         return decrypt_token(tool.api_token_ciphertext)
+
+    async def _validate_secret_for_tool(self, tool: Tool, secret_value: str) -> None:
+        pricing_config = tool.pricing_config if isinstance(tool.pricing_config, dict) else {}
+        await validate_provider_api_key(
+            tool.vendor,
+            secret_value,
+            pricing_config=pricing_config,
+            api_endpoint=tool.api_endpoint,
+        )
 
     async def _require_tool(self, organization_id: UUID, tool_id: UUID) -> Tool:
         tool = await self._tools.get_by_id(tool_id, organization_id)
@@ -187,6 +210,22 @@ class CredentialService:
         if collector is not None:
             collector.api_token_ciphertext = tool.api_token_ciphertext
             collector.active = tool.active
+
+    async def _ensure_collector(self, tool: Tool) -> CollectorConfig:
+        collector = await self._get_collector(tool.id)
+        if collector is not None:
+            return collector
+        collector = CollectorConfig(
+            name=f"{tool.name} collector",
+            provider=tool.vendor,
+            api_token_ciphertext=tool.api_token_ciphertext,
+            pull_interval_minutes=60,
+            active=tool.active,
+            tool_id=tool.id,
+        )
+        self._session.add(collector)
+        await self._session.flush()
+        return collector
 
     async def _get_collector(self, tool_id: UUID) -> CollectorConfig | None:
         result = await self._session.execute(

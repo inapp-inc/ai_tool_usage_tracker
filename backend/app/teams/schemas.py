@@ -63,6 +63,10 @@ class TeamResponse(BaseModel):
     token_budget: int | None = None
     cost_budget: Decimal | None = None
     tool_ids: list[str] = Field(default_factory=list)
+    tokens_used: int = 0
+    pricing_total: Decimal = Decimal("0")
+    total_cost: Decimal = Decimal("0")
+    last_synced_at: datetime | None = None
     created_at: datetime
 
 
@@ -94,3 +98,66 @@ class TeamMemberResponse(BaseModel):
 class TeamMemberListResponse(BaseModel):
     data: list[TeamMemberResponse]
     meta: PaginationMeta
+
+
+class TeamToolAssignmentResponse(BaseModel):
+    id: UUID
+    team_id: UUID
+    tool_id: UUID
+    tool_name: str
+    pricing_model: str | None = None
+    token_price: Decimal | None = None
+    output_token_price: Decimal | None = None
+    cost_per_seat: Decimal | None = None
+    seat_count: int | None = None
+    package_allowance: int | None = None
+    overage_price: Decimal | None = None
+    plan_name: str | None = None
+    pricing_config: dict = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class TeamToolAssignRequest(BaseModel):
+    tool_id: UUID
+    pricing_model: str | None = None
+    token_price: Decimal | None = Field(default=None, ge=0)
+    output_token_price: Decimal | None = Field(default=None, ge=0)
+    cost_per_seat: Decimal | None = Field(default=None, ge=0)
+    seat_count: int | None = Field(default=None, ge=0)
+    package_allowance: int | None = Field(default=None, ge=0)
+    overage_price: Decimal | None = Field(default=None, ge=0)
+    plan_name: str | None = Field(default=None, max_length=200)
+    pricing_config: dict | None = None
+
+
+class TeamToolUpdateRequest(BaseModel):
+    pricing_model: str | None = None
+    token_price: Decimal | None = Field(default=None, ge=0)
+    output_token_price: Decimal | None = Field(default=None, ge=0)
+    cost_per_seat: Decimal | None = Field(default=None, ge=0)
+    seat_count: int | None = Field(default=None, ge=0)
+    package_allowance: int | None = Field(default=None, ge=0)
+    overage_price: Decimal | None = Field(default=None, ge=0)
+    plan_name: str | None = Field(default=None, max_length=200)
+    pricing_config: dict | None = None
+
+
+class TeamToolAssignmentListResponse(BaseModel):
+    data: list[TeamToolAssignmentResponse]
+    meta: PaginationMeta
+
+
+class TeamToolSyncResult(BaseModel):
+    tool_id: UUID
+    tool_name: str
+    status: Literal["synced", "skipped", "failed"]
+    message: str | None = None
+
+
+class TeamSyncResponse(BaseModel):
+    team_id: UUID
+    synced_count: int
+    skipped_count: int
+    failed_count: int
+    results: list[TeamToolSyncResult]

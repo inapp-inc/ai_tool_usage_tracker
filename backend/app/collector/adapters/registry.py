@@ -13,6 +13,7 @@ from app.collector.adapters.base import (
 )
 from app.collector.adapters.cohere import CohereUsageAdapter
 from app.collector.adapters.cursor import CursorUsageAdapter
+from app.collector.adapters.figma import FigmaUsageAdapter
 from app.collector.adapters.generic import GenericUsageAdapter
 from app.collector.adapters.google import GoogleUsageAdapter
 from app.collector.adapters.mistral import MistralUsageAdapter
@@ -52,6 +53,7 @@ _ADAPTERS: dict[str, ProviderAdapter] = {
     "mabl": GenericUsageAdapter("mabl"),
     "windsurf": GenericUsageAdapter("windsurf"),
     "cursor": CursorUsageAdapter(),
+    "figma": FigmaUsageAdapter(),
 }
 
 
@@ -64,15 +66,28 @@ def get_adapter(provider: str) -> ProviderAdapter:
     return adapter
 
 
+def _merge_adapter_config(
+    pricing_config: dict | None,
+    *,
+    api_endpoint: str | None = None,
+) -> dict:
+    config = dict(pricing_config or {})
+    if api_endpoint:
+        config["api_endpoint"] = api_endpoint
+    return config
+
+
 async def validate_provider_api_key(
     provider: str,
     api_token: str,
     *,
     pricing_config: dict | None = None,
+    api_endpoint: str | None = None,
 ) -> None:
     await get_adapter(provider).validate_api_key(
         api_token,
-        pricing_config=pricing_config,
+        pricing_config=_merge_adapter_config(pricing_config, api_endpoint=api_endpoint),
+        api_endpoint=api_endpoint,
     )
 
 
@@ -82,11 +97,13 @@ async def fetch_provider_snapshot(
     *,
     package_allowance: int | None = None,
     pricing_config: dict | None = None,
+    api_endpoint: str | None = None,
 ) -> ProviderSnapshot:
     return await get_adapter(provider).fetch_snapshot(
         api_token,
         package_allowance=package_allowance,
-        pricing_config=pricing_config,
+        pricing_config=_merge_adapter_config(pricing_config, api_endpoint=api_endpoint),
+        api_endpoint=api_endpoint,
     )
 
 
@@ -95,12 +112,17 @@ async def fetch_provider_members(
     api_token: str,
     *,
     pricing_config: dict | None = None,
+    api_endpoint: str | None = None,
 ) -> list[ProviderMember]:
     adapter = get_adapter(provider)
     fetch_members = getattr(adapter, "fetch_members", None)
     if fetch_members is None:
         return []
-    return await fetch_members(api_token, pricing_config=pricing_config)
+    return await fetch_members(
+        api_token,
+        pricing_config=_merge_adapter_config(pricing_config, api_endpoint=api_endpoint),
+        api_endpoint=api_endpoint,
+    )
 
 
 __all__ = [

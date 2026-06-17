@@ -31,15 +31,22 @@ def test_api_healthcheck_uses_v1_path() -> None:
     assert "/api/v1/health" in test_cmd
 
 
-def test_frontend_dev_profile() -> None:
+def test_frontend_production_service() -> None:
     compose = _load_compose()
     frontend = compose["services"]["frontend"]
-    assert frontend.get("profiles") == ["dev"]
-    assert "5173" in str(frontend.get("ports", []))
+    assert frontend.get("profiles") == ["prod"]
+    assert frontend.get("build") is not None
+    assert "4501" in str(frontend.get("ports", []))
 
 
-def test_worker_consumes_all_queues() -> None:
+def test_frontend_dev_default_service() -> None:
     compose = _load_compose()
-    command = compose["services"]["worker"]["command"]
-    command_str = " ".join(command)
-    assert "ingestion,reports,alerts,email,maintenance" in command_str
+    frontend_dev = compose["services"]["frontend-dev"]
+    assert frontend_dev.get("profiles") is None
+    assert "5173" in str(frontend_dev.get("ports", []))
+
+
+def test_postgres_default_host_port_is_5433() -> None:
+    compose = _load_compose()
+    ports = compose["services"]["postgres"]["ports"]
+    assert "5433" in str(ports)

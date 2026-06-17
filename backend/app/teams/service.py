@@ -1,5 +1,6 @@
 """Team business logic."""
 
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -9,6 +10,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.admin import Team
 from app.models.auth import User
 from app.teams.membership_repository import TeamMembershipRepository
+from app.teams.metrics import TeamMetrics, TeamMetricsLoader
 from app.teams.repository import TeamRepository
 from app.teams.schemas import (
     PaginationMeta,
@@ -38,10 +40,21 @@ class TeamService:
         active: bool | None = None,
     ) -> TeamListResponse:
         rows = await self._teams.list_by_organization(user.organization_id, active=active)
+        metrics = await TeamMetricsLoader(self._session).load_for_teams(
+            user.organization_id,
+            rows,
+        )
         responses: list[TeamResponse] = []
         for row in rows:
             member_count = len(await self._collect_team_members(user.organization_id, row))
-            responses.append(self._to_response(row, member_count=member_count))
+            team_metrics = metrics.get(row.id)
+            responses.append(
+                self._to_response(
+                    row,
+                    member_count=member_count,
+                    metrics=team_metrics,
+                )
+            )
         return TeamListResponse(
             data=responses,
             meta=PaginationMeta(has_more=False),
@@ -50,7 +63,15 @@ class TeamService:
     async def get_team(self, user: User, team_id: UUID) -> TeamResponse:
         team = await self._require_team(user.organization_id, team_id)
         member_count = len(await self._collect_team_members(user.organization_id, team))
-        return self._to_response(team, member_count=member_count)
+        metrics_map = await TeamMetricsLoader(self._session).load_for_teams(
+            user.organization_id,
+            [team],
+        )
+        return self._to_response(
+            team,
+            member_count=member_count,
+            metrics=metrics_map.get(team.id),
+        )
 
     async def list_team_members(
         self,
@@ -249,7 +270,12 @@ class TeamService:
         return team
 
     @staticmethod
-    def _to_response(team: Team, *, member_count: int = 0) -> TeamResponse:
+    def _to_response(
+        team: Team,
+        *,
+        member_count: int = 0,
+        metrics: TeamMetrics | None = None,
+    ) -> TeamResponse:
         tool_ids = team.tool_ids if isinstance(team.tool_ids, list) else []
         return TeamResponse(
             id=team.id,
@@ -261,5 +287,9 @@ class TeamService:
             token_budget=team.token_budget,
             cost_budget=team.cost_budget,
             tool_ids=[str(tool_id) for tool_id in tool_ids],
+            tokens_used=metrics.tokens_used if metrics else 0,
+            pricing_total=metrics.pricing_total if metrics else Decimal("0"),
+            total_cost=metrics.total_cost if metrics else Decimal("0"),
+            last_synced_at=metrics.last_synced_at if metrics else None,
             created_at=team.created_at,
         )

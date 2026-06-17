@@ -148,6 +148,15 @@ ToolCreateRequest:
       type: string
       minLength: 1
       maxLength: 100
+    description:
+      type: string
+      maxLength: 500
+      nullable: true
+    api_endpoint:
+      type: string
+      maxLength: 512
+      nullable: true
+      description: Full API URL used by the collector adapter for this tool. Required when vendor is custom.
     pricing_model:
       $ref: '#/PricingModel'
     token_price:
@@ -180,6 +189,15 @@ ToolUpdateRequest:
     vendor:
       type: string
       maxLength: 100
+    description:
+      type: string
+      maxLength: 500
+      nullable: true
+    api_endpoint:
+      type: string
+      maxLength: 512
+      nullable: true
+      description: Full API URL used by the collector adapter for this tool.
     pricing_model:
       $ref: '#/PricingModel'
     token_price:
@@ -211,6 +229,12 @@ Tool:
       type: string
     vendor:
       type: string
+    description:
+      type: string
+      nullable: true
+    api_endpoint:
+      type: string
+      nullable: true
     pricing_model:
       $ref: '#/PricingModel'
     token_price:
@@ -290,6 +314,29 @@ Team:
       type: boolean
     member_count:
       type: integer
+    token_budget:
+      type: integer
+      nullable: true
+    cost_budget:
+      type: number
+      nullable: true
+    tool_ids:
+      type: array
+      items:
+        type: string
+    tokens_used:
+      type: integer
+      description: Total tokens this calendar month (imports + API sync).
+    pricing_total:
+      type: number
+      description: Cost from team–tool pricing applied to usage.
+    total_cost:
+      type: number
+      description: Sum of estimated_cost on usage events this month.
+    last_synced_at:
+      type: string
+      format: date-time
+      nullable: true
     created_at:
       type: string
       format: date-time
@@ -302,6 +349,132 @@ TeamListResponse:
       type: array
       items:
         $ref: '#/Team'
+    meta:
+      $ref: '#/PaginationMeta'
+
+TeamToolAssignRequest:
+  type: object
+  required: [tool_id]
+  properties:
+    tool_id:
+      type: string
+      format: uuid
+    pricing_model:
+      type: string
+      nullable: true
+    token_price:
+      type: number
+      nullable: true
+    output_token_price:
+      type: number
+      nullable: true
+    cost_per_seat:
+      type: number
+      nullable: true
+    seat_count:
+      type: integer
+      nullable: true
+    package_allowance:
+      type: integer
+      nullable: true
+    overage_price:
+      type: number
+      nullable: true
+    plan_name:
+      type: string
+      nullable: true
+    pricing_config:
+      type: object
+      additionalProperties: true
+
+TeamToolUpdateRequest:
+  type: object
+  properties:
+    pricing_model:
+      type: string
+      nullable: true
+    token_price:
+      type: number
+      nullable: true
+    output_token_price:
+      type: number
+      nullable: true
+    cost_per_seat:
+      type: number
+      nullable: true
+    seat_count:
+      type: integer
+      nullable: true
+    package_allowance:
+      type: integer
+      nullable: true
+    overage_price:
+      type: number
+      nullable: true
+    plan_name:
+      type: string
+      nullable: true
+    pricing_config:
+      type: object
+      additionalProperties: true
+
+TeamToolAssignment:
+  type: object
+  required: [id, team_id, tool_id, tool_name, created_at, updated_at]
+  properties:
+    id:
+      type: string
+      format: uuid
+    team_id:
+      type: string
+      format: uuid
+    tool_id:
+      type: string
+      format: uuid
+    tool_name:
+      type: string
+    pricing_model:
+      type: string
+      nullable: true
+    token_price:
+      type: number
+      nullable: true
+    output_token_price:
+      type: number
+      nullable: true
+    cost_per_seat:
+      type: number
+      nullable: true
+    seat_count:
+      type: integer
+      nullable: true
+    package_allowance:
+      type: integer
+      nullable: true
+    overage_price:
+      type: number
+      nullable: true
+    plan_name:
+      type: string
+      nullable: true
+    pricing_config:
+      type: object
+      additionalProperties: true
+    created_at:
+      type: string
+      format: date-time
+    updated_at:
+      type: string
+      format: date-time
+
+TeamToolAssignmentListResponse:
+  type: object
+  required: [data, meta]
+  properties:
+    data:
+      type: array
+      items:
+        $ref: '#/TeamToolAssignment'
     meta:
       $ref: '#/PaginationMeta'
 

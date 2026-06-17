@@ -17,6 +17,10 @@ def test_normalize_vendor_aliases() -> None:
     assert normalize_vendor("Azure OpenAI") == "azure_openai"
 
 
+def test_validate_vendor_accepts_figma() -> None:
+    assert validate_vendor("figma") == "figma"
+
+
 def test_validate_vendor_rejects_unknown() -> None:
     with pytest.raises(ValueError, match="Unsupported vendor"):
         validate_vendor("unknown-vendor")

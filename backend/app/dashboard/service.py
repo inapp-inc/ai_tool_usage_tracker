@@ -33,7 +33,7 @@ from app.dashboard.schemas import (
 )
 from app.models.admin import Team, Tool
 from app.models.auth import User
-from app.models.collector import UsageEvent
+from app.models.collector import CollectorConfig, UsageEvent
 from app.models.notifications import Threshold, ThresholdEvent
 from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.repository import TeamRepository
@@ -44,6 +44,18 @@ def _pct_delta(current: float, previous: float) -> float:
     if previous == 0:
         return 100.0 if current > 0 else 0.0
     return round(((current - previous) / previous) * 100.0, 1)
+
+
+def effective_token_total(input_tokens: int, output_tokens: int) -> int:
+    """Combined token count from input + output (source of truth for dashboards)."""
+    return input_tokens + output_tokens
+
+
+_TOKEN_TOTAL_EXPR = UsageEvent.input_tokens + UsageEvent.output_tokens
+
+
+def _sum_tokens():
+    return func.coalesce(func.sum(_TOKEN_TOTAL_EXPR), 0)
 
 
 def _entity_id_for_email(email: str) -> UUID:
@@ -77,15 +89,33 @@ class DashboardService:
         return [row.id for row in rows]
 
     def _org_usage_predicate(self, organization_id: UUID, org_team_ids: list[UUID]):
-        if not org_team_ids:
-            return UsageEvent.organization_id == organization_id
-        return or_(
-            UsageEvent.organization_id == organization_id,
+        org_tools = select(Tool.id).where(Tool.organization_id == organization_id)
+        org_collectors = (
+            select(CollectorConfig.id)
+            .join(Tool, CollectorConfig.tool_id == Tool.id)
+            .where(Tool.organization_id == organization_id)
+        )
+        clauses = [UsageEvent.organization_id == organization_id]
+        if org_team_ids:
+            clauses.append(
+                and_(
+                    UsageEvent.organization_id.is_(None),
+                    UsageEvent.team_id.in_(org_team_ids),
+                )
+            )
+        clauses.append(
             and_(
                 UsageEvent.organization_id.is_(None),
-                UsageEvent.team_id.in_(org_team_ids),
-            ),
+                UsageEvent.tool_id.in_(org_tools),
+            )
         )
+        clauses.append(
+            and_(
+                UsageEvent.organization_id.is_(None),
+                UsageEvent.collector_id.in_(org_collectors),
+            )
+        )
+        return or_(*clauses)
 
     def _scope_filters(
         self,
@@ -139,16 +169,17 @@ class DashboardService:
             select(
                 func.coalesce(func.sum(UsageEvent.input_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.output_tokens), 0),
-                func.coalesce(func.sum(UsageEvent.total_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
             ).where(*filters)
         )
         row = result.one()
+        input_tokens = int(row[0])
+        output_tokens = int(row[1])
         return TokenCostTotals(
-            input_tokens=int(row[0]),
-            output_tokens=int(row[1]),
-            total_tokens=int(row[2]),
-            estimated_cost=Decimal(str(row[3])),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=effective_token_total(input_tokens, output_tokens),
+            estimated_cost=Decimal(str(row[2])),
         )
 
     async def _last_updated_at(self, scope: DashboardScope) -> datetime:
@@ -254,13 +285,13 @@ class DashboardService:
             select(
                 UsageEvent.tool_id,
                 Tool.name,
-                func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+                _sum_tokens(),
                 func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
             )
             .outerjoin(Tool, Tool.id == UsageEvent.tool_id)
             .where(*filters, UsageEvent.tool_id.is_not(None))
             .group_by(UsageEvent.tool_id, Tool.name)
-            .order_by(func.sum(UsageEvent.total_tokens).desc())
+            .order_by(func.sum(_TOKEN_TOTAL_EXPR).desc())
         )
         rows = result.all()
         grand_total = sum(int(r[2]) for r in rows) or 1
@@ -298,7 +329,7 @@ class DashboardService:
         usage_result = await self._session.execute(
             select(
                 UsageEvent.team_id,
-                func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+                _sum_tokens(),
                 func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
             )
             .where(*filters, UsageEvent.team_id.is_not(None))
@@ -361,13 +392,13 @@ class DashboardService:
                 select(
                     UsageEvent.team_id,
                     Team.name,
-                    func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+                    _sum_tokens(),
                     func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
                 )
                 .join(Team, Team.id == UsageEvent.team_id)
                 .where(*filters, UsageEvent.team_id.is_not(None))
                 .group_by(UsageEvent.team_id, Team.name)
-                .order_by(func.sum(UsageEvent.total_tokens).desc())
+                .order_by(func.sum(_TOKEN_TOTAL_EXPR).desc())
                 .limit(limit)
             )
             teams = [
@@ -386,7 +417,7 @@ class DashboardService:
                 UsageEvent.user_id,
                 UsageEvent.user_email,
                 UsageEvent.team_id,
-                func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+                _sum_tokens(),
                 func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
                 func.count(UsageEvent.id),
             )
@@ -395,7 +426,7 @@ class DashboardService:
                 or_(UsageEvent.user_id.is_not(None), UsageEvent.user_email.is_not(None)),
             )
             .group_by(UsageEvent.user_id, UsageEvent.user_email, UsageEvent.team_id)
-            .order_by(func.sum(UsageEvent.total_tokens).desc())
+            .order_by(func.sum(_TOKEN_TOTAL_EXPR).desc())
             .limit(limit)
         )
         users: list[TopConsumerItem] = []
@@ -455,7 +486,7 @@ class DashboardService:
         result = await self._session.execute(
             select(
                 bucket,
-                func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+                _sum_tokens(),
                 func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
             )
             .where(*filters)
@@ -606,13 +637,13 @@ class DashboardService:
             select(
                 UsageEvent.team_id,
                 Team.name,
-                func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+                _sum_tokens(),
                 func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
             )
             .outerjoin(Team, Team.id == UsageEvent.team_id)
             .where(*filters, UsageEvent.team_id.is_not(None))
             .group_by(UsageEvent.team_id, Team.name)
-            .order_by(func.sum(UsageEvent.total_tokens).desc())
+            .order_by(func.sum(_TOKEN_TOTAL_EXPR).desc())
         )
         team_rows = team_result.all()
 
@@ -626,7 +657,7 @@ class DashboardService:
                 select(
                     UsageEvent.user_id,
                     UsageEvent.user_email,
-                    func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+                    _sum_tokens(),
                     func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
                 )
                 .where(
@@ -634,7 +665,7 @@ class DashboardService:
                     or_(UsageEvent.user_id.is_not(None), UsageEvent.user_email.is_not(None)),
                 )
                 .group_by(UsageEvent.user_id, UsageEvent.user_email)
-                .order_by(func.sum(UsageEvent.total_tokens).desc())
+                .order_by(func.sum(_TOKEN_TOTAL_EXPR).desc())
             )
             users: list[DailyBreakdownUser] = []
             for user_id, email, tokens, cost in user_result.all():

@@ -12,9 +12,10 @@ Centralized platform for monitoring AI tool consumption, costs, and adoption acr
 
 | Service | Image / build | Purpose |
 |---------|---------------|---------|
-| `postgres` | `postgres:15-alpine` | PostgreSQL 15 |
+| `postgres` | `postgres:15-alpine` | PostgreSQL 15 (host port **5433** → container 5432) |
 | `api` | `backend/Dockerfile` | FastAPI + Alembic migrations on startup + **in-process token collector scheduler** |
-| `frontend` | `node:20-alpine` | Vite dev server (profile `dev` only) |
+| `frontend-dev` | `node:20-alpine` | Vite dev server on **5173** (starts with default `docker compose up`) |
+| `frontend` | `frontend/Dockerfile` | Production SPA gateway (profile **`prod`** only — `/aitool/` on **4501**) |
 
 The API container runs scheduled token pulls (APScheduler). Configure pull interval from the frontend via `POST/PATCH /api/v1/collectors` (`pull_interval_minutes`).
 
@@ -30,17 +31,31 @@ OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collecto
 
    Edit `.env` and replace placeholder values. At minimum, set `POSTGRES_PASSWORD`.
 
-2. Start the stack (runs migrations automatically before the API starts):
+2. Start the full local stack (postgres + api + frontend):
 
    ```bash
-   docker compose up --build postgres api
+   docker compose up --build -d
    ```
 
-   **If you see migration errors** such as `Can't locate revision identified by '007_role_permissions'`, your database volume is from an older branch. Reset it:
+   Open **http://localhost:5173** (Vite dev server).
+
+   API-only without frontend:
+
+   ```bash
+   docker compose up --build -d postgres api
+   ```
+
+   Or run the frontend on the host instead of Docker:
+
+   ```bash
+   cd frontend && npm ci && npm run dev
+   ```
+
+   **If you see migration errors** such as `Can't locate revision identified by '007_role_permissions'`, reset the database volume:
 
    ```bash
    docker compose down -v
-   docker compose up --build postgres api
+   docker compose up --build -d
    ```
 
 3. Verify services:
@@ -56,7 +71,12 @@ OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collecto
    {"status": "ok", "database": "ok"}
    ```
 
-5. Sign in (dev seed user):
+5. Sign in (bootstrap super admin — created on first API startup when `auth.users` is empty):
+
+   | Variable | Local default |
+   |----------|----------------|
+   | `SUPER_ADMIN_EMAIL` | `admin@example.com` |
+   | `SUPER_ADMIN_PASSWORD` | `change_me_dev_only` |
 
    ```bash
    curl -X POST http://localhost:8000/api/v1/auth/login \
@@ -80,20 +100,20 @@ OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collecto
 
 ### Frontend development
 
-**Local (recommended):**
+**Docker (default — starts with `docker compose up -d`):**
+
+```bash
+docker compose up --build -d
+```
+
+Open http://localhost:5173 — API at http://localhost:8000/api/v1.
+
+**On your host (faster hot reload, optional):**
 
 ```bash
 cd frontend
 npm ci
 npm run dev
-```
-
-Open http://localhost:5173 — API requests proxy to `http://localhost:8000/api/v1`.
-
-**Docker (optional):**
-
-```bash
-docker compose --profile dev up --build frontend api postgres
 ```
 
 ### Apply order for OpenSpec changes
@@ -107,9 +127,35 @@ docker compose --profile dev up --build frontend api postgres
 ```bash
 docker compose down
 docker compose down -v          # destructive — removes volumes
-docker compose logs -f api worker beat
-docker compose up --build api worker beat
+docker compose logs -f api frontend-dev
+docker compose up --build -d
 ```
+
+## Server deployment
+
+Production defaults in `.env.example`:
+
+| Setting | Value |
+|---------|--------|
+| `POSTGRES_PORT` | `5433` (host) |
+| `APP_PORT` / `FRONTEND_PORT` | `4501` (single gateway — SPA + API) |
+| `VITE_BASE_PATH` | `/aitool/` |
+| `VITE_API_BASE_URL` | `/aitool/api/v1` |
+| `SUPER_ADMIN_EMAIL` | set in `deploy/.env.example` |
+| `SEED_SUPER_ADMIN_ON_STARTUP` | `true` (production) |
+
+1. Copy `deploy/.env.example` to `.env`, set strong secrets, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD`.
+2. Set `CORS_ORIGINS` to your public frontend origin (e.g. `https://foundry.inapp.com`).
+3. Start the stack:
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up --build -d
+   ```
+
+4. App URL: `https://foundry.inapp.com/aitool/` (via server nginx)  
+   API health: `curl http://127.0.0.1:4501/aitool/api/v1/health`
+
+Host nginx proxies **only** `/aitool/` to port **4501**. The frontend container proxies `/aitool/api/` to the API internally.
 
 ## Project structure
 

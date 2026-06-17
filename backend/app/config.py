@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, model_validator
+from pydantic import AliasChoices, Field, PostgresDsn, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 EnvironmentName = Literal["development", "staging", "production"]
@@ -38,13 +38,21 @@ class Settings(BaseSettings):
         default=7,
         validation_alias="JWT_REFRESH_TOKEN_EXPIRE_DAYS",
     )
-    dev_super_admin_email: str = Field(
+    super_admin_email: str = Field(
         default="admin@example.com",
-        validation_alias="DEV_SUPER_ADMIN_EMAIL",
+        validation_alias=AliasChoices("SUPER_ADMIN_EMAIL", "DEV_SUPER_ADMIN_EMAIL"),
     )
-    dev_super_admin_password: str = Field(
+    super_admin_password: str = Field(
         default="change_me_dev_only",
-        validation_alias="DEV_SUPER_ADMIN_PASSWORD",
+        validation_alias=AliasChoices("SUPER_ADMIN_PASSWORD", "DEV_SUPER_ADMIN_PASSWORD"),
+    )
+    seed_super_admin_on_startup: bool = Field(
+        default=False,
+        validation_alias="SEED_SUPER_ADMIN_ON_STARTUP",
+    )
+    sync_super_admin_credentials: bool = Field(
+        default=True,
+        validation_alias="SEED_SUPER_ADMIN_SYNC_CREDENTIALS",
     )
     collector_encryption_key: str = Field(
         default="change_me_collector_encryption_key_dev",

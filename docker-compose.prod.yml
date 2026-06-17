@@ -1,0 +1,6 @@
+# Production overlay: API is reachable only on the Docker network.
+# The frontend container (port FRONTEND_PORT) serves the SPA and proxies /aitool/api/ to api:8000.
+
+services:
+  api:
+    ports: !reset []

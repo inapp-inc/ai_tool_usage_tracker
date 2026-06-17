@@ -15,7 +15,6 @@ describe("tools adapter", () => {
     const body = toToolWriteBody({
       name: "Enterprise OpenAI",
       provider: "openai",
-      apiKey: "sk-test-key-12345678",
       description: "Flat package",
       pricing: {
         model: "flat_fee",
@@ -91,52 +90,8 @@ describe("tools adapter", () => {
     expect(body.pricing_model).toBe("package_with_overage");
     expect(body.package_allowance).toBe(2_000_000);
     expect(body.overage_price).toBe(0.003);
-    expect(body.api_key).toBeUndefined();
+    expect(body.api_endpoint).toBeNull();
     expect(body.pricing_config).toMatchObject({ plan_name: "Business" });
-  });
-
-  it("omits api_key on update when unchanged", () => {
-    const body = toToolUpdateBody({
-      name: "Tool",
-      provider: "openai",
-      apiKey: "",
-      description: "",
-      pricing: {
-        model: "per_token",
-        inputCostPer1K: 0.005,
-        outputCostPer1K: 0.015,
-        costPerSeat: null,
-        seatCount: null,
-        flatMonthlyCost: null,
-        planName: null,
-        includedTokens: null,
-        overageRate: null,
-      },
-    });
-
-    expect(body.api_key).toBeUndefined();
-  });
-
-  it("includes api_key on update when rotated", () => {
-    const body = toToolUpdateBody({
-      name: "Tool",
-      provider: "openai",
-      apiKey: "sk-new-key-12345678",
-      description: "",
-      pricing: {
-        model: "per_token",
-        inputCostPer1K: 0.005,
-        outputCostPer1K: 0.015,
-        costPerSeat: null,
-        seatCount: null,
-        flatMonthlyCost: null,
-        planName: null,
-        includedTokens: null,
-        overageRate: null,
-      },
-    });
-
-    expect(body.api_key).toBe("sk-new-key-12345678");
   });
 
   it("create body matches OpenAPI flat structure", () => {
@@ -162,7 +117,7 @@ describe("tools adapter", () => {
       name: "Enterprise OpenAI",
       vendor: "openai",
       description: "Flat package",
-      api_key: "sk-test-key-12345678",
+      api_endpoint: null,
       pricing_model: "package_with_overage",
       token_price: 0.002,
       package_allowance: 1_000_000,

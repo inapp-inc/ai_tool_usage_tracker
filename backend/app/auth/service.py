@@ -135,23 +135,63 @@ class AuthService:
         )
 
 
-async def seed_dev_admin(session: AsyncSession, settings: Settings | None = None) -> None:
-    """Create default org + super admin when auth tables are empty (development only)."""
+async def seed_super_admin_if_empty(
+    session: AsyncSession, settings: Settings | None = None
+) -> bool:
+    """Create default org + super admin when no users exist. Returns True if created."""
     cfg = settings or get_settings()
-    if cfg.environment != "development":
-        return
+    user_repo = UserRepository(session)
+    if await user_repo.count() > 0:
+        return False
 
     org_repo = OrganizationRepository(session)
-    if await org_repo.count() > 0:
-        return
+    org = await org_repo.get_first()
+    if org is None:
+        org = await org_repo.create(name="Default Organization", slug="default")
 
-    org = await org_repo.create(name="Default Organization", slug="default")
-    user_repo = UserRepository(session)
     await user_repo.create(
         organization_id=org.id,
-        email=cfg.dev_super_admin_email,
-        password_hash=hash_password(cfg.dev_super_admin_password),
+        email=cfg.super_admin_email,
+        password_hash=hash_password(cfg.super_admin_password),
         display_name="Super Admin",
         role="super_admin",
     )
     await session.commit()
+    return True
+
+
+async def sync_super_admin_credentials(
+    session: AsyncSession, settings: Settings | None = None
+) -> bool:
+    """Update bootstrap super admin email/password from env. Returns True if updated."""
+    cfg = settings or get_settings()
+    user_repo = UserRepository(session)
+    user = await user_repo.get_by_email(cfg.super_admin_email)
+    if user is None:
+        user = await user_repo.get_super_admin()
+    if user is None or user.role != "super_admin":
+        return False
+
+    await user_repo.update_credentials(
+        user,
+        email=cfg.super_admin_email,
+        password_hash=hash_password(cfg.super_admin_password),
+        display_name=user.display_name or "Super Admin",
+    )
+    await session.commit()
+    return True
+
+
+async def seed_dev_admin(session: AsyncSession, settings: Settings | None = None) -> None:
+    """Seed or sync bootstrap super admin on API startup."""
+    cfg = settings or get_settings()
+    auto_seed = cfg.environment == "development" or cfg.seed_super_admin_on_startup
+    if not auto_seed:
+        return
+
+    created = await seed_super_admin_if_empty(session, cfg)
+    if created:
+        return
+
+    if cfg.sync_super_admin_credentials:
+        await sync_super_admin_credentials(session, cfg)

@@ -33,7 +33,7 @@ Canonical OpenAPI: [`../openapi.yaml`](../openapi.yaml) · [`../components/schem
 
 ## Supported providers
 
-`openai`, `anthropic`, `google`, `azure_openai`, `cohere`, `mistral`, `custom`, `mabl`, `windsurf`
+`openai`, `anthropic`, `google`, `azure_openai`, `cohere`, `mistral`, `custom`, `mabl`, `windsurf`, `cursor`, `figma`
 
 API keys are validated against the provider on create/update. Sync pulls token usage, cost, and balance (when package allowance is set).
 

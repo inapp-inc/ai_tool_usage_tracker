@@ -201,18 +201,27 @@ class CollectorService:
             return await adapter.fetch_usage(token, since=since, until=until)
 
     async def _persist_records(self, config: CollectorConfig, records) -> int:
+        organization_id = None
+        tool_id = config.tool_id
+        if tool_id is not None:
+            tool = await self._session.get(Tool, tool_id)
+            if tool is not None:
+                organization_id = tool.organization_id
+
         ingested = 0
         for record in records:
             stmt = (
                 insert(UsageEvent)
                 .values(
                     collector_id=config.id,
+                    organization_id=organization_id,
+                    tool_id=tool_id,
                     provider=config.provider,
                     model=record.model,
                     occurred_at=record.occurred_at,
                     input_tokens=record.input_tokens,
                     output_tokens=record.output_tokens,
-                    total_tokens=record.total_tokens,
+                    total_tokens=record.input_tokens + record.output_tokens,
                     estimated_cost=record.estimated_cost,
                     vendor_event_id=record.vendor_event_id,
                 )

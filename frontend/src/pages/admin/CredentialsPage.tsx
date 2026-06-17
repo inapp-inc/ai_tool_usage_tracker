@@ -40,6 +40,7 @@ import {
   type Credential,
   type CredentialEnvironment,
 } from "@/api/credentials";
+import { ApiClientError } from "@/api/client";
 import { fetchTeams } from "@/api/teams";
 import { fetchToolOptions } from "@/api/usage";
 import { RoleGuard } from "@/components/auth/RoleGuard";
@@ -192,6 +193,7 @@ export function CredentialsPage() {
   const [copyingId, setCopyingId] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<Credential | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const credentialsQuery = useQuery({
     queryKey: ["credentials"],
@@ -237,7 +239,15 @@ export function CredentialsPage() {
   const createMutation = useMutation({
     mutationFn: createCredential,
     onSuccess: (response) => {
+      setSaveError(null);
       setPlainKey(response.plainKey);
+    },
+    onError: (error) => {
+      const message =
+        error instanceof ApiClientError
+          ? error.apiError.detail
+          : "Could not connect tool. Please try again.";
+      setSaveError(message);
     },
   });
 
@@ -250,8 +260,17 @@ export function CredentialsPage() {
       body: Parameters<typeof updateCredential>[1];
     }) => updateCredential(id, body),
     onSuccess: async () => {
+      setSaveError(null);
       await queryClient.invalidateQueries({ queryKey: ["credentials"] });
+      await queryClient.invalidateQueries({ queryKey: ["tools"] });
       closeSlideOver();
+    },
+    onError: (error) => {
+      const message =
+        error instanceof ApiClientError
+          ? error.apiError.detail
+          : "Could not update credential. Please try again.";
+      setSaveError(message);
     },
   });
 
@@ -301,6 +320,7 @@ export function CredentialsPage() {
   useEffect(() => {
     if (!slideOver.open) {
       reset(defaultFormValues());
+      setSaveError(null);
       return;
     }
 
@@ -322,6 +342,7 @@ export function CredentialsPage() {
 
   const handleDone = async () => {
     await queryClient.invalidateQueries({ queryKey: ["credentials"] });
+    await queryClient.invalidateQueries({ queryKey: ["tools"] });
     closeSlideOver();
   };
 
@@ -348,6 +369,8 @@ export function CredentialsPage() {
   });
 
   const onSubmit = (data: FormValues) => {
+    setSaveError(null);
+
     if (slideOver.credential) {
       const apiKeyChanged =
         Boolean(data.apiKey?.trim()) &&
@@ -558,7 +581,7 @@ export function CredentialsPage() {
             startIcon={<IconPlus size={15} />}
             onClick={openAddSlideOver}
           >
-            Add Credential
+            Connect Tool
           </Button>
         </Box>
 
@@ -599,14 +622,14 @@ export function CredentialsPage() {
           onClose={handleSlideOverClose}
           title={
             plainKey
-              ? "Key generated"
+              ? "Tool connected"
               : isEditMode
                 ? "Edit Credential"
-                : "Add Credential"
+                : "Connect Tool"
           }
           {...(plainKey || isEditMode
             ? {}
-            : { subtitle: "AI provider key scoped to a team" })}
+            : { subtitle: "Verify your API key and sync usage in the background" })}
           width={520}
           footer={
             plainKey ? undefined : (
@@ -628,7 +651,7 @@ export function CredentialsPage() {
                     ) : undefined
                   }
                 >
-                  {isEditMode ? "Save" : "Add Credential"}
+                  {isEditMode ? "Save" : "Connect Tool"}
                 </Button>
               </>
             )
@@ -639,12 +662,17 @@ export function CredentialsPage() {
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
                 <IconCircleCheck size={24} color={tokens.success} />
                 <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                  Key generated
+                  Tool connected
                 </Typography>
               </Box>
 
+              <Alert severity="success" sx={{ mb: 2 }}>
+                Your API key was verified. Usage data is syncing in the background — check
+                the Tools page in a moment for updated stats.
+              </Alert>
+
               <Alert severity="warning" sx={{ mb: 2 }}>
-                Copy your key now — it won&apos;t be shown again.
+                Copy your key now if you need it — it won&apos;t be shown again.
               </Alert>
 
               <Box
@@ -725,6 +753,12 @@ export function CredentialsPage() {
               onSubmit={handleSubmit(onSubmit)}
               sx={{ display: "flex", flexDirection: "column" }}
             >
+              {saveError && (
+                <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSaveError(null)}>
+                  {saveError}
+                </Alert>
+              )}
+
               <TextField
                 {...register("label")}
                 fullWidth
@@ -858,7 +892,13 @@ export function CredentialsPage() {
                   label="API Key"
                   size="small"
                   type="text"
-                  helperText="Leave as the masked value to keep the current key, or enter a new key to rotate."
+                  error={Boolean(errors.apiKey) || Boolean(saveError)}
+                  helperText={
+                    errors.apiKey?.message ??
+                    (saveError
+                      ? saveError
+                      : "Leave as the masked value to keep the current key, or enter a new key to rotate and re-verify.")
+                  }
                   sx={{ mb: 2 }}
                 />
               ) : (
@@ -868,8 +908,13 @@ export function CredentialsPage() {
                   label="API Key"
                   size="small"
                   type="password"
-                  error={Boolean(errors.apiKey)}
-                  helperText={errors.apiKey?.message}
+                  error={Boolean(errors.apiKey) || Boolean(saveError)}
+                  helperText={
+                    errors.apiKey?.message ??
+                    (saveError
+                      ? saveError
+                      : "The key is verified with the provider before saving. Usage syncs in the background.")
+                  }
                   sx={{ mb: 2 }}
                 />
               )}

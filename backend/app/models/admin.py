@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func, text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,6 +37,50 @@ class Team(Base):
         JSONB,
         nullable=False,
         server_default=text("'[]'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class TeamTool(Base):
+    """Per-team pricing override for an assigned tool (admin.team_tools)."""
+
+    __tablename__ = "team_tools"
+    __table_args__ = (
+        UniqueConstraint("team_id", "tool_id", name="uq_team_tools_team_tool"),
+        {"schema": "admin"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    team_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("admin.teams.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tool_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("admin.tools.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    pricing_model: Mapped[str | None] = mapped_column(String(32))
+    token_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    output_token_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    cost_per_seat: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    seat_count: Mapped[int | None] = mapped_column(Integer)
+    package_allowance: Mapped[int | None] = mapped_column(BigInteger)
+    overage_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    plan_name: Mapped[str | None] = mapped_column(String(200))
+    pricing_config: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -122,6 +166,7 @@ class Tool(Base):
     credential_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rotation_reminder_days: Mapped[int | None] = mapped_column(BigInteger)
     last_rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    api_endpoint: Mapped[str | None] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -19,8 +19,20 @@ SUPPORTED_PROVIDERS = frozenset(
         "mabl",
         "windsurf",
         "cursor",
+        "figma",
     }
 )
+
+
+def resolve_provider_api_url(
+    api_endpoint: str | None,
+    *,
+    default_url: str,
+) -> str:
+    """Prefer tool.api_endpoint when set; otherwise use the adapter default."""
+    if api_endpoint and api_endpoint.strip():
+        return api_endpoint.strip()
+    return default_url
 
 
 class ProviderValidationError(Exception):
