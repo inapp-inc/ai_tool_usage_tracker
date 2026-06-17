@@ -14,8 +14,8 @@ Centralized platform for monitoring AI tool consumption, costs, and adoption acr
 |---------|---------------|---------|
 | `postgres` | `postgres:15-alpine` | PostgreSQL 15 (host port **5433** → container 5432) |
 | `api` | `backend/Dockerfile` | FastAPI + Alembic migrations on startup + **in-process token collector scheduler** |
-| `frontend` | `frontend/Dockerfile` | Production SPA (profile **`prod`** — `/aitool/` on port **4501**) |
-| `frontend-dev` | `node:20-alpine` | Vite dev server (profile `dev` only) |
+| `frontend-dev` | `node:20-alpine` | Vite dev server on **5173** (starts with default `docker compose up`) |
+| `frontend` | `frontend/Dockerfile` | Production SPA gateway (profile **`prod`** only — `/aitool/` on **4501**) |
 
 The API container runs scheduled token pulls (APScheduler). Configure pull interval from the frontend via `POST/PATCH /api/v1/collectors` (`pull_interval_minutes`).
 
@@ -31,27 +31,31 @@ OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collecto
 
    Edit `.env` and replace placeholder values. At minimum, set `POSTGRES_PASSWORD`.
 
-2. Start the API and database:
+2. Start the full local stack (postgres + api + frontend):
 
    ```bash
-   docker compose up --build postgres api
+   docker compose up --build -d
    ```
 
-3. Run the frontend locally (served at **`/`**, API proxied to **`/api/v1`**):
+   Open **http://localhost:5173** (Vite dev server).
+
+   API-only without frontend:
 
    ```bash
-   cd frontend
-   npm ci
-   npm run dev
+   docker compose up --build -d postgres api
    ```
 
-   Open **http://localhost:5173**
+   Or run the frontend on the host instead of Docker:
 
-   **If you see migration errors** such as `Can't locate revision identified by '007_role_permissions'`, your database volume is from an older branch. Reset it:
+   ```bash
+   cd frontend && npm ci && npm run dev
+   ```
+
+   **If you see migration errors** such as `Can't locate revision identified by '007_role_permissions'`, reset the database volume:
 
    ```bash
    docker compose down -v
-   docker compose up --build postgres api
+   docker compose up --build -d
    ```
 
 3. Verify services:
@@ -96,20 +100,20 @@ OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collecto
 
 ### Frontend development
 
-**Local (recommended):**
+**Docker (default — starts with `docker compose up -d`):**
+
+```bash
+docker compose up --build -d
+```
+
+Open http://localhost:5173 — API at http://localhost:8000/api/v1.
+
+**On your host (faster hot reload, optional):**
 
 ```bash
 cd frontend
 npm ci
 npm run dev
-```
-
-Open http://localhost:5173 — API requests proxy to `http://localhost:8000/api/v1`.
-
-**Docker (optional Vite dev server):**
-
-```bash
-docker compose --profile dev up --build frontend-dev api postgres
 ```
 
 ### Apply order for OpenSpec changes
@@ -123,8 +127,8 @@ docker compose --profile dev up --build frontend-dev api postgres
 ```bash
 docker compose down
 docker compose down -v          # destructive — removes volumes
-docker compose logs -f api frontend
-docker compose up --build postgres api frontend
+docker compose logs -f api frontend-dev
+docker compose up --build -d
 ```
 
 ## Server deployment

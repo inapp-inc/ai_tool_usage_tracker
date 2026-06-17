@@ -39,10 +39,10 @@ def test_frontend_production_service() -> None:
     assert "4501" in str(frontend.get("ports", []))
 
 
-def test_frontend_dev_profile() -> None:
+def test_frontend_dev_default_service() -> None:
     compose = _load_compose()
     frontend_dev = compose["services"]["frontend-dev"]
-    assert frontend_dev.get("profiles") == ["dev"]
+    assert frontend_dev.get("profiles") is None
     assert "5173" in str(frontend_dev.get("ports", []))
 
 

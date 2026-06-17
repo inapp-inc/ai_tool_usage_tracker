@@ -2,11 +2,8 @@ name: ai-tool-tracker
 
 
 
-# Stack: PostgreSQL + API + production frontend gateway on one port (FRONTEND_PORT).
-# Prod frontend nginx serves /aitool/ SPA and proxies /aitool/api/ → api:8000.
-# Host nginx only needs one upstream: location /aitool/ → FRONTEND_PORT.
-# Vite dev server: docker compose --profile dev up frontend-dev api postgres
-
+# Stack: PostgreSQL + API + Vite frontend (default local dev on :5173).
+# Production SPA gateway: docker compose --profile prod up frontend (port FRONTEND_PORT).
 
 
 services:
@@ -197,15 +194,20 @@ services:
 
     container_name: ai-tracker-frontend-dev
 
-    profiles: [dev]
-
     working_dir: /app
 
     volumes:
 
       - ./frontend:/app
 
-    command: ["sh", "-c", "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"]
+      - frontend_node_modules:/app/node_modules
+
+    command:
+      [
+        "sh",
+        "-c",
+        "if [ ! -d node_modules/vite ]; then npm ci; fi && npm run dev -- --host 0.0.0.0 --port 5173",
+      ]
 
     ports:
 
@@ -220,6 +222,8 @@ services:
       api:
 
         condition: service_healthy
+
+    restart: unless-stopped
 
     networks:
 
@@ -240,4 +244,8 @@ volumes:
   postgres_data:
 
     name: ai-tracker-postgres-data
+
+  frontend_node_modules:
+
+    name: ai-tracker-frontend-node-modules
 
