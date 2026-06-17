@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import get_current_user
 from app.auth.schemas import LoginRequest, RefreshRequest, TokenResponse, UserProfile
 from app.auth.service import AuthService
+from app.audit.context import get_client_ip, get_correlation_id
 from app.db.session import get_session
 from app.models.auth import User
 

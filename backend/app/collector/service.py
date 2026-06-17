@@ -231,10 +231,13 @@ class CollectorService:
         *,
         collector_id: UUID | None = None,
         limit: int = 100,
+        managed_team_ids: list[UUID] | None = None,
     ) -> list[UsageEventResponse]:
         query = select(UsageEvent).order_by(UsageEvent.occurred_at.desc()).limit(limit)
         if collector_id is not None:
             query = query.where(UsageEvent.collector_id == collector_id)
+        if managed_team_ids is not None:
+            query = query.where(UsageEvent.team_id.in_(managed_team_ids))
         result = await self._session.execute(query)
         return [UsageEventResponse.model_validate(row) for row in result.scalars().all()]
 
@@ -242,6 +245,7 @@ class CollectorService:
         self,
         *,
         collector_id: UUID | None = None,
+        managed_team_ids: list[UUID] | None = None,
     ) -> UsageSummaryResponse:
         query = select(
             func.coalesce(func.sum(UsageEvent.total_tokens), 0),
@@ -252,6 +256,8 @@ class CollectorService:
         )
         if collector_id is not None:
             query = query.where(UsageEvent.collector_id == collector_id)
+        if managed_team_ids is not None:
+            query = query.where(UsageEvent.team_id.in_(managed_team_ids))
 
         result = await self._session.execute(query)
         total_tokens, total_cost, event_count, period_from, period_to = result.one()

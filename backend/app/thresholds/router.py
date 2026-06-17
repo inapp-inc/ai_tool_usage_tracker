@@ -1,5 +1,6 @@
 """Thresholds REST API — alert rules and history."""
 
+import uuid
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -7,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.router import get_audit_recorder, record_audit_event
 from app.audit.recorder import AuditRecorder
-
 from app.auth.dependencies import get_current_user
+from app.core.rbac import get_managed_team_ids
 from app.db.session import get_session
 from app.models.auth import User
 from app.thresholds.schemas import (
@@ -42,9 +43,13 @@ def require_threshold_admin(current_user: User = Depends(get_current_user)) -> U
 @router.get("", response_model=ThresholdListResponse)
 async def list_thresholds(
     current_user: User = Depends(require_threshold_admin),
+    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
     service: ThresholdService = Depends(get_threshold_service),
 ) -> ThresholdListResponse:
-    return await service.list_thresholds(current_user.organization_id)
+    return await service.list_thresholds(
+        current_user.organization_id,
+        team_ids=managed_team_ids if current_user.role == "team_admin" else None,
+    )
 
 
 @router.post("", response_model=ThresholdResponse, status_code=status.HTTP_201_CREATED)
@@ -52,9 +57,16 @@ async def create_threshold(
     body: ThresholdCreateRequest,
     request: Request,
     current_user: User = Depends(require_threshold_admin),
+    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
     service: ThresholdService = Depends(get_threshold_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> ThresholdResponse:
+    if current_user.role == "team_admin" and managed_team_ids:
+        if body.team_id not in managed_team_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot create threshold for a team outside your scope.",
+            )
     created = await service.create_threshold(current_user.organization_id, body)
     await record_audit_event(
         recorder,
@@ -71,21 +83,27 @@ async def create_threshold(
 @router.get("/events", response_model=ThresholdEventListResponse)
 async def list_threshold_events(
     current_user: User = Depends(require_threshold_admin),
+    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
     service: ThresholdService = Depends(get_threshold_service),
 ) -> ThresholdEventListResponse:
-    return await service.list_events(current_user.organization_id)
+    return await service.list_events(
+        current_user.organization_id,
+        team_ids=managed_team_ids if current_user.role == "team_admin" else None,
+    )
 
 
 @router.post("/events/{event_id}/acknowledge", response_model=ThresholdEventResponse)
 async def acknowledge_threshold_event(
     event_id: UUID,
     current_user: User = Depends(require_threshold_admin),
+    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
     service: ThresholdService = Depends(get_threshold_service),
 ) -> ThresholdEventResponse:
     return await service.acknowledge_event(
         current_user.organization_id,
         event_id,
         current_user,
+        managed_team_ids=managed_team_ids if current_user.role == "team_admin" else None,
     )
 
 
@@ -95,9 +113,12 @@ async def update_threshold(
     body: ThresholdUpdateRequest,
     request: Request,
     current_user: User = Depends(require_threshold_admin),
+    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
     service: ThresholdService = Depends(get_threshold_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> ThresholdResponse:
+    if current_user.role == "team_admin" and managed_team_ids:
+        await service.assert_threshold_scope(current_user.organization_id, threshold_id, managed_team_ids)
     updated = await service.update_threshold(
         current_user.organization_id,
         threshold_id,
@@ -120,9 +141,12 @@ async def delete_threshold(
     threshold_id: UUID,
     request: Request,
     current_user: User = Depends(require_threshold_admin),
+    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
     service: ThresholdService = Depends(get_threshold_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> None:
+    if current_user.role == "team_admin" and managed_team_ids:
+        await service.assert_threshold_scope(current_user.organization_id, threshold_id, managed_team_ids)
     thresholds = await service.list_thresholds(current_user.organization_id)
     target = next((row for row in thresholds.data if row.id == threshold_id), None)
     await service.delete_threshold(current_user.organization_id, threshold_id)

@@ -9,6 +9,7 @@ from app.audit.router import get_audit_recorder, record_audit_event
 from app.audit.recorder import AuditRecorder
 
 from app.auth.dependencies import get_current_user
+from app.core.rbac import require_team_admin_or_above
 from app.db.session import get_session
 from app.models.auth import User
 from app.teams.schemas import (
@@ -43,7 +44,7 @@ def require_super_admin(current_user: User = Depends(get_current_user)) -> User:
 @router.get("", response_model=TeamListResponse)
 async def list_teams(
     active: bool | None = Query(default=None),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     service: TeamService = Depends(get_team_service),
 ) -> TeamListResponse:
     return await service.list_teams(current_user, active=active)
@@ -73,7 +74,7 @@ async def create_team(
 @router.get("/{team_id}/members", response_model=TeamMemberListResponse)
 async def list_team_members(
     team_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     service: TeamService = Depends(get_team_service),
 ) -> TeamMemberListResponse:
     return await service.list_team_members(current_user, team_id)
@@ -102,7 +103,7 @@ async def remove_team_member(
 @router.get("/{team_id}", response_model=TeamResponse)
 async def get_team(
     team_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     service: TeamService = Depends(get_team_service),
 ) -> TeamResponse:
     return await service.get_team(current_user, team_id)

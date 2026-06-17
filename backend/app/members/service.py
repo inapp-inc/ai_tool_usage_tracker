@@ -30,6 +30,7 @@ class MembersService:
         organization_id: UUID,
         *,
         view: MembersView = "all",
+        managed_team_ids: list[UUID] | None = None,
     ) -> MemberListResponse:
         users = await self._users.list_by_organization(organization_id)
         summaries = await self._memberships.list_team_summaries_for_users(
@@ -37,12 +38,18 @@ class MembersService:
             [row.id for row in users],
         )
 
+        managed_set = set(managed_team_ids) if managed_team_ids else None
+
         platform_emails: set[str] = set()
         data: list[MemberResponse] = []
 
         for user in users:
-            platform_emails.add(user.email.lower())
             team_rows = summaries.get(user.id, [])
+            if managed_set is not None:
+                user_team_ids = {team.id for team, _ in team_rows}
+                if not user_team_ids.intersection(managed_set):
+                    continue
+            platform_emails.add(user.email.lower())
             data.append(
                 MemberResponse(
                     user_id=user.id,
@@ -65,7 +72,12 @@ class MembersService:
             )
 
         if view == "all":
-            teams = await self._teams.list_by_organization(organization_id, active=None)
+            all_teams = await self._teams.list_by_organization(organization_id, active=None)
+            teams = (
+                [t for t in all_teams if t.id in managed_set]
+                if managed_set is not None
+                else all_teams
+            )
             tool_by_email: dict[str, MemberResponse] = {}
             upload_by_email: dict[str, MemberResponse] = {}
 

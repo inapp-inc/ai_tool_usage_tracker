@@ -21,7 +21,7 @@ from app.users.schemas import (
     UserUpdateRequest,
 )
 
-ADMIN_ROLES = frozenset({"super_admin"})
+ADMIN_ROLES = frozenset({"super_admin", "team_admin"})
 
 
 class UserService:
@@ -32,8 +32,21 @@ class UserService:
         self._memberships = TeamMembershipRepository(session)
         self._teams = TeamRepository(session)
 
-    async def list_users(self, organization_id: UUID) -> UserListResponse:
+    async def list_users(
+        self,
+        organization_id: UUID,
+        team_ids: list[UUID] | None = None,
+    ) -> UserListResponse:
         rows = await self._users.list_by_organization(organization_id)
+
+        if team_ids is not None:
+            member_user_ids: set[UUID] = set()
+            for team_id in team_ids:
+                active = await self._memberships.list_active_for_team(team_id)
+                for m in active:
+                    member_user_ids.add(m.user_id)
+            rows = [r for r in rows if r.id in member_user_ids]
+
         summaries = await self._memberships.list_team_summaries_for_users(
             organization_id,
             [row.id for row in rows],

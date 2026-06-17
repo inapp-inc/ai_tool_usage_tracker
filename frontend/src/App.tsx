@@ -2,8 +2,10 @@ import { lazy, Suspense, type ReactElement } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { useAuth } from "@/auth/AuthContext";
+import { RoleGuard } from "@/components/auth/RoleGuard";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageSkeleton } from "@/components/feedback/PageSkeleton";
+import { Role } from "@/types";
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 const LoginPage = lazy(() =>
@@ -13,6 +15,9 @@ const LoginPage = lazy(() =>
 // ─── Insights ────────────────────────────────────────────────────────────────
 const InsightsPage = lazy(() =>
   import("@/pages/insights/InsightsPage").then((m) => ({ default: m.InsightsPage })),
+);
+const MyUsagePage = lazy(() =>
+  import("@/pages/usage/MyUsagePage").then((m) => ({ default: m.MyUsagePage })),
 );
 
 // ─── Alerts ───────────────────────────────────────────────────────────────────
@@ -84,18 +89,89 @@ export function AppRoutes() {
         <Route path="/reports" element={<Navigate to="/insights" replace />} />
         <Route path="/reports/new" element={<Navigate to="/insights" replace />} />
 
-        <Route path="/alerts" element={<AlertsPage />} />
-        <Route path="/alerts/history" element={<AlertsPage />} />
+        <Route path="/my-usage" element={<MyUsagePage />} />
 
-        <Route path="/uploads" element={<UploadsPage />} />
-        <Route path="/uploads/:uploadId/map" element={<UploadMappingPage />} />
-        <Route path="/uploads/:uploadId/preview" element={<UploadPreviewPage />} />
+        <Route
+          path="/alerts"
+          element={
+            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+              <AlertsPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/alerts/history"
+          element={
+            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+              <AlertsPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/uploads"
+          element={
+            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+              <UploadsPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/uploads/:uploadId/map"
+          element={
+            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+              <UploadMappingPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/uploads/:uploadId/preview"
+          element={
+            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+              <UploadPreviewPage />
+            </RoleGuard>
+          }
+        />
 
-        <Route path="/admin/tools" element={<ToolsPage />} />
-        <Route path="/admin/teams" element={<TeamsPage />} />
-        <Route path="/admin/members" element={<MembersPage />} />
-        <Route path="/admin/credentials" element={<CredentialsPage />} />
-        <Route path="/admin/audit-log" element={<AuditLogPage />} />
+        <Route
+          path="/admin/tools"
+          element={
+            <RoleGuard roles={[Role.SuperAdmin]} fallback={<Navigate to="/insights" replace />}>
+              <ToolsPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/admin/teams"
+          element={
+            <RoleGuard roles={[Role.SuperAdmin]} fallback={<Navigate to="/insights" replace />}>
+              <TeamsPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/admin/credentials"
+          element={
+            <RoleGuard roles={[Role.SuperAdmin]} fallback={<Navigate to="/insights" replace />}>
+              <CredentialsPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/admin/members"
+          element={
+            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+              <MembersPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/admin/audit-log"
+          element={
+            <RoleGuard roles={[Role.SuperAdmin, Role.Auditor]} fallback={<Navigate to="/insights" replace />}>
+              <AuditLogPage />
+            </RoleGuard>
+          }
+        />
       </Route>
 
       {/* Fallback */}

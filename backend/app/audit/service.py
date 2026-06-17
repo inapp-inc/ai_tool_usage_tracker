@@ -7,7 +7,7 @@ import io
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import HTTPException, Response, status
+from fastapi import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.repository import AuditLogRepository
@@ -20,20 +20,11 @@ from app.audit.schemas import (
 from app.models.audit import AuditLog
 from app.models.auth import User
 
-READ_ROLES = frozenset({"super_admin", "auditor"})
-
 
 class AuditLogService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._repo = AuditLogRepository(session)
-
-    def ensure_read_access(self, user: User) -> None:
-        if user.role not in READ_ROLES:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions.",
-            )
 
     async def list_logs(
         self,
@@ -48,7 +39,6 @@ class AuditLogService:
         limit: int = 100,
         cursor: str | None = None,
     ) -> AuditLogListResponse:
-        self.ensure_read_access(user)
         cursor_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00")) if cursor else None
         rows = await self._repo.list_entries(
             user.organization_id,
@@ -70,7 +60,6 @@ class AuditLogService:
         )
 
     async def export_csv(self, user: User, body: AuditLogExportRequest) -> Response:
-        self.ensure_read_access(user)
         rows = await self._repo.list_entries(
             user.organization_id,
             from_dt=body.from_dt,

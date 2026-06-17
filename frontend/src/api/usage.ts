@@ -1,3 +1,5 @@
+import { differenceInCalendarDays, parseISO } from "date-fns";
+
 import { apiRequest } from "./client";
 import { fetchTeams } from "./teams";
 import { ALL_TEAMS, ALL_TOOLS, type DashboardFilters } from "./dashboard";
@@ -70,6 +72,53 @@ export interface DailyBreakdownTeam {
     tokens: number;
     cost: number;
   }[];
+}
+
+export interface MyUsageTool {
+  toolId: string;
+  toolName: string;
+  tokens: number;
+  cost: number;
+  sharePct: number;
+}
+
+export interface MyUsageData {
+  totalTokens: number;
+  totalCost: number;
+  periodDays: number;
+  tools: MyUsageTool[];
+}
+
+function myUsagePeriodDays(from: string, to: string): number {
+  return Math.max(1, differenceInCalendarDays(parseISO(to), parseISO(from)) + 1);
+}
+
+export async function fetchMyUsage(from: string, to: string): Promise<MyUsageData> {
+  const params = new URLSearchParams({ from, to });
+  const raw = await apiRequest<{
+    total_tokens: number;
+    estimated_cost: number;
+    by_tool: Array<{
+      tool_id: string;
+      tool_name: string;
+      total_tokens: number;
+      estimated_cost: number | null;
+      share_pct: number;
+    }>;
+  }>(`/dashboard/my-usage?${params.toString()}`);
+
+  return {
+    totalTokens: raw.total_tokens,
+    totalCost: Number(raw.estimated_cost),
+    periodDays: myUsagePeriodDays(from, to),
+    tools: raw.by_tool.map((tool) => ({
+      toolId: tool.tool_id,
+      toolName: tool.tool_name,
+      tokens: tool.total_tokens,
+      cost: Number(tool.estimated_cost ?? 0),
+      sharePct: tool.share_pct,
+    })),
+  };
 }
 
 function normalizeFilters(filters?: DashboardFilters): DashboardFilters | undefined {
@@ -239,4 +288,5 @@ export const usageApi = {
   fetchTeamDrilldown,
   fetchToolOptions,
   fetchDailyBreakdown,
+  fetchMyUsage,
 };

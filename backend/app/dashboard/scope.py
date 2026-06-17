@@ -10,7 +10,7 @@ from app.models.auth import User
 from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.repository import TeamRepository
 
-ORG_WIDE_ROLES = frozenset({"super_admin", "finance_viewer", "auditor"})
+ORG_WIDE_ROLES = frozenset({"super_admin"})
 
 
 @dataclass(frozen=True)
