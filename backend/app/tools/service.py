@@ -1,4 +1,4 @@
-"""Tool business logic — CRUD, API key validation, sync."""
+"""Tool business logic — CRUD and catalogue management."""
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.collector.adapters.base import ProviderValidationError
-from app.collector.adapters.registry import fetch_provider_members, fetch_provider_snapshot, validate_provider_api_key
+from app.collector.adapters.registry import fetch_provider_members, fetch_provider_snapshot
 from app.collector.service import CollectorService
 from app.core.token_crypto import decrypt_token, encrypt_token, mask_token
 from app.models.admin import Tool
@@ -31,9 +31,6 @@ from app.tools.schemas import (
     ToolResponse,
     ToolUpdateRequest,
 )
-
-DEFAULT_PULL_INTERVAL_MINUTES = 60
-SYNC_LOOKBACK_DAYS = 30
 
 
 class ToolService:
@@ -81,44 +78,20 @@ class ToolService:
         )
         pricing_config.setdefault("provider_slug", body.vendor)
 
-        try:
-            await validate_provider_api_key(
-                body.vendor,
-                body.api_key,
-                pricing_config=pricing_config,
-            )
-        except ProviderValidationError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(exc),
-            ) from exc
-
         tool = await self._tools.create(
             organization_id=organization_id,
             name=body.name,
             vendor=body.vendor,
             description=body.description,
+            api_endpoint=body.api_endpoint,
             pricing_model=body.pricing_model,
             token_price=body.token_price,
             package_allowance=body.package_allowance,
             overage_price=body.overage_price,
             pricing_config=pricing_config,
-            api_token_ciphertext=encrypt_token(body.api_key),
+            api_token_ciphertext=encrypt_token(""),
         )
 
-        collector = CollectorConfig(
-            name=f"{tool.name} collector",
-            provider=tool.vendor,
-            api_token_ciphertext=tool.api_token_ciphertext,
-            pull_interval_minutes=DEFAULT_PULL_INTERVAL_MINUTES,
-            active=tool.active,
-            tool_id=tool.id,
-        )
-        self._session.add(collector)
-        await self._session.commit()
-        await self._session.refresh(tool)
-
-        await self._apply_sync(tool, body.api_key)
         await self._session.commit()
         await self._session.refresh(tool)
         return self._to_response(tool)
@@ -144,9 +117,15 @@ class ToolService:
 
         if "vendor" in updates and body.vendor is not None:
             tool.vendor = body.vendor
+            collector = await self._get_collector(tool.id)
+            if collector is not None:
+                collector.provider = body.vendor
 
         if "description" in updates:
             tool.description = body.description.strip() if body.description else None
+
+        if "api_endpoint" in updates:
+            tool.api_endpoint = body.api_endpoint
 
         if "pricing_model" in updates and body.pricing_model is not None:
             validate_pricing_model(body.pricing_model)
@@ -199,26 +178,7 @@ class ToolService:
             tool.package_allowance,
             tool.overage_price,
         )
-
-        api_key = body.api_key if "api_key" in updates and body.api_key else None
-        if api_key:
-            try:
-                await validate_provider_api_key(
-                    tool.vendor,
-                    api_key,
-                    pricing_config=tool.pricing_config,
-                )
-            except ProviderValidationError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=str(exc),
-                ) from exc
-            tool.api_token_ciphertext = encrypt_token(api_key)
-            collector = await self._get_collector(tool.id)
-            if collector is not None:
-                collector.api_token_ciphertext = tool.api_token_ciphertext
-                if "vendor" in updates and body.vendor is not None:
-                    collector.provider = body.vendor
+        self._validate_custom_api_endpoint(tool.vendor, tool.api_endpoint)
 
         if "name" in updates and body.name is not None:
             collector = await self._get_collector(tool.id)
@@ -236,7 +196,12 @@ class ToolService:
 
     async def sync_tool(self, organization_id: UUID, tool_id: UUID) -> ToolResponse:
         tool = await self._require_tool(organization_id, tool_id)
-        api_key = decrypt_token(tool.api_token_ciphertext)
+        api_key = self._decrypt_api_key(tool)
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No API key connected. Connect credentials before syncing.",
+            )
         await self._apply_sync(tool, api_key)
         await self._session.commit()
         await self._session.refresh(tool)
@@ -248,13 +213,19 @@ class ToolService:
         tool_id: UUID,
     ) -> ToolMembersListResponse:
         tool = await self._require_tool(organization_id, tool_id)
-        api_key = decrypt_token(tool.api_token_ciphertext)
+        api_key = self._decrypt_api_key(tool)
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No API key connected. Connect credentials before listing members.",
+            )
         pricing_config = tool.pricing_config if isinstance(tool.pricing_config, dict) else {}
         try:
             members = await fetch_provider_members(
                 tool.vendor,
                 api_key,
                 pricing_config=pricing_config,
+                api_endpoint=tool.api_endpoint,
             )
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
@@ -286,12 +257,14 @@ class ToolService:
                 api_key,
                 package_allowance=tool.package_allowance,
                 pricing_config=pricing_config,
+                api_endpoint=tool.api_endpoint,
             )
 
             members = await fetch_provider_members(
                 tool.vendor,
                 api_key,
                 pricing_config=pricing_config,
+                api_endpoint=tool.api_endpoint,
             )
             tool.member_count = len(members)
 
@@ -351,6 +324,19 @@ class ToolService:
         return tool
 
     @staticmethod
+    def _decrypt_api_key(tool: Tool) -> str:
+        plain = decrypt_token(tool.api_token_ciphertext)
+        return plain.strip()
+
+    @staticmethod
+    def _validate_custom_api_endpoint(vendor: str, api_endpoint: str | None) -> None:
+        if vendor == "custom" and not api_endpoint:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="api_endpoint is required when vendor is custom.",
+            )
+
+    @staticmethod
     def _validate_package_pricing(
         pricing_model: str,
         package_allowance: int | None,
@@ -366,10 +352,13 @@ class ToolService:
 
     @staticmethod
     def _to_response(tool: Tool) -> ToolResponse:
-        plain = decrypt_token(tool.api_token_ciphertext)
-        masked = mask_token(plain)
-        if len(plain) > 4:
-            masked = f"sk-...{plain[-4:]}"
+        plain = ToolService._decrypt_api_key(tool)
+        if plain:
+            masked = mask_token(plain)
+            if len(plain) > 4:
+                masked = f"sk-...{plain[-4:]}"
+        else:
+            masked = ""
         sync_status = tool.sync_status
         if not tool.active:
             sync_status = "inactive"
@@ -379,6 +368,7 @@ class ToolService:
             name=tool.name,
             vendor=tool.vendor,
             description=tool.description,
+            api_endpoint=tool.api_endpoint,
             pricing_model=tool.pricing_model,
             token_price=tool.token_price,
             package_allowance=tool.package_allowance,

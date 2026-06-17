@@ -35,6 +35,7 @@ export interface AiTool {
   name: string;
   provider: ToolProvider;
   description: string;
+  apiEndpoint: string | null;
   pricing: ToolPricing;
   status: "active" | "inactive" | "error";
   apiKeyMasked: string;
@@ -55,8 +56,8 @@ export interface ToolMember {
 export interface CreateToolRequest {
   name: string;
   provider: ToolProvider;
-  apiKey: string;
   description: string;
+  apiEndpoint?: string | null;
   pricing: ToolPricing;
 }
 
@@ -81,12 +82,12 @@ export interface ApiToolWriteBody {
   name: string;
   vendor: string;
   description: string;
+  api_endpoint?: string | null;
   pricing_model: ApiPricingModel;
   token_price: number;
   package_allowance: number | null;
   overage_price: number | null;
   pricing_config: ApiPricingConfig;
-  api_key?: string;
 }
 
 export interface ApiToolPricingFields {
@@ -104,6 +105,7 @@ export interface ApiTool {
   name: string;
   vendor: string;
   description?: string | null;
+  api_endpoint?: string | null;
   pricing_model: ApiPricingModel | string;
   token_price: number | string;
   package_allowance?: number | null;
@@ -269,7 +271,7 @@ function withExplicitPackageFields(
     plan_name: pricing.planName,
     included_tokens: pricing.includedTokens,
     overage_rate: pricing.overageRate,
-    flat_monthly_cost: pricing.flatMonthlyCost ?? fields.pricing_config.flat_monthly_cost,
+    flat_monthly_cost: pricing.flatMonthlyCost ?? fields.pricing_config.flat_monthly_cost ?? null,
   };
 
   return {
@@ -296,6 +298,7 @@ export function mapApiTool(api: ApiTool): AiTool {
     name: api.name,
     provider: providerFromVendor(api.vendor, api.pricing_config),
     description: api.description ?? "",
+    apiEndpoint: api.api_endpoint ?? null,
     pricing: pricingFromApi(api),
     status: statusFromApi(api),
     apiKeyMasked: api.api_token_masked,
@@ -399,7 +402,7 @@ export function finalizeWriteBody(body: ApiToolWriteBody): ApiToolWriteBody {
   };
 }
 
-/** Full OpenAPI write body for create (and update when api_key provided). */
+/** Full OpenAPI write body for create (and update). */
 export function toToolWriteBody(body: CreateToolRequest): ApiToolWriteBody {
   const pricing = pricingToApiFields(normalizePricing(body.pricing), body.provider);
 
@@ -407,7 +410,7 @@ export function toToolWriteBody(body: CreateToolRequest): ApiToolWriteBody {
     name: body.name,
     vendor: body.provider,
     description: body.description,
-    api_key: body.apiKey,
+    api_endpoint: body.apiEndpoint ?? null,
     pricing_model: pricing.pricing_model,
     token_price: pricing.token_price,
     package_allowance: pricing.package_allowance,
@@ -418,14 +421,9 @@ export function toToolWriteBody(body: CreateToolRequest): ApiToolWriteBody {
 
 export const toToolCreateBody = toToolWriteBody;
 
-/** Full OpenAPI write body for update; omits api_key when unchanged. */
+/** Full OpenAPI write body for update. */
 export function toToolUpdateBody(body: CreateToolRequest): ApiToolWriteBody {
-  const payload = toToolWriteBody(body);
-  if (!body.apiKey.trim()) {
-    const { api_key: _removed, ...rest } = payload;
-    return rest;
-  }
-  return payload;
+  return toToolWriteBody(body);
 }
 
 /** Build update body from partial form state (mirrors teams adapter). */
@@ -433,8 +431,8 @@ export function toToolUpdateBodyFromPartial(body: UpdateToolRequest): ApiToolWri
   return toToolUpdateBody({
     name: body.name ?? "",
     provider: body.provider ?? "custom",
-    apiKey: body.apiKey ?? "",
     description: body.description ?? "",
+    apiEndpoint: body.apiEndpoint ?? null,
     pricing: normalizePricing(body.pricing ?? emptyToolPricing()),
   });
 }

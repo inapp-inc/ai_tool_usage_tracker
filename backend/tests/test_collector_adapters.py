@@ -4,12 +4,26 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.collector.adapters.base import ProviderValidationError
+from app.collector.adapters.base import ProviderValidationError, resolve_provider_api_url
 from app.collector.adapters.cursor import CursorUsageAdapter
 from app.collector.adapters.figma import FigmaUsageAdapter
 from app.collector.adapters.generic import GenericUsageAdapter
 from app.collector.adapters.openai import OpenAIUsageAdapter
 from app.collector.adapters.registry import SUPPORTED_PROVIDERS, get_adapter
+
+
+def test_resolve_provider_api_url_prefers_tool_endpoint() -> None:
+    assert (
+        resolve_provider_api_url(
+            "https://custom.example.com/v1/models",
+            default_url="https://api.openai.com/v1/models",
+        )
+        == "https://custom.example.com/v1/models"
+    )
+    assert (
+        resolve_provider_api_url(None, default_url="https://api.openai.com/v1/models")
+        == "https://api.openai.com/v1/models"
+    )
 
 
 @pytest.mark.asyncio

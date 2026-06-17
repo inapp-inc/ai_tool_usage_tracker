@@ -3,7 +3,13 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from app.collector.adapters.base import ProviderMember, ProviderSnapshot, ProviderValidationError, UsageRecord
+from app.collector.adapters.base import (
+    ProviderMember,
+    ProviderSnapshot,
+    ProviderValidationError,
+    UsageRecord,
+    resolve_provider_api_url,
+)
 from app.collector.adapters.http_utils import get_json
 from app.collector.adapters.member_parsing import parse_generic_members
 
@@ -19,12 +25,22 @@ class GenericUsageAdapter:
         api_token: str,
         *,
         pricing_config: dict | None = None,
+        api_endpoint: str | None = None,
         **_kwargs: object,
     ) -> None:
         if len(api_token.strip()) < 8:
             raise ProviderValidationError("API key must be at least 8 characters.")
 
-        validate_url = (pricing_config or {}).get("validate_url")
+        config = pricing_config or {}
+        endpoint = api_endpoint or config.get("api_endpoint")
+        validate_url = config.get("validate_url")
+        if self.provider == "custom":
+            if not endpoint:
+                raise ProviderValidationError("API endpoint URL is required for custom provider.")
+            validate_url = endpoint
+        elif validate_url is None and endpoint:
+            validate_url = endpoint
+
         if validate_url:
             status, _ = await get_json(
                 validate_url,

@@ -59,7 +59,7 @@ async def create_tool(
     await record_audit_event(
         recorder,
         actor=current_user,
-        action="tool.connect",
+        action="tool.create",
         resource_type="tool",
         request=request,
         resource_id=created.id,

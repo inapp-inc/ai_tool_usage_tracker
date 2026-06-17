@@ -1,7 +1,8 @@
-import { zodResolver } from "@hookform/resolvers/zod";
-import { IconPencil, IconPlus, IconTrash, IconUsers } from "@tabler/icons-react";
 import {
   Alert,
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Button,
   Checkbox,
@@ -11,36 +12,45 @@ import {
   FormHelperText,
   IconButton,
   InputLabel,
-  LinearProgress,
   MenuItem,
   Select,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { IconChevronDown, IconPencil, IconPlus, IconRefresh, IconTrash, IconUsers } from "@tabler/icons-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { Link as RouterLink } from "react-router-dom";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
-import {
-  createTeam,
-  deleteTeam,
-  fetchTeams,
-  updateTeam,
-  type Team,
-} from "@/api/teams";
-import { fetchToolOptions } from "@/api/usage";
+import { emptyTeamToolPricing } from "@/api/adapters/teamTools";
+import type { ToolPricing, ToolProvider } from "@/api/adapters/tools";
+import { fetchTools } from "@/api/tools";
+import { syncTeamToolAssignments, fetchTeamTools } from "@/api/teamTools";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { StatusBadge } from "@/components/data-display/StatusBadge";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
+import { TeamToolDetailSlideOver } from "@/components/teams/TeamToolDetailSlideOver";
+import { ToolPricingFields } from "@/components/tools/ToolPricingFields";
 import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
-import { formatCost, formatTokens } from "@/utils/formatters";
+import { formatCost, formatRelativeTime, formatTokens } from "@/utils/formatters";
+import {
+  createTeam,
+  deleteTeam,
+  fetchTeams,
+  refreshTeamData,
+  updateTeam,
+  type Team,
+} from "@/api/teams";
+import { useToast } from "@/hooks/useToast";
+import { fetchToolOptions } from "@/api/usage";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const schema = z.object({
   name: z.string().min(1, "Name is required").max(100),
@@ -55,6 +65,13 @@ type FormValues = z.infer<typeof schema>;
 interface SlideOverState {
   open: boolean;
   team: Team | null;
+}
+
+interface ToolDetailState {
+  open: boolean;
+  team: Team | null;
+  toolId: string | null;
+  toolName: string;
 }
 
 function truncateDescription(text: string, maxLength = 60): string {
@@ -76,11 +93,15 @@ function parseBudgetValue(value: unknown): number | null {
 }
 
 function TeamToolsCell({
+  team,
   toolIds,
   toolNameById,
+  onToolClick,
 }: {
+  team: Team;
   toolIds: string[];
   toolNameById: Map<string, string>;
+  onToolClick: (team: Team, toolId: string, toolName: string) => void;
 }) {
   if (toolIds.length === 0) {
     return (
@@ -90,85 +111,57 @@ function TeamToolsCell({
     );
   }
 
-  const visibleIds =
-    toolIds.length > 3 ? toolIds.slice(0, 2) : toolIds;
-  const overflowCount = toolIds.length > 3 ? toolIds.length - 2 : 0;
-
   return (
     <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center" }}>
-      {visibleIds.map((toolId) => (
-        <Chip
-          key={toolId}
-          size="small"
-          variant="outlined"
-          label={toolNameById.get(toolId) ?? toolId}
-          sx={{ fontSize: "0.6875rem", height: 20, mr: 0.5, mb: 0.25 }}
-        />
-      ))}
-      {overflowCount > 0 && (
-        <Chip
-          size="small"
-          variant="outlined"
-          label={`+${overflowCount} more`}
-          sx={{
-            fontSize: "0.6875rem",
-            height: 20,
-            mr: 0.5,
-            mb: 0.25,
-            color: tokens.textMuted,
-            borderColor: tokens.border,
-          }}
-        />
-      )}
-    </Box>
-  );
-}
-
-function BudgetUsageBar({
-  used,
-  budget,
-  formatValue,
-}: {
-  used: number;
-  budget: number | null;
-  formatValue: (value: number) => string;
-}) {
-  if (budget == null) {
-    return (
-      <Typography variant="caption" sx={{ color: tokens.textMuted }}>
-        Unlimited
-      </Typography>
-    );
-  }
-
-  const percent = Math.min((used / budget) * 100, 100);
-  const color = percent >= 90 ? "error" : percent >= 70 ? "warning" : "primary";
-
-  return (
-    <Box>
-      <LinearProgress
-        variant="determinate"
-        value={percent}
-        color={color}
-        sx={{ width: 80 }}
-      />
-      <Typography
-        variant="caption"
-        sx={{ color: tokens.textMuted, display: "block", mt: 0.5 }}
-      >
-        {formatValue(used)} / {formatValue(budget)}
-      </Typography>
+      {toolIds.map((toolId) => {
+        const toolName = toolNameById.get(toolId) ?? toolId;
+        return (
+          <Chip
+            key={toolId}
+            size="small"
+            variant="outlined"
+            label={toolName}
+            clickable
+            onClick={(event) => {
+              event.stopPropagation();
+              onToolClick(team, toolId, toolName);
+            }}
+            sx={{
+              fontSize: "0.6875rem",
+              height: 20,
+              mr: 0.5,
+              mb: 0.25,
+              cursor: "pointer",
+              "&:hover": {
+                borderColor: tokens.primary,
+                backgroundColor: tokens.bgDefault,
+              },
+            }}
+          />
+        );
+      })}
     </Box>
   );
 }
 
 export function TeamsPage() {
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const [slideOver, setSlideOver] = useState<SlideOverState>({
     open: false,
     team: null,
   });
+  const [toolDetail, setToolDetail] = useState<ToolDetailState>({
+    open: false,
+    team: null,
+    toolId: null,
+    toolName: "",
+  });
   const [deleteTarget, setDeleteTarget] = useState<Team | null>(null);
+  const [toolPricingById, setToolPricingById] = useState<Record<string, ToolPricing>>({});
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [assignmentsLoading, setAssignmentsLoading] = useState(false);
+  const [syncingTeamId, setSyncingTeamId] = useState<string | null>(null);
 
   const teamsQuery = useQuery({
     queryKey: ["teams"],
@@ -180,6 +173,11 @@ export function TeamsPage() {
     queryFn: fetchToolOptions,
   });
 
+  const catalogToolsQuery = useQuery({
+    queryKey: ["tools", "catalog"],
+    queryFn: fetchTools,
+  });
+
   const toolNameById = useMemo(() => {
     const map = new Map<string, string>();
     for (const tool of toolOptionsQuery.data ?? []) {
@@ -188,14 +186,18 @@ export function TeamsPage() {
     return map;
   }, [toolOptionsQuery.data]);
 
+  const providerByToolId = useMemo(() => {
+    const map = new Map<string, ToolProvider>();
+    for (const tool of catalogToolsQuery.data ?? []) {
+      map.set(tool.id, tool.provider);
+    }
+    return map;
+  }, [catalogToolsQuery.data]);
+
   const toolOptions = toolOptionsQuery.data ?? [];
 
   const createMutation = useMutation({
     mutationFn: createTeam,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["teams"] });
-      setSlideOver({ open: false, team: null });
-    },
   });
 
   const updateMutation = useMutation({
@@ -206,10 +208,6 @@ export function TeamsPage() {
       id: string;
       body: Parameters<typeof updateTeam>[1];
     }) => updateTeam(id, body),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["teams"] });
-      setSlideOver({ open: false, team: null });
-    },
   });
 
   const deleteMutation = useMutation({
@@ -228,6 +226,7 @@ export function TeamsPage() {
     handleSubmit,
     reset,
     control,
+    watch,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -242,6 +241,8 @@ export function TeamsPage() {
 
   useEffect(() => {
     if (!slideOver.open) {
+      setToolPricingById({});
+      setSaveError(null);
       return;
     }
 
@@ -253,6 +254,22 @@ export function TeamsPage() {
         costBudget: slideOver.team.costBudget,
         toolIds: [...slideOver.team.toolIds],
       });
+
+      setAssignmentsLoading(true);
+      void fetchTeamTools(slideOver.team.id)
+        .then((rows) => {
+          const pricing: Record<string, ToolPricing> = {};
+          for (const row of rows) {
+            pricing[row.toolId] = row.pricing;
+          }
+          for (const toolId of slideOver.team!.toolIds) {
+            if (!pricing[toolId]) {
+              pricing[toolId] = emptyTeamToolPricing();
+            }
+          }
+          setToolPricingById(pricing);
+        })
+        .finally(() => setAssignmentsLoading(false));
       return;
     }
 
@@ -263,7 +280,56 @@ export function TeamsPage() {
       costBudget: null,
       toolIds: [],
     });
+    setToolPricingById({});
   }, [reset, slideOver.open, slideOver.team?.id]);
+
+  const handleToolClick = useCallback((team: Team, toolId: string, toolName: string) => {
+    setToolDetail({ open: true, team, toolId, toolName });
+  }, []);
+
+  const handleRefreshTeam = useCallback(
+    async (team: Team) => {
+      setSyncingTeamId(team.id);
+      try {
+        const result = await refreshTeamData(team.id);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["teams"] }),
+          queryClient.invalidateQueries({ queryKey: ["tools"] }),
+          queryClient.invalidateQueries({ queryKey: ["tool-options"] }),
+          queryClient.invalidateQueries({ queryKey: ["team-tool-assignment"] }),
+          queryClient.invalidateQueries({ queryKey: ["team-tool-usage"] }),
+        ]);
+
+        if (result.syncedCount === 0 && result.failedCount === 0) {
+          showToast(
+            result.skippedCount > 0
+              ? `No data collected — connect credentials for ${team.name}'s tools first.`
+              : `${team.name} has no tools assigned.`,
+            "info",
+          );
+          return;
+        }
+
+        if (result.failedCount > 0) {
+          showToast(
+            `Collected data for ${result.syncedCount} tool(s); ${result.failedCount} failed.`,
+            "warning",
+          );
+          return;
+        }
+
+        showToast(
+          `Collected usage data for ${result.syncedCount} tool(s) on ${team.name}.`,
+          "success",
+        );
+      } catch {
+        showToast(`Could not refresh data for ${team.name}. Please try again.`, "error");
+      } finally {
+        setSyncingTeamId(null);
+      }
+    },
+    [queryClient, showToast],
+  );
 
   const columns: Column<Team>[] = useMemo(
     () => [
@@ -297,29 +363,45 @@ export function TeamsPage() {
         key: "toolIds",
         header: "Tools",
         render: (row) => (
-          <TeamToolsCell toolIds={row.toolIds} toolNameById={toolNameById} />
-        ),
-      },
-      {
-        key: "tokenBudget",
-        header: "Token budget",
-        render: (row) => (
-          <BudgetUsageBar
-            used={row.tokenUsedThisMonth}
-            budget={row.tokenBudget}
-            formatValue={formatTokens}
+          <TeamToolsCell
+            team={row}
+            toolIds={row.toolIds}
+            toolNameById={toolNameById}
+            onToolClick={handleToolClick}
           />
         ),
       },
       {
-        key: "costBudget",
-        header: "Cost budget",
+        key: "tokensUsed",
+        header: "Tokens used",
+        sortable: true,
         render: (row) => (
-          <BudgetUsageBar
-            used={row.costUsedThisMonth}
-            budget={row.costBudget}
-            formatValue={formatCost}
-          />
+          <Typography variant="body2">{formatTokens(row.tokensUsed)}</Typography>
+        ),
+      },
+      {
+        key: "pricingTotal",
+        header: "Pricing total",
+        sortable: true,
+        render: (row) => (
+          <Typography variant="body2">{formatCost(row.pricingTotal)}</Typography>
+        ),
+      },
+      {
+        key: "totalCost",
+        header: "Total cost",
+        sortable: true,
+        render: (row) => (
+          <Typography variant="body2">{formatCost(row.totalCost)}</Typography>
+        ),
+      },
+      {
+        key: "lastSyncedAt",
+        header: "Last synced",
+        render: (row) => (
+          <Typography variant="body2" sx={{ color: tokens.textMuted }}>
+            {row.lastSyncedAt ? formatRelativeTime(row.lastSyncedAt) : "Never"}
+          </Typography>
         ),
       },
       {
@@ -333,6 +415,25 @@ export function TeamsPage() {
         align: "right",
         render: (row) => (
           <Box sx={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+            <Tooltip title="Refresh tool data from credentials">
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label={`Refresh data for ${row.name}`}
+                  disabled={syncingTeamId === row.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void handleRefreshTeam(row);
+                  }}
+                >
+                  {syncingTeamId === row.id ? (
+                    <CircularProgress size={14} />
+                  ) : (
+                    <IconRefresh size={15} />
+                  )}
+                </IconButton>
+              </span>
+            </Tooltip>
             <Tooltip title="View members">
               <IconButton
                 size="small"
@@ -369,15 +470,36 @@ export function TeamsPage() {
         ),
       },
     ],
-    [toolNameById],
+    [toolNameById, handleToolClick, handleRefreshTeam, syncingTeamId],
   );
 
-  const onSubmit = (data: FormValues) => {
-    if (slideOver.team) {
-      updateMutation.mutate({ id: slideOver.team.id, body: data });
-      return;
+  const onSubmit = async (data: FormValues) => {
+    setSaveError(null);
+
+    const assignments = data.toolIds.map((toolId) => ({
+      toolId,
+      pricing: toolPricingById[toolId] ?? emptyTeamToolPricing(),
+      provider: providerByToolId.get(toolId) ?? "custom",
+    }));
+
+    try {
+      if (slideOver.team) {
+        await updateMutation.mutateAsync({ id: slideOver.team.id, body: data });
+        await syncTeamToolAssignments(
+          slideOver.team.id,
+          assignments,
+          slideOver.team.toolIds,
+        );
+      } else {
+        const created = await createMutation.mutateAsync(data);
+        await syncTeamToolAssignments(created.id, assignments, []);
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["teams"] });
+      setSlideOver({ open: false, team: null });
+    } catch {
+      setSaveError("Could not save team tool assignments. Please try again.");
     }
-    createMutation.mutate(data);
   };
 
   return (
@@ -404,7 +526,10 @@ export function TeamsPage() {
               Teams
             </Typography>
             <Typography variant="body2" sx={{ color: tokens.textMuted }}>
-              Organise members and set usage budgets
+              Organise members, tools, and usage by team
+            </Typography>
+            <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+              Usage columns reflect the current calendar month (imports + live sync)
             </Typography>
           </Box>
           <Button
@@ -429,7 +554,7 @@ export function TeamsPage() {
           rowKey={(row) => row.id}
           loading={teamsQuery.isPending}
           emptyTitle="No teams yet"
-          emptyDescription="Create a team to organise members and set usage budgets."
+          emptyDescription="Create a team to organise members and track tool usage."
         />
 
         <SlideOver
@@ -438,9 +563,10 @@ export function TeamsPage() {
           title={isEditMode ? "Edit Team" : "New Team"}
           subtitle={
             isEditMode
-              ? "Update team configuration"
-              : "Set a budget to receive alerts when thresholds are crossed"
+              ? "Update team configuration and tool pricing"
+              : "Set budgets and configure per-tool pricing for this team"
           }
+          width={560}
           footer={
             <>
               <Button
@@ -471,6 +597,12 @@ export function TeamsPage() {
             onSubmit={handleSubmit(onSubmit)}
             sx={{ display: "flex", flexDirection: "column", gap: 2 }}
           >
+            {saveError && (
+              <Alert severity="error" onClose={() => setSaveError(null)}>
+                {saveError}
+              </Alert>
+            )}
+
             <TextField
               {...register("name")}
               fullWidth
@@ -491,70 +623,117 @@ export function TeamsPage() {
               helperText={errors.description?.message}
             />
 
-            <Typography
-              variant="caption"
-              sx={{
-                color: tokens.textMuted,
-                textTransform: "uppercase",
-                mt: 2,
-                mb: 1,
-                display: "block",
-              }}
-            >
-              Tool access
-            </Typography>
+            <Accordion defaultExpanded disableGutters elevation={0} sx={{ border: `0.5px solid ${tokens.border}` }}>
+              <AccordionSummary expandIcon={<IconChevronDown size={16} />}>
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  Tools &amp; Pricing
+                </Typography>
+              </AccordionSummary>
+              <AccordionDetails sx={{ pt: 0 }}>
+                <Controller
+                  name="toolIds"
+                  control={control}
+                  render={({ field }) => (
+                    <FormControl
+                      fullWidth
+                      size="small"
+                      error={Boolean(errors.toolIds)}
+                      disabled={toolOptionsQuery.isPending}
+                      sx={{ mb: 2 }}
+                    >
+                      <InputLabel id="team-tools-label">Assigned tools</InputLabel>
+                      <Select
+                        multiple
+                        labelId="team-tools-label"
+                        label="Assigned tools"
+                        value={field.value}
+                        onChange={(event) => {
+                          const nextIds = event.target.value as string[];
+                          field.onChange(nextIds);
+                          setToolPricingById((previous) => {
+                            const next = { ...previous };
+                            for (const toolId of nextIds) {
+                              if (!next[toolId]) {
+                                next[toolId] = emptyTeamToolPricing();
+                              }
+                            }
+                            return next;
+                          });
+                        }}
+                        renderValue={(selected) => {
+                          const names = (selected as string[])
+                            .map((id) => toolNameById.get(id) ?? id)
+                            .join(", ");
+                          return (
+                            <Typography noWrap sx={{ fontSize: "0.8125rem" }}>
+                              {names || (toolOptionsQuery.isPending ? "Loading tools…" : "")}
+                            </Typography>
+                          );
+                        }}
+                      >
+                        {toolOptions.map((tool) => (
+                          <MenuItem key={tool.id} value={tool.id}>
+                            <Checkbox
+                              size="small"
+                              checked={field.value.includes(tool.id)}
+                              sx={{ mr: 1, p: 0 }}
+                            />
+                            {tool.name}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                      {errors.toolIds ? (
+                        <FormHelperText error>{errors.toolIds.message}</FormHelperText>
+                      ) : (
+                        <FormHelperText>
+                          Select tools this team uses, then configure pricing for each below
+                        </FormHelperText>
+                      )}
+                    </FormControl>
+                  )}
+                />
 
-            <Controller
-              name="toolIds"
-              control={control}
-              render={({ field }) => (
-                <FormControl
-                  fullWidth
-                  size="small"
-                  error={Boolean(errors.toolIds)}
-                  disabled={toolOptionsQuery.isPending}
-                >
-                  <InputLabel id="team-tools-label">Assigned tools</InputLabel>
-                  <Select
-                    multiple
-                    labelId="team-tools-label"
-                    label="Assigned tools"
-                    value={field.value}
-                    onChange={(event) => {
-                      field.onChange(event.target.value as string[]);
-                    }}
-                    renderValue={(selected) => {
-                      const names = (selected as string[])
-                        .map((id) => toolNameById.get(id) ?? id)
-                        .join(", ");
-                      return (
-                        <Typography noWrap sx={{ fontSize: "0.8125rem" }}>
-                          {names || (toolOptionsQuery.isPending ? "Loading tools…" : "")}
-                        </Typography>
-                      );
+                {assignmentsLoading && (
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
+                    <CircularProgress size={14} />
+                    <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                      Loading tool pricing…
+                    </Typography>
+                  </Box>
+                )}
+
+                {watch("toolIds").map((toolId) => (
+                  <Accordion
+                    key={toolId}
+                    disableGutters
+                    elevation={0}
+                    sx={{
+                      mb: 1,
+                      border: `0.5px solid ${tokens.border}`,
+                      "&:before": { display: "none" },
                     }}
                   >
-                    {toolOptions.map((tool) => (
-                      <MenuItem key={tool.id} value={tool.id}>
-                        <Checkbox
-                          size="small"
-                          checked={field.value.includes(tool.id)}
-                          sx={{ mr: 1, p: 0 }}
-                        />
-                        {tool.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {errors.toolIds ? (
-                    <FormHelperText error>{errors.toolIds.message}</FormHelperText>
-                  ) : (
-                    <FormHelperText>
-                      Members of this team will only be tracked against these tools
-                    </FormHelperText>
-                  )}
-                </FormControl>
-              )}
-            />
+                    <AccordionSummary expandIcon={<IconChevronDown size={14} />}>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        {toolNameById.get(toolId) ?? toolId}
+                      </Typography>
+                    </AccordionSummary>
+                    <AccordionDetails>
+                      <ToolPricingFields
+                        value={toolPricingById[toolId] ?? emptyTeamToolPricing()}
+                        onChange={(pricing) =>
+                          setToolPricingById((previous) => ({
+                            ...previous,
+                            [toolId]: pricing,
+                          }))
+                        }
+                        disabled={assignmentsLoading || savePending}
+                      />
+                    </AccordionDetails>
+                  </Accordion>
+                ))}
+              </AccordionDetails>
+            </Accordion>
 
             <Typography
               variant="caption"
@@ -621,6 +800,16 @@ export function TeamsPage() {
             </Typography>
           </Box>
         </SlideOver>
+
+        <TeamToolDetailSlideOver
+          open={toolDetail.open}
+          onClose={() =>
+            setToolDetail({ open: false, team: null, toolId: null, toolName: "" })
+          }
+          team={toolDetail.team}
+          toolId={toolDetail.toolId}
+          toolName={toolDetail.toolName}
+        />
 
         <ConfirmDialog
           open={deleteTarget !== null}

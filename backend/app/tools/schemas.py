@@ -2,10 +2,10 @@
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.tools.pricing import validate_vendor
 
@@ -13,34 +13,62 @@ PricingModel = Literal["flat_token", "package_with_overage", "custom"]
 SyncStatus = Literal["active", "inactive", "error"]
 
 
+def normalize_api_endpoint(value: str | None) -> str | None:
+    if value is None:
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    if not trimmed.startswith("https://"):
+        msg = "api_endpoint must start with https://"
+        raise ValueError(msg)
+    return trimmed
+
+
 class ToolCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     name: str = Field(min_length=1, max_length=100)
     vendor: str = Field(min_length=1, max_length=64)
     description: str | None = Field(default=None, max_length=500)
+    api_endpoint: str | None = Field(default=None, max_length=512)
     pricing_model: PricingModel
     token_price: Decimal = Field(ge=0)
     package_allowance: int | None = Field(default=None, ge=0)
     overage_price: Decimal | None = Field(default=None, ge=0)
     pricing_config: dict = Field(default_factory=dict)
-    api_key: str = Field(min_length=1, max_length=4096)
 
     @field_validator("vendor")
     @classmethod
     def normalize_vendor(cls, value: str) -> str:
         return validate_vendor(value)
 
+    @field_validator("api_endpoint")
+    @classmethod
+    def validate_api_endpoint_format(cls, value: str | None) -> str | None:
+        return normalize_api_endpoint(value)
+
+    @model_validator(mode="after")
+    def require_api_endpoint_for_custom(self) -> Self:
+        if self.vendor == "custom" and not self.api_endpoint:
+            msg = "api_endpoint is required when vendor is custom."
+            raise ValueError(msg)
+        return self
+
 
 class ToolUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     name: str | None = Field(default=None, min_length=1, max_length=100)
     vendor: str | None = Field(default=None, min_length=1, max_length=64)
     description: str | None = Field(default=None, max_length=500)
+    api_endpoint: str | None = Field(default=None, max_length=512)
     pricing_model: PricingModel | None = None
     token_price: Decimal | None = Field(default=None, ge=0)
     package_allowance: int | None = Field(default=None, ge=0)
     overage_price: Decimal | None = Field(default=None, ge=0)
     pricing_config: dict | None = None
     active: bool | None = None
-    api_key: str | None = Field(default=None, min_length=1, max_length=4096)
 
     @field_validator("vendor")
     @classmethod
@@ -48,6 +76,11 @@ class ToolUpdateRequest(BaseModel):
         if value is None:
             return None
         return validate_vendor(value)
+
+    @field_validator("api_endpoint")
+    @classmethod
+    def validate_api_endpoint_format(cls, value: str | None) -> str | None:
+        return normalize_api_endpoint(value)
 
 
 class ToolMemberResponse(BaseModel):
@@ -68,6 +101,7 @@ class ToolResponse(BaseModel):
     name: str
     vendor: str
     description: str | None = None
+    api_endpoint: str | None = None
     pricing_model: str
     token_price: Decimal
     package_allowance: int | None = None

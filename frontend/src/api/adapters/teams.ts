@@ -10,6 +10,10 @@ export interface ApiTeam {
   token_budget?: number | null;
   cost_budget?: number | string | null;
   tool_ids?: string[];
+  tokens_used?: number;
+  pricing_total?: number | string;
+  total_cost?: number | string;
+  last_synced_at?: string | null;
   created_at: string;
 }
 
@@ -20,8 +24,10 @@ export interface Team {
   memberCount: number;
   tokenBudget: number | null;
   costBudget: number | null;
-  tokenUsedThisMonth: number;
-  costUsedThisMonth: number;
+  tokensUsed: number;
+  pricingTotal: number;
+  totalCost: number;
+  lastSyncedAt: string | null;
   status: "active" | "inactive";
   toolIds: string[];
   createdAt: string;
@@ -47,6 +53,14 @@ function parseCostBudget(value: number | string | null | undefined): number | nu
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function parseMoney(value: number | string | null | undefined): number {
+  if (value == null || value === "") {
+    return 0;
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 export function mapApiTeam(api: ApiTeam): Team {
   return {
     id: api.id,
@@ -55,8 +69,10 @@ export function mapApiTeam(api: ApiTeam): Team {
     memberCount: api.member_count,
     tokenBudget: api.token_budget ?? null,
     costBudget: parseCostBudget(api.cost_budget),
-    tokenUsedThisMonth: 0,
-    costUsedThisMonth: 0,
+    tokensUsed: api.tokens_used ?? 0,
+    pricingTotal: parseMoney(api.pricing_total),
+    totalCost: parseMoney(api.total_cost),
+    lastSyncedAt: api.last_synced_at ?? null,
     status: api.active ? "active" : "inactive",
     toolIds: api.tool_ids ?? [],
     createdAt: api.created_at,

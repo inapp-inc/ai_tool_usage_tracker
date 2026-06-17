@@ -70,6 +70,22 @@ export async function createCredential(
   };
 }
 
+export async function validateCredential(body: {
+  toolId: string;
+  apiKey: string;
+}): Promise<{ valid: boolean; provider: string; message?: string | null }> {
+  return apiRequest<{ valid: boolean; provider: string; message?: string | null }>(
+    "/credentials/validate",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        tool_id: body.toolId,
+        secret_value: body.apiKey,
+      }),
+    },
+  );
+}
+
 export async function updateCredential(
   id: string,
   body: UpdateCredentialRequest,
@@ -96,6 +112,7 @@ export async function revealCredentialSecret(id: string): Promise<string> {
 export const credentialsApi = {
   fetchCredentials,
   createCredential,
+  validateCredential,
   updateCredential,
   revokeCredential,
   revealCredentialSecret,

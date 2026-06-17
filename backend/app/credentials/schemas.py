@@ -67,3 +67,14 @@ class CredentialListResponse(BaseModel):
 
 class CredentialSecretResponse(BaseModel):
     secret_value: str
+
+
+class CredentialValidateRequest(BaseModel):
+    tool_id: UUID
+    secret_value: str = Field(min_length=1, max_length=4096)
+
+
+class CredentialValidateResponse(BaseModel):
+    valid: bool
+    provider: str
+    message: str | None = None

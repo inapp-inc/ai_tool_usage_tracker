@@ -18,17 +18,28 @@ from app.teams.schemas import (
     TeamMemberListResponse,
     TeamMemberResponse,
     TeamResponse,
+    TeamToolAssignRequest,
+    TeamToolAssignmentListResponse,
+    TeamToolAssignmentResponse,
+    TeamSyncResponse,
+    TeamToolUpdateRequest,
     TeamUpdateRequest,
 )
 from app.teams.service import TeamService
+from app.teams.team_tool_service import TeamToolService
 
 router = APIRouter(prefix="/teams", tags=["Teams"])
 
 WRITE_ROLES = frozenset({"super_admin"})
+TEAM_TOOL_WRITE_ROLES = frozenset({"super_admin", "team_admin"})
 
 
 def get_team_service(session: AsyncSession = Depends(get_session)) -> TeamService:
     return TeamService(session)
+
+
+def get_team_tool_service(session: AsyncSession = Depends(get_session)) -> TeamToolService:
+    return TeamToolService(session)
 
 
 def require_super_admin(current_user: User = Depends(get_current_user)) -> User:
@@ -38,6 +49,71 @@ def require_super_admin(current_user: User = Depends(get_current_user)) -> User:
             detail="Insufficient permissions.",
         )
     return current_user
+
+
+def require_team_tool_writer(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role not in TEAM_TOOL_WRITE_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions.",
+        )
+    return current_user
+
+
+@router.get("/{team_id}/tools", response_model=TeamToolAssignmentListResponse)
+async def list_team_tools(
+    team_id: UUID,
+    current_user: User = Depends(get_current_user),
+    service: TeamToolService = Depends(get_team_tool_service),
+) -> TeamToolAssignmentListResponse:
+    return await service.list_assignments(current_user, team_id)
+
+
+@router.post(
+    "/{team_id}/tools",
+    response_model=TeamToolAssignmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def assign_team_tool(
+    team_id: UUID,
+    body: TeamToolAssignRequest,
+    current_user: User = Depends(require_team_tool_writer),
+    service: TeamToolService = Depends(get_team_tool_service),
+) -> TeamToolAssignmentResponse:
+    return await service.create_assignment(current_user, team_id, body)
+
+
+@router.patch(
+    "/{team_id}/tools/{tool_id}",
+    response_model=TeamToolAssignmentResponse,
+)
+async def update_team_tool(
+    team_id: UUID,
+    tool_id: UUID,
+    body: TeamToolUpdateRequest,
+    current_user: User = Depends(require_team_tool_writer),
+    service: TeamToolService = Depends(get_team_tool_service),
+) -> TeamToolAssignmentResponse:
+    return await service.update_assignment(current_user, team_id, tool_id, body)
+
+
+@router.delete("/{team_id}/tools/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_team_tool(
+    team_id: UUID,
+    tool_id: UUID,
+    current_user: User = Depends(require_team_tool_writer),
+    service: TeamToolService = Depends(get_team_tool_service),
+) -> None:
+    await service.delete_assignment(current_user, team_id, tool_id)
+
+
+@router.post("/{team_id}/sync", response_model=TeamSyncResponse)
+async def sync_team_tools(
+    team_id: UUID,
+    current_user: User = Depends(require_team_tool_writer),
+    service: TeamToolService = Depends(get_team_tool_service),
+) -> TeamSyncResponse:
+    return await service.sync_team_tools(current_user, team_id)
 
 
 @router.get("", response_model=TeamListResponse)
