@@ -10,6 +10,16 @@ info:
     **Errors:** RFC 7807 Problem Details (`application/problem+json`).
 
     **Traceability:** FR-PLT-001, ADR-012, NFR-SEC-003/004/006.
+
+    ## RBAC Roles and Access
+
+    | Role | Scope |
+    |---|---|
+    | `super_admin` | Full access to all endpoints and data across the entire organisation |
+    | `team_admin` | Access to members, tools (read), teams (read), thresholds, uploads, collectors (read), and dashboard analytics — all scoped to managed teams only |
+    | `finance_viewer` | Access to reports (read) and `GET /dashboard/my-usage` only |
+    | `auditor` | Access to audit logs and `GET /dashboard/my-usage` only |
+    | `team_member` | Access to `GET /dashboard/my-usage` only |
   contact:
     name: Platform Team
   license:
@@ -181,7 +191,7 @@ paths:
       description: |
         Returns paginated AI tools for the organization.
 
-        **Roles:** All authenticated roles (read-scoped).
+        **Roles:** `super_admin`, `team_admin`.
       operationId: listTools
       parameters:
         - $ref: './components/parameters.yaml#/Limit'
@@ -200,6 +210,8 @@ paths:
                 $ref: './components/schemas.yaml#/ToolListResponse'
         '401':
           $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
     post:
       tags: [Tools]
       summary: Create AI tool
@@ -245,6 +257,7 @@ paths:
     get:
       tags: [Tools]
       summary: Get AI tool by ID
+      description: '**Roles:** `super_admin`, `team_admin`.'
       operationId: getTool
       parameters:
         - $ref: './components/parameters.yaml#/ToolIdPath'
@@ -257,6 +270,8 @@ paths:
                 $ref: './components/schemas.yaml#/Tool'
         '401':
           $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
         '404':
           $ref: './components/responses.yaml#/NotFound'
     patch:
@@ -294,6 +309,7 @@ paths:
     get:
       tags: [Teams]
       summary: List teams
+      description: '**Roles:** `super_admin`, `team_admin`.'
       operationId: listTeams
       parameters:
         - $ref: './components/parameters.yaml#/Limit'
@@ -311,6 +327,8 @@ paths:
                 $ref: './components/schemas.yaml#/TeamListResponse'
         '401':
           $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
     post:
       tags: [Teams]
       summary: Create team
@@ -343,6 +361,7 @@ paths:
     get:
       tags: [Teams]
       summary: Get team by ID
+      description: '**Roles:** `super_admin`, `team_admin`.'
       operationId: getTeam
       parameters:
         - $ref: './components/parameters.yaml#/TeamIdPath'
@@ -355,6 +374,8 @@ paths:
                 $ref: './components/schemas.yaml#/Team'
         '401':
           $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
         '404':
           $ref: './components/responses.yaml#/NotFound'
     patch:
@@ -386,6 +407,7 @@ paths:
     get:
       tags: [Teams]
       summary: List team members
+      description: '**Roles:** `super_admin`, `team_admin`.'
       operationId: listTeamMembers
       parameters:
         - $ref: './components/parameters.yaml#/TeamIdPath'
@@ -405,6 +427,8 @@ paths:
                       $ref: './components/schemas.yaml#/TeamMember'
                   meta:
                     $ref: './components/schemas.yaml#/PaginationMeta'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
         '403':
           $ref: './components/responses.yaml#/Forbidden'
         '404':
@@ -580,7 +604,10 @@ paths:
       tags: [Thresholds]
       summary: Create threshold
       description: |
-        **Roles:** `super_admin`, `team_admin` (team scope only).
+        **Roles:** `super_admin`, `team_admin`.
+
+        **team_admin:** `team_id` in the request body must belong to one of the caller's
+        managed teams. Supplying a `team_id` outside that scope returns `403`.
 
         **Validation:** `limit_value` >= 0; scope-specific IDs required
         (e.g. `team_id` when scope is `team`).
@@ -610,6 +637,10 @@ paths:
     patch:
       tags: [Thresholds]
       summary: Update threshold
+      description: |
+        **Roles:** `super_admin`, `team_admin`.
+
+        **team_admin:** operation on a threshold outside managed teams returns `404`.
       operationId: updateThreshold
       parameters:
         - $ref: './components/parameters.yaml#/ThresholdId'
@@ -644,6 +675,10 @@ paths:
     delete:
       tags: [Thresholds]
       summary: Delete threshold
+      description: |
+        **Roles:** `super_admin`, `team_admin`.
+
+        **team_admin:** operation on a threshold outside managed teams returns `404`.
       operationId: deleteThreshold
       parameters:
         - $ref: './components/parameters.yaml#/ThresholdId'
@@ -755,7 +790,12 @@ paths:
     delete:
       tags: [Uploads]
       summary: Delete upload
-      description: Removes staging data; committed usage unaffected. Audit-logged.
+      description: |
+        Removes staging data; committed usage unaffected. Audit-logged.
+
+        **Roles:** `super_admin`, `team_admin`.
+
+        **team_admin:** operation on an upload outside managed teams returns `404`.
       operationId: deleteUpload
       parameters:
         - $ref: './components/parameters.yaml#/UploadId'
@@ -771,7 +811,12 @@ paths:
     get:
       tags: [Uploads]
       summary: Preview import
-      description: Available when status is `preview_ready`.
+      description: |
+        Available when status is `preview_ready`.
+
+        **Roles:** `super_admin`, `team_admin`.
+
+        **team_admin:** access to an upload outside managed teams returns `404`.
       operationId: getUploadPreview
       parameters:
         - $ref: './components/parameters.yaml#/UploadId'
@@ -785,6 +830,8 @@ paths:
               examples:
                 default:
                   $ref: './components/examples.yaml#/UploadPreviewExample'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
         '404':
           $ref: './components/responses.yaml#/NotFound'
         '409':
@@ -801,7 +848,9 @@ paths:
       description: |
         Persists staged rows as usage events. **Idempotency-Key required.**
 
-        **Roles:** `super_admin`, scoped `team_admin`.
+        **Roles:** `super_admin`, `team_admin`.
+
+        **team_admin:** operation on an upload outside managed teams returns `404`.
       operationId: commitUpload
       parameters:
         - $ref: './components/parameters.yaml#/UploadId'
@@ -834,7 +883,11 @@ paths:
     get:
       tags: [Dashboard]
       summary: Total token usage widget
-      description: '**Performance target:** p95 <= 3s (NFR-PER-001). RBAC-scoped.'
+      description: |
+        **Performance target:** p95 <= 3s (NFR-PER-001).
+
+        **Roles:** `super_admin`, `team_admin`. `team_admin` receives data scoped to
+        managed teams only. `finance_viewer`, `auditor`, and `team_member` are blocked.
       operationId: getDashboardTokens
       parameters:
         - $ref: './components/parameters.yaml#/DateFrom'
@@ -854,11 +907,16 @@ paths:
           $ref: './components/responses.yaml#/BadRequest'
         '401':
           $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
 
   /dashboard/cost:
     get:
       tags: [Dashboard]
       summary: Cost overview widget
+      description: |
+        **Roles:** `super_admin`, `team_admin`. `team_admin` receives data scoped to
+        managed teams only. `finance_viewer`, `auditor`, and `team_member` are blocked.
       operationId: getDashboardCost
       parameters:
         - $ref: './components/parameters.yaml#/DateFrom'
@@ -876,11 +934,16 @@ paths:
                   $ref: './components/examples.yaml#/CostWidgetExample'
         '401':
           $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
 
   /dashboard/usage-by-tool:
     get:
       tags: [Dashboard]
       summary: Usage by tool widget
+      description: |
+        **Roles:** `super_admin`, `team_admin`. `team_admin` receives data scoped to
+        managed teams only. `finance_viewer`, `auditor`, and `team_member` are blocked.
       operationId: getDashboardUsageByTool
       parameters:
         - $ref: './components/parameters.yaml#/DateFrom'
@@ -901,11 +964,18 @@ paths:
                   last_updated_at:
                     type: string
                     format: date-time
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
 
   /dashboard/usage-by-team:
     get:
       tags: [Dashboard]
       summary: Usage by team widget
+      description: |
+        **Roles:** `super_admin`, `team_admin`. `team_admin` receives data scoped to
+        managed teams only. `finance_viewer`, `auditor`, and `team_member` are blocked.
       operationId: getDashboardUsageByTeam
       parameters:
         - $ref: './components/parameters.yaml#/DateFrom'
@@ -933,11 +1003,18 @@ paths:
                           format: int64
                         estimated_cost:
                           type: number
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
 
   /dashboard/top-consumers:
     get:
       tags: [Dashboard]
       summary: Top consumers widget
+      description: |
+        **Roles:** `super_admin`, `team_admin`. `team_admin` receives data scoped to
+        managed teams only. `finance_viewer`, `auditor`, and `team_member` are blocked.
       operationId: getDashboardTopConsumers
       parameters:
         - $ref: './components/parameters.yaml#/DateFrom'
@@ -969,11 +1046,18 @@ paths:
                     type: array
                     items:
                       $ref: './components/schemas.yaml#/TopConsumerItem'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
 
   /dashboard/alerts:
     get:
       tags: [Dashboard]
       summary: Active alerts widget
+      description: |
+        **Roles:** `super_admin`, `team_admin`. `team_admin` receives data scoped to
+        managed teams only. `finance_viewer`, `auditor`, and `team_member` are blocked.
       operationId: getDashboardAlerts
       parameters:
         - $ref: './components/parameters.yaml#/TeamId'
@@ -989,11 +1073,18 @@ paths:
                     type: array
                     items:
                       $ref: './components/schemas.yaml#/ActiveAlertSummary'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
 
   /dashboard/trends:
     get:
       tags: [Dashboard]
       summary: Trend analysis widget
+      description: |
+        **Roles:** `super_admin`, `team_admin`. `team_admin` receives data scoped to
+        managed teams only. `finance_viewer`, `auditor`, and `team_member` are blocked.
       operationId: getDashboardTrends
       parameters:
         - $ref: './components/parameters.yaml#/DateFrom'
@@ -1019,12 +1110,19 @@ paths:
                     type: array
                     items:
                       $ref: './components/schemas.yaml#/TrendPoint'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
 
   /dashboard/my-usage:
     get:
       tags: [Dashboard]
       summary: Personal usage widget
-      description: Team members see own data; admins may pass `user_id` when authorized.
+      description: |
+        Returns the caller's own usage data. All authenticated roles permitted.
+
+        Admins may pass `user_id` to inspect another user's data when authorized.
       operationId: getDashboardMyUsage
       parameters:
         - $ref: './components/parameters.yaml#/DateFrom'
@@ -1047,11 +1145,16 @@ paths:
                     type: array
                     items:
                       $ref: './components/schemas.yaml#/UsageByToolItem'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
 
   /dashboard/daily-breakdown:
     get:
       tags: [Dashboard]
       summary: Single-day usage breakdown by team and user
+      description: |
+        **Roles:** `super_admin`, `team_admin`. `team_admin` receives data scoped to
+        managed teams only. `finance_viewer`, `auditor`, and `team_member` are blocked.
       operationId: getDashboardDailyBreakdown
       parameters:
         - name: date
@@ -1105,12 +1208,6 @@ paths:
                                 type: number
         '401':
           $ref: './components/responses.yaml#/Unauthorized'
-                  team_average_tokens:
-                    type: integer
-                    format: int64
-                  last_updated_at:
-                    type: string
-                    format: date-time
         '403':
           $ref: './components/responses.yaml#/Forbidden'
 
