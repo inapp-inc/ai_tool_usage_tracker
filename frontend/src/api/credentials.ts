@@ -7,19 +7,24 @@ import {
   type ApiCredentialCreateResponse,
 } from "./adapters/credentials";
 
-export type CredentialEnvironment = "production" | "sandbox";
+export type SyncSchedule = "hourly" | "daily";
 
 export interface Credential {
   id: string;
   label: string;
   description: string;
+  provider: string;
+  catalogueToolId: string;
+  catalogueToolName: string;
+  apiEndpoint: string | null;
   toolId: string;
   toolName: string;
   teamId: string;
   teamName: string;
-  environment: CredentialEnvironment;
   keyMasked: string;
   status: "active" | "inactive";
+  syncSchedule: SyncSchedule;
+  pullIntervalMinutes: number;
   rotationReminderDays: number | null;
   expiresAt: string | null;
   lastUsedAt: string | null;
@@ -30,10 +35,10 @@ export interface Credential {
 export interface CreateCredentialRequest {
   label: string;
   description: string;
-  toolId: string;
+  catalogueToolId: string;
   teamId: string;
-  environment: CredentialEnvironment;
   apiKey: string;
+  syncSchedule: SyncSchedule;
   rotationReminderDays: number | null;
   expiresAt: string | null;
 }
@@ -44,13 +49,18 @@ export interface CreateCredentialResponse {
 }
 
 export type UpdateCredentialRequest = Partial<
-  Omit<CreateCredentialRequest, "apiKey">
+  Omit<CreateCredentialRequest, "apiKey" | "catalogueToolId">
 > & {
   apiKey?: string;
   status?: "active" | "inactive";
 };
 
 export type { ApiCredential } from "./adapters/credentials";
+export {
+  syncScheduleFromMinutes,
+  syncScheduleLabel,
+  SYNC_SCHEDULE_MINUTES,
+} from "./adapters/credentials";
 
 export async function fetchCredentials(): Promise<Credential[]> {
   const rows = await apiRequest<ApiCredential[]>("/credentials");
@@ -71,7 +81,7 @@ export async function createCredential(
 }
 
 export async function validateCredential(body: {
-  toolId: string;
+  catalogueToolId: string;
   apiKey: string;
 }): Promise<{ valid: boolean; provider: string; message?: string | null }> {
   return apiRequest<{ valid: boolean; provider: string; message?: string | null }>(
@@ -79,7 +89,7 @@ export async function validateCredential(body: {
     {
       method: "POST",
       body: JSON.stringify({
-        tool_id: body.toolId,
+        tool_id: body.catalogueToolId,
         secret_value: body.apiKey,
       }),
     },

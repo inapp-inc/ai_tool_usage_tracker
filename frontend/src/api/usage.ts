@@ -203,7 +203,9 @@ export async function fetchTeamDrilldown(
 }
 
 export async function fetchToolOptions(): Promise<{ id: string; name: string }[]> {
-  const rows = await apiRequest<Array<{ id: string; name: string }>>("/tools?active=true");
+  const rows = await apiRequest<Array<{ id: string; name: string }>>(
+    "/tools?active=true&catalogue_only=true",
+  );
   return rows.map((row) => ({ id: row.id, name: row.name }));
 }
 

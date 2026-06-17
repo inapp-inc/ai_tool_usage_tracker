@@ -3,21 +3,38 @@
 import type {
   CreateCredentialRequest,
   Credential,
-  CredentialEnvironment,
+  SyncSchedule,
   UpdateCredentialRequest,
 } from "../credentials";
+
+export const SYNC_SCHEDULE_MINUTES: Record<SyncSchedule, number> = {
+  hourly: 60,
+  daily: 1440,
+};
+
+export function syncScheduleFromMinutes(minutes: number): SyncSchedule {
+  return minutes >= 720 ? "daily" : "hourly";
+}
+
+export function syncScheduleLabel(schedule: SyncSchedule): string {
+  return schedule === "daily" ? "Daily" : "Hourly";
+}
 
 export interface ApiCredential {
   id: string;
   label: string;
   description: string;
+  vendor: string;
+  catalogue_tool_id?: string | null;
+  catalogue_tool_name?: string | null;
   tool_id: string;
   tool_name: string;
   team_id?: string | null;
   team_name?: string | null;
-  environment: CredentialEnvironment;
+  api_endpoint?: string | null;
   masked_secret: string;
   status: "active" | "inactive";
+  pull_interval_minutes?: number;
   rotation_reminder_days?: number | null;
   expires_at?: string | null;
   last_used_at?: string | null;
@@ -31,17 +48,23 @@ export interface ApiCredentialCreateResponse {
 }
 
 export function mapApiCredential(api: ApiCredential): Credential {
+  const pullIntervalMinutes = api.pull_interval_minutes ?? 60;
   return {
     id: api.id,
     label: api.label,
     description: api.description,
+    provider: api.vendor,
+    catalogueToolId: api.catalogue_tool_id ?? "",
+    catalogueToolName: api.catalogue_tool_name ?? api.tool_name,
+    apiEndpoint: api.api_endpoint ?? null,
     toolId: api.tool_id,
-    toolName: api.tool_name,
+    toolName: api.catalogue_tool_name ?? api.tool_name,
     teamId: api.team_id ?? "",
     teamName: api.team_name ?? "Unassigned",
-    environment: api.environment,
     keyMasked: api.masked_secret,
     status: api.status,
+    syncSchedule: syncScheduleFromMinutes(pullIntervalMinutes),
+    pullIntervalMinutes,
     rotationReminderDays: api.rotation_reminder_days ?? null,
     expiresAt: api.expires_at ?? null,
     lastUsedAt: api.last_used_at ?? null,
@@ -55,18 +78,18 @@ export function toCredentialCreateBody(body: CreateCredentialRequest): {
   description: string;
   tool_id: string;
   team_id: string;
-  environment: CredentialEnvironment;
   secret_value: string;
+  pull_interval_minutes: number;
   rotation_reminder_days: number | null;
   expires_at: string | null;
 } {
   return {
     label: body.label,
     description: body.description,
-    tool_id: body.toolId,
+    tool_id: body.catalogueToolId,
     team_id: body.teamId,
-    environment: body.environment,
     secret_value: body.apiKey,
+    pull_interval_minutes: SYNC_SCHEDULE_MINUTES[body.syncSchedule],
     rotation_reminder_days: body.rotationReminderDays,
     expires_at: body.expiresAt,
   };
@@ -82,17 +105,14 @@ export function toCredentialUpdateBody(
   if (body.description !== undefined) {
     payload.description = body.description;
   }
-  if (body.toolId !== undefined) {
-    payload.tool_id = body.toolId;
-  }
   if (body.teamId !== undefined) {
     payload.team_id = body.teamId;
   }
-  if (body.environment !== undefined) {
-    payload.environment = body.environment;
-  }
   if (body.apiKey !== undefined && body.apiKey.trim()) {
     payload.secret_value = body.apiKey.trim();
+  }
+  if (body.syncSchedule !== undefined) {
+    payload.pull_interval_minutes = SYNC_SCHEDULE_MINUTES[body.syncSchedule];
   }
   if (body.rotationReminderDays !== undefined) {
     payload.rotation_reminder_days = body.rotationReminderDays;

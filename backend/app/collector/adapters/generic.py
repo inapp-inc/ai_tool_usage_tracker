@@ -34,9 +34,22 @@ class GenericUsageAdapter:
         config = pricing_config or {}
         endpoint = api_endpoint or config.get("api_endpoint")
         validate_url = config.get("validate_url")
-        if self.provider == "custom":
+        if self.provider == "custom" or self.provider not in {
+            "mabl",
+            "windsurf",
+            "openai",
+            "anthropic",
+            "google",
+            "azure_openai",
+            "cohere",
+            "mistral",
+            "cursor",
+            "figma",
+        }:
             if not endpoint:
-                raise ProviderValidationError("API endpoint URL is required for custom provider.")
+                raise ProviderValidationError(
+                    f"API endpoint URL is required for provider '{self.provider}'."
+                )
             validate_url = endpoint
         elif validate_url is None and endpoint:
             validate_url = endpoint

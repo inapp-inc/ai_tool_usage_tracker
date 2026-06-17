@@ -80,7 +80,7 @@ export function TeamToolDetailSlideOver({
 
   const catalogToolsQuery = useQuery({
     queryKey: ["tools", "catalog"],
-    queryFn: fetchTools,
+    queryFn: () => fetchTools(),
     enabled: open,
   });
 

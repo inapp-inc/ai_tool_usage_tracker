@@ -53,6 +53,9 @@ const CredentialsPage = lazy(() =>
 const AuditLogPage = lazy(() =>
   import("@/pages/admin/AuditLogPage").then((m) => ({ default: m.AuditLogPage })),
 );
+const SettingsPage = lazy(() =>
+  import("@/pages/admin/SettingsPage").then((m) => ({ default: m.SettingsPage })),
+);
 
 // ─── Guard ───────────────────────────────────────────────────────────────────
 function ProtectedRoute({ children }: { children: ReactElement }) {
@@ -96,6 +99,7 @@ export function AppRoutes() {
         <Route path="/admin/members" element={<MembersPage />} />
         <Route path="/admin/credentials" element={<CredentialsPage />} />
         <Route path="/admin/audit-log" element={<AuditLogPage />} />
+        <Route path="/admin/settings" element={<SettingsPage />} />
       </Route>
 
       {/* Fallback */}

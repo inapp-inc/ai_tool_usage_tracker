@@ -12,7 +12,6 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   CircularProgress,
   FormControl,
   FormHelperText,
@@ -21,8 +20,6 @@ import {
   MenuItem,
   Select,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -36,13 +33,14 @@ import {
   fetchCredentials,
   revealCredentialSecret,
   revokeCredential,
+  syncScheduleLabel,
   updateCredential,
   type Credential,
-  type CredentialEnvironment,
+  type SyncSchedule,
 } from "@/api/credentials";
 import { ApiClientError } from "@/api/client";
+import { fetchToolOptions } from "@/api/tools";
 import { fetchTeams } from "@/api/teams";
-import { fetchToolOptions } from "@/api/usage";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { StatusBadge } from "@/components/data-display/StatusBadge";
@@ -56,17 +54,19 @@ import { formatDate } from "@/utils/formatters";
 const createSchema = z.object({
   label: z.string().min(1, "Label is required").max(100),
   description: z.string().max(200).default(""),
-  toolId: z.string().min(1, "Select a tool"),
+  catalogueToolId: z.string().min(1, "Select a tool"),
   teamId: z.string().min(1, "Select a team"),
-  environment: z.enum(["production", "sandbox"]),
+  syncSchedule: z.enum(["hourly", "daily"]),
   apiKey: z.string().min(1, "API key is required"),
   rotationReminderDays: z.number().int().positive().nullable(),
   expiresAt: z.string().nullable(),
 });
 
-const editSchema = createSchema.omit({ apiKey: true }).extend({
-  apiKey: z.string().optional(),
-});
+const editSchema = createSchema
+  .omit({ apiKey: true, catalogueToolId: true })
+  .extend({
+    apiKey: z.string().optional(),
+  });
 
 type CreateFormValues = z.infer<typeof createSchema>;
 type EditFormValues = z.infer<typeof editSchema>;
@@ -77,21 +77,30 @@ interface SlideOverState {
   credential: Credential | null;
 }
 
-const ENV_CHIP_COLORS: Record<
-  CredentialEnvironment,
-  { background: string; color: string; label: string }
-> = {
-  production: {
-    background: "#ECFDF5",
-    color: "#059669",
-    label: "Production",
-  },
-  sandbox: {
-    background: "#FFF7ED",
-    color: "#C2410C",
-    label: "Sandbox",
-  },
-};
+function defaultFormValues(): CreateFormValues {
+  return {
+    label: "",
+    description: "",
+    catalogueToolId: "",
+    teamId: "",
+    syncSchedule: "hourly",
+    apiKey: "",
+    rotationReminderDays: null,
+    expiresAt: null,
+  };
+}
+
+function credentialToFormValues(credential: Credential): EditFormValues {
+  return {
+    label: credential.label,
+    description: credential.description,
+    teamId: credential.teamId,
+    syncSchedule: credential.syncSchedule,
+    rotationReminderDays: credential.rotationReminderDays,
+    expiresAt: toDateInputValue(credential.expiresAt),
+    apiKey: credential.keyMasked,
+  };
+}
 
 function daysUntilExpiry(iso: string): number {
   return differenceInDays(parseISO(iso), new Date());
@@ -137,58 +146,14 @@ function toDateInputValue(iso: string | null): string {
   return iso.slice(0, 10);
 }
 
-function EnvironmentChip({ environment }: { environment: CredentialEnvironment }) {
-  const colors = ENV_CHIP_COLORS[environment];
-  return (
-    <Chip
-      size="small"
-      label={colors.label}
-      sx={{
-        backgroundColor: colors.background,
-        color: colors.color,
-        fontWeight: 500,
-        fontSize: "0.6875rem",
-        height: 22,
-        "& .MuiChip-label": { px: 1 },
-      }}
-    />
-  );
-}
-
-function defaultFormValues(): CreateFormValues {
-  return {
-    label: "",
-    description: "",
-    toolId: "",
-    teamId: "",
-    environment: "production",
-    apiKey: "",
-    rotationReminderDays: null,
-    expiresAt: null,
-  };
-}
-
-function credentialToFormValues(credential: Credential): EditFormValues {
-  return {
-    label: credential.label,
-    description: credential.description,
-    toolId: credential.toolId,
-    teamId: credential.teamId,
-    environment: credential.environment,
-    rotationReminderDays: credential.rotationReminderDays,
-    expiresAt: toDateInputValue(credential.expiresAt),
-    apiKey: credential.keyMasked,
-  };
-}
-
 export function CredentialsPage() {
   const queryClient = useQueryClient();
   const [slideOver, setSlideOver] = useState<SlideOverState>({
     open: false,
     credential: null,
   });
-  const [plainKey, setPlainKey] = useState<string | null>(null);
-  const [showCloseWarning, setShowCloseWarning] = useState(false);
+  const [connectSuccess, setConnectSuccess] = useState(false);
+  const [connectedSchedule, setConnectedSchedule] = useState<SyncSchedule>("hourly");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copyingId, setCopyingId] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
@@ -205,8 +170,8 @@ export function CredentialsPage() {
     queryFn: fetchTeams,
   });
 
-  const toolOptionsQuery = useQuery({
-    queryKey: ["tool-options"],
+  const catalogueToolsQuery = useQuery({
+    queryKey: ["catalogue-tool-options"],
     queryFn: fetchToolOptions,
   });
 
@@ -230,8 +195,7 @@ export function CredentialsPage() {
   });
 
   const closeSlideOver = useCallback(() => {
-    setPlainKey(null);
-    setShowCloseWarning(false);
+    setConnectSuccess(false);
     setSlideOver({ open: false, credential: null });
     reset(defaultFormValues());
   }, [reset]);
@@ -240,7 +204,8 @@ export function CredentialsPage() {
     mutationFn: createCredential,
     onSuccess: (response) => {
       setSaveError(null);
-      setPlainKey(response.plainKey);
+      setConnectedSchedule(response.credential.syncSchedule);
+      setConnectSuccess(true);
     },
     onError: (error) => {
       const message =
@@ -286,12 +251,7 @@ export function CredentialsPage() {
 
   const rotationReminderDays = watch("rotationReminderDays");
   const teams = teamsQuery.data ?? [];
-  const toolOptions = toolOptionsQuery.data ?? [];
-
-  const handleCopyPlainText = useCallback(async (text: string, id: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopiedId(id);
-  }, []);
+  const catalogueTools = catalogueToolsQuery.data ?? [];
 
   const handleCopyCredential = useCallback(async (credentialId: string) => {
     setCopyError(null);
@@ -333,37 +293,32 @@ export function CredentialsPage() {
   }, [reset, slideOver]);
 
   const handleSlideOverClose = () => {
-    if (plainKey) {
-      setShowCloseWarning(true);
-      return;
-    }
     closeSlideOver();
   };
 
   const handleDone = async () => {
     await queryClient.invalidateQueries({ queryKey: ["credentials"] });
     await queryClient.invalidateQueries({ queryKey: ["tools"] });
+    await queryClient.invalidateQueries({ queryKey: ["tool-options"] });
+    await queryClient.invalidateQueries({ queryKey: ["catalogue-tool-options"] });
     closeSlideOver();
   };
 
   const openAddSlideOver = () => {
-    setPlainKey(null);
-    setShowCloseWarning(false);
+    setConnectSuccess(false);
     setSlideOver({ open: true, credential: null });
   };
 
   const openEditSlideOver = (credential: Credential) => {
-    setPlainKey(null);
-    setShowCloseWarning(false);
+    setConnectSuccess(false);
     setSlideOver({ open: true, credential });
   };
 
   const buildPayload = (data: FormValues) => ({
     label: data.label,
     description: data.description,
-    toolId: data.toolId,
     teamId: data.teamId,
-    environment: data.environment,
+    syncSchedule: data.syncSchedule,
     rotationReminderDays: data.rotationReminderDays,
     expiresAt: parseExpiryDate(data.expiresAt),
   });
@@ -388,6 +343,7 @@ export function CredentialsPage() {
 
     createMutation.mutate({
       ...buildPayload(data),
+      catalogueToolId: (data as CreateFormValues).catalogueToolId,
       apiKey: data.apiKey,
     });
   };
@@ -428,10 +384,12 @@ export function CredentialsPage() {
         ),
       },
       {
-        key: "toolName",
+        key: "catalogueToolName",
         header: "Tool",
         sortable: true,
-        render: (row) => <Typography variant="body2">{row.toolName}</Typography>,
+        render: (row) => (
+          <Typography variant="body2">{row.catalogueToolName || row.toolName}</Typography>
+        ),
       },
       {
         key: "teamName",
@@ -440,9 +398,11 @@ export function CredentialsPage() {
         render: (row) => <Typography variant="body2">{row.teamName}</Typography>,
       },
       {
-        key: "environment",
-        header: "Env",
-        render: (row) => <EnvironmentChip environment={row.environment} />,
+        key: "syncSchedule",
+        header: "Sync",
+        render: (row) => (
+          <Typography variant="body2">{syncScheduleLabel(row.syncSchedule)}</Typography>
+        ),
       },
       {
         key: "expiresAt",
@@ -572,7 +532,7 @@ export function CredentialsPage() {
               API Credentials
             </Typography>
             <Typography variant="body2" sx={{ color: tokens.textMuted }}>
-              API keys for connected AI tools — masked, expiry, and status
+              Connect live API keys to providers — separate from the Tools catalogue
             </Typography>
           </Box>
           <Button
@@ -613,26 +573,26 @@ export function CredentialsPage() {
           rows={credentialsQuery.data ?? []}
           rowKey={(row) => row.id}
           loading={credentialsQuery.isPending}
-          emptyTitle="No credentials yet"
-          emptyDescription="Connect an AI tool under Tools, then manage its API key here."
+          emptyTitle="No connections yet"
+          emptyDescription="Add tools under Tools first, then connect them here with an API key."
         />
 
         <SlideOver
           open={slideOver.open}
           onClose={handleSlideOverClose}
           title={
-            plainKey
-              ? "Tool connected"
+            connectSuccess
+              ? "Connected successfully"
               : isEditMode
                 ? "Edit Credential"
                 : "Connect Tool"
           }
-          {...(plainKey || isEditMode
+          {...(connectSuccess || isEditMode
             ? {}
             : { subtitle: "Verify your API key and sync usage in the background" })}
           width={520}
           footer={
-            plainKey ? undefined : (
+            connectSuccess ? undefined : (
               <>
                 <Button
                   variant="text"
@@ -657,94 +617,23 @@ export function CredentialsPage() {
             )
           }
         >
-          {plainKey ? (
+          {connectSuccess ? (
             <Box>
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
                 <IconCircleCheck size={24} color={tokens.success} />
                 <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                  Tool connected
+                  Connected successfully
                 </Typography>
               </Box>
 
               <Alert severity="success" sx={{ mb: 2 }}>
-                Your API key was verified. Usage data is syncing in the background — check
-                the Tools page in a moment for updated stats.
+                Your API key was verified. Usage data will sync{" "}
+                {connectedSchedule === "daily" ? "daily" : "hourly"} in the background — use
+                Refresh on the Teams page to pull the latest data anytime.
               </Alert>
-
-              <Alert severity="warning" sx={{ mb: 2 }}>
-                Copy your key now if you need it — it won&apos;t be shown again.
-              </Alert>
-
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 1,
-                  backgroundColor: tokens.bgDefault,
-                  border: `0.5px solid ${tokens.border}`,
-                  borderRadius: "6px",
-                  p: 1.5,
-                  mb: 2,
-                }}
-              >
-                <Typography
-                  sx={{
-                    flex: 1,
-                    fontFamily: "monospace",
-                    fontSize: "0.8125rem",
-                    wordBreak: "break-all",
-                  }}
-                >
-                  {plainKey}
-                </Typography>
-                <IconButton
-                  size="small"
-                  aria-label="Copy API key"
-                  onClick={() => void handleCopyPlainText(plainKey, "reveal")}
-                >
-                  {copiedId === "reveal" ? (
-                    <IconCheck size={16} color={tokens.success} />
-                  ) : (
-                    <IconCopy size={16} />
-                  )}
-                </IconButton>
-              </Box>
-
-              {showCloseWarning && (
-                <Box
-                  sx={{
-                    mb: 2,
-                    p: 1.5,
-                    borderRadius: "6px",
-                    border: `0.5px solid ${tokens.border}`,
-                    backgroundColor: tokens.bgDefault,
-                  }}
-                >
-                  <Typography variant="body2" sx={{ mb: 1 }}>
-                    Have you copied your key?
-                  </Typography>
-                  <Box sx={{ display: "flex", gap: 1 }}>
-                    <Button
-                      size="small"
-                      variant="text"
-                      onClick={() => setShowCloseWarning(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="contained"
-                      color="warning"
-                      onClick={() => void handleDone()}
-                    >
-                      Confirm
-                    </Button>
-                  </Box>
-                </Box>
-              )}
 
               <Button variant="contained" fullWidth onClick={() => void handleDone()}>
-                I&apos;ve copied my key — Done
+                Done
               </Button>
             </Box>
           ) : (
@@ -764,7 +653,7 @@ export function CredentialsPage() {
                 fullWidth
                 label="Label"
                 size="small"
-                placeholder="e.g. GPT-4o Production – Engineering"
+                placeholder="e.g. GPT-4o – Engineering"
                 error={Boolean(errors.label)}
                 helperText={errors.label?.message}
                 sx={{ mb: 2 }}
@@ -782,38 +671,61 @@ export function CredentialsPage() {
                 sx={{ mb: 2 }}
               />
 
+              {isEditMode && slideOver.credential && (
+                <TextField
+                  fullWidth
+                  label="Tool"
+                  size="small"
+                  value={slideOver.credential.catalogueToolName || slideOver.credential.toolName}
+                  disabled
+                  sx={{ mb: 2 }}
+                />
+              )}
+
               <Box
                 sx={{
                   display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
+                  gridTemplateColumns: isEditMode ? "1fr" : "1fr 1fr",
                   gap: 2,
                   mb: 2,
                 }}
               >
-                <Controller
-                  name="toolId"
-                  control={control}
-                  render={({ field }) => (
-                    <FormControl fullWidth size="small" error={Boolean(errors.toolId)}>
-                      <InputLabel id="credential-tool-label">AI Tool</InputLabel>
-                      <Select
-                        {...field}
-                        labelId="credential-tool-label"
-                        label="AI Tool"
-                        disabled={toolOptionsQuery.isPending || isEditMode}
+                {!isEditMode && (
+                  <Controller
+                    name="catalogueToolId"
+                    control={control}
+                    render={({ field }) => (
+                      <FormControl
+                        fullWidth
+                        size="small"
+                        error={Boolean(errors.catalogueToolId)}
                       >
-                        {toolOptions.map((tool) => (
-                          <MenuItem key={tool.id} value={tool.id}>
-                            {tool.name}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                      {errors.toolId && (
-                        <FormHelperText>{errors.toolId.message}</FormHelperText>
-                      )}
-                    </FormControl>
-                  )}
-                />
+                        <InputLabel id="credential-tool-label">Tool</InputLabel>
+                        <Select
+                          {...field}
+                          labelId="credential-tool-label"
+                          label="Tool"
+                          disabled={catalogueToolsQuery.isPending}
+                        >
+                          {catalogueTools.length === 0 ? (
+                            <MenuItem disabled value="">
+                              No tools in catalogue — add one under Tools first
+                            </MenuItem>
+                          ) : (
+                            catalogueTools.map((tool) => (
+                              <MenuItem key={tool.id} value={tool.id}>
+                                {tool.name}
+                              </MenuItem>
+                            ))
+                          )}
+                        </Select>
+                        {errors.catalogueToolId && (
+                          <FormHelperText>{errors.catalogueToolId.message}</FormHelperText>
+                        )}
+                      </FormControl>
+                    )}
+                  />
+                )}
 
                 <Controller
                   name="teamId"
@@ -842,46 +754,28 @@ export function CredentialsPage() {
               </Box>
 
               <Controller
-                name="environment"
+                name="syncSchedule"
                 control={control}
                 render={({ field }) => (
-                  <ToggleButtonGroup
-                    exclusive
+                  <FormControl
                     fullWidth
                     size="small"
-                    value={field.value}
-                    onChange={(_, value: CredentialEnvironment | null) => {
-                      if (value) {
-                        field.onChange(value);
-                      }
-                    }}
+                    error={Boolean(errors.syncSchedule)}
                     sx={{ mb: 2 }}
                   >
-                    <ToggleButton
-                      value="production"
-                      sx={{
-                        "&.Mui-selected": {
-                          backgroundColor: "#059669",
-                          color: "#fff",
-                          "&:hover": { backgroundColor: "#047857" },
-                        },
-                      }}
+                    <InputLabel id="credential-sync-label">Data sync schedule</InputLabel>
+                    <Select
+                      {...field}
+                      labelId="credential-sync-label"
+                      label="Data sync schedule"
                     >
-                      Production
-                    </ToggleButton>
-                    <ToggleButton
-                      value="sandbox"
-                      sx={{
-                        "&.Mui-selected": {
-                          backgroundColor: "#C2410C",
-                          color: "#fff",
-                          "&:hover": { backgroundColor: "#9A3412" },
-                        },
-                      }}
-                    >
-                      Sandbox
-                    </ToggleButton>
-                  </ToggleButtonGroup>
+                      <MenuItem value="hourly">Hourly</MenuItem>
+                      <MenuItem value="daily">Daily</MenuItem>
+                    </Select>
+                    <FormHelperText>
+                      How often usage data is pulled from the provider for this team.
+                    </FormHelperText>
+                  </FormControl>
                 )}
               />
 
@@ -975,7 +869,7 @@ export function CredentialsPage() {
         <ConfirmDialog
           open={revokeTarget !== null}
           title="Revoke credential?"
-          description={`The key for "${revokeTarget?.toolName ?? ""}" on "${revokeTarget?.teamName ?? ""}" will stop working immediately.`}
+          description={`The connection "${revokeTarget?.label ?? ""}" for "${revokeTarget?.catalogueToolName ?? revokeTarget?.toolName ?? ""}" on "${revokeTarget?.teamName ?? ""}" will stop working immediately.`}
           dangerous
           confirmLabel="Revoke"
           loading={revokeMutation.isPending}

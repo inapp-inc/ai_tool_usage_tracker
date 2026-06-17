@@ -92,6 +92,12 @@ import {
           path: "/admin/audit-log",
           roles: [Role.SuperAdmin, Role.Auditor],
         },
+        {
+          label: "Settings",
+          icon: IconSettings,
+          path: "/admin/settings",
+          roles: [Role.SuperAdmin],
+        },
       ],
     },
   ];

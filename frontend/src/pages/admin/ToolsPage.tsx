@@ -27,7 +27,7 @@ import {
   type AiTool,
   type ToolProvider,
 } from "@/api/tools";
-import { BUILT_IN_PROVIDERS, fetchProviders, type Provider } from "@/api/providers";
+import { BUILT_IN_PROVIDERS, fetchProviders, providerRequiresApiEndpoint, type Provider } from "@/api/providers";
 import { ApiClientError } from "@/api/client";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
@@ -44,28 +44,19 @@ const FALLBACK_PROVIDER_OPTIONS = BUILT_IN_PROVIDERS.map((p) => ({
   label: p.label,
 }));
 
-const toolFormSchema = z  .object({
-    name: z.string().min(1, "Name is required").max(80),
-    provider: z.string().min(1, "Provider is required"),
-    description: z.string().max(200),
-    apiEndpoint: z
-      .string()
-      .max(512)
-      .optional()
-      .refine(
-        (val) => !val || val.startsWith("https://"),
-        "API Endpoint URL must start with https://",
-      ),
-  })
-  .refine(
-    (data) =>
-      data.provider !== "custom" ||
-      (typeof data.apiEndpoint === "string" && data.apiEndpoint.trim().length > 0),
-    {
-      message: "API Endpoint URL is required for custom providers",
-      path: ["apiEndpoint"],
-    },
-  );
+const toolFormSchema = z.object({
+  name: z.string().min(1, "Name is required").max(80),
+  provider: z.string().min(1, "Provider is required"),
+  description: z.string().max(200),
+  apiEndpoint: z
+    .string()
+    .max(512)
+    .optional()
+    .refine(
+      (val) => !val || val.startsWith("https://"),
+      "API Endpoint URL must start with https://",
+    ),
+});
 
 type FormValues = z.infer<typeof toolFormSchema>;
 
@@ -118,7 +109,7 @@ export function ToolsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const toolsQuery = useQuery({
     queryKey: ["tools"],
-    queryFn: fetchTools,
+    queryFn: () => fetchTools({ catalogueOnly: true }),
   });
 
   const providersQuery = useQuery({
@@ -131,6 +122,8 @@ export function ToolsPage() {
     providersQuery.data && providersQuery.data.length > 0
       ? providersQuery.data.map((p: Provider) => ({ value: p.slug, label: p.label }))
       : FALLBACK_PROVIDER_OPTIONS;
+
+  const allProviders = providersQuery.data ?? BUILT_IN_PROVIDERS;
 
   const createMutation = useMutation({    mutationFn: createTool,
     onSuccess: async () => {
@@ -194,6 +187,10 @@ export function ToolsPage() {
   });
 
   const selectedProvider = watch("provider");
+  const apiEndpointRequired = providerRequiresApiEndpoint(
+    selectedProvider,
+    allProviders,
+  );
 
   useEffect(() => {
     if (!slideOver.open) {
@@ -278,6 +275,14 @@ export function ToolsPage() {
   const onSubmit = (data: FormValues) => {
     setSaveError(null);
 
+    if (
+      providerRequiresApiEndpoint(data.provider, allProviders) &&
+      !data.apiEndpoint?.trim()
+    ) {
+      setSaveError("API Endpoint URL is required for this provider.");
+      return;
+    }
+
     const formBody = {
       name: data.name,
       provider: data.provider as ToolProvider,
@@ -356,7 +361,7 @@ export function ToolsPage() {
           rowKey={(row) => row.id}
           loading={toolsQuery.isPending}
           emptyTitle="No tools added"
-          emptyDescription="Add your first AI provider tool to start tracking usage."
+          emptyDescription="Register AI tools your organization uses. Connect API keys separately under Credentials."
         />
 
         <SlideOver
@@ -456,9 +461,9 @@ export function ToolsPage() {
               error={Boolean(errors.apiEndpoint)}
               helperText={
                 errors.apiEndpoint?.message ??
-                (selectedProvider === "custom"
-                  ? "Required — the full API URL this tool uses in the application."
-                  : "Optional. Enter the full API URL if different from the provider default.")
+                (apiEndpointRequired
+                  ? "Required — GET endpoint used to validate the API key (Bearer auth)."
+                  : "Optional. Override the provider default base URL if needed.")
               }
             />
 

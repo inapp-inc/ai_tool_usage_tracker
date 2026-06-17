@@ -15,13 +15,16 @@ from app.collector.service import CollectorService
 from app.core.token_crypto import decrypt_token, encrypt_token, mask_token
 from app.models.admin import Tool
 from app.models.collector import CollectorConfig
+from app.settings.repository import ProviderRepository
 from app.tools.pricing import (
     merge_pricing_config,
     normalize_pricing_config,
     pricing_config_for_response,
     validate_pricing_model,
+    vendor_requires_api_endpoint,
 )
 from app.tools.repository import ToolRepository
+from app.tools.synced_members import store_synced_members
 from app.tools.schemas import (
     PaginationMeta,
     ToolCreateRequest,
@@ -32,20 +35,28 @@ from app.tools.schemas import (
     ToolUpdateRequest,
 )
 
+SYNC_LOOKBACK_DAYS = 30
+
 
 class ToolService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._tools = ToolRepository(session)
         self._collectors = CollectorService(session)
+        self._providers = ProviderRepository(session)
 
     async def list_tools(
         self,
         organization_id: UUID,
         *,
         active: bool | None = None,
+        catalogue_only: bool | None = None,
     ) -> ToolListResponse:
-        rows = await self._tools.list_by_organization(organization_id, active=active)
+        rows = await self._tools.list_by_organization(
+            organization_id,
+            active=active,
+            catalogue_only=catalogue_only,
+        )
         return ToolListResponse(
             data=[self._to_response(row) for row in rows],
             meta=PaginationMeta(has_more=False),
@@ -70,6 +81,13 @@ class ToolService:
                 detail="A tool with this name already exists in the organization.",
             )
 
+        provider = await self._require_active_provider(body.vendor)
+        await self._validate_vendor_api_endpoint(
+            body.vendor,
+            body.api_endpoint,
+            built_in=provider.built_in,
+        )
+
         pricing_config = normalize_pricing_config(
             body.pricing_model,
             body.pricing_config,
@@ -90,6 +108,7 @@ class ToolService:
             overage_price=body.overage_price,
             pricing_config=pricing_config,
             api_token_ciphertext=encrypt_token(""),
+            catalogue_only=True,
         )
 
         await self._session.commit()
@@ -116,10 +135,13 @@ class ToolService:
             tool.name = body.name.strip()
 
         if "vendor" in updates and body.vendor is not None:
+            provider = await self._require_active_provider(body.vendor)
             tool.vendor = body.vendor
             collector = await self._get_collector(tool.id)
             if collector is not None:
                 collector.provider = body.vendor
+        else:
+            provider = await self._require_active_provider(tool.vendor)
 
         if "description" in updates:
             tool.description = body.description.strip() if body.description else None
@@ -178,7 +200,11 @@ class ToolService:
             tool.package_allowance,
             tool.overage_price,
         )
-        self._validate_custom_api_endpoint(tool.vendor, tool.api_endpoint)
+        await self._validate_vendor_api_endpoint(
+            tool.vendor,
+            tool.api_endpoint,
+            built_in=provider.built_in,
+        )
 
         if "name" in updates and body.name is not None:
             collector = await self._get_collector(tool.id)
@@ -191,6 +217,11 @@ class ToolService:
 
     async def delete_tool(self, organization_id: UUID, tool_id: UUID) -> None:
         tool = await self._require_tool(organization_id, tool_id)
+        if not tool.catalogue_only:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Live connections are managed in Credentials, not the Tools catalogue.",
+            )
         await self._tools.delete(tool)
         await self._session.commit()
 
@@ -233,7 +264,7 @@ class ToolService:
                 detail=f"Unable to fetch members from provider: {str(exc)[:200]}",
             ) from exc
 
-        tool.member_count = len(members)
+        store_synced_members(tool, members)
         await self._session.commit()
 
         return ToolMembersListResponse(
@@ -266,7 +297,7 @@ class ToolService:
                 pricing_config=pricing_config,
                 api_endpoint=tool.api_endpoint,
             )
-            tool.member_count = len(members)
+            store_synced_members(tool, members)
 
             if collector is not None:
                 run = await self._collectors.run_collector(
@@ -323,18 +354,37 @@ class ToolService:
             )
         return tool
 
+    async def _require_active_provider(self, slug: str):
+        provider = await self._providers.get_by_slug(slug)
+        if provider is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown provider: {slug}",
+            )
+        if not provider.active:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Provider '{slug}' is inactive.",
+            )
+        return provider
+
+    @staticmethod
+    async def _validate_vendor_api_endpoint(
+        vendor: str,
+        api_endpoint: str | None,
+        *,
+        built_in: bool,
+    ) -> None:
+        if vendor_requires_api_endpoint(vendor, built_in=built_in) and not api_endpoint:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="api_endpoint is required for this provider.",
+            )
+
     @staticmethod
     def _decrypt_api_key(tool: Tool) -> str:
         plain = decrypt_token(tool.api_token_ciphertext)
         return plain.strip()
-
-    @staticmethod
-    def _validate_custom_api_endpoint(vendor: str, api_endpoint: str | None) -> None:
-        if vendor == "custom" and not api_endpoint:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="api_endpoint is required when vendor is custom.",
-            )
 
     @staticmethod
     def _validate_package_pricing(

@@ -7,6 +7,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.admin import Tool
+from app.tools.catalogue import (
+    connected_to_catalogue_map,
+    find_connected_for_catalogue,
+    find_connected_for_team,
+)
 
 
 class ToolRepository:
@@ -18,10 +23,13 @@ class ToolRepository:
         organization_id: UUID,
         *,
         active: bool | None = None,
+        catalogue_only: bool | None = None,
     ) -> list[Tool]:
         stmt = select(Tool).where(Tool.organization_id == organization_id)
         if active is not None:
             stmt = stmt.where(Tool.active == active)
+        if catalogue_only is not None:
+            stmt = stmt.where(Tool.catalogue_only == catalogue_only)
         stmt = stmt.order_by(Tool.name.asc())
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
@@ -59,6 +67,7 @@ class ToolRepository:
         overage_price: Decimal | None,
         pricing_config: dict,
         api_token_ciphertext: str,
+        catalogue_only: bool = False,
     ) -> Tool:
         tool = Tool(
             organization_id=organization_id,
@@ -74,6 +83,7 @@ class ToolRepository:
             active=True,
             api_token_ciphertext=api_token_ciphertext,
             sync_status="inactive",
+            catalogue_only=catalogue_only,
         )
         self._session.add(tool)
         await self._session.flush()
@@ -82,3 +92,32 @@ class ToolRepository:
     async def delete(self, tool: Tool) -> None:
         await self._session.delete(tool)
         await self._session.flush()
+
+    async def find_connected_for_catalogue(
+        self,
+        organization_id: UUID,
+        catalogue_tool_id: UUID,
+    ) -> Tool | None:
+        connected = await self.list_by_organization(
+            organization_id,
+            active=None,
+            catalogue_only=False,
+        )
+        return find_connected_for_catalogue(connected, catalogue_tool_id)
+
+    async def list_connected_for_team(
+        self,
+        organization_id: UUID,
+        *,
+        team_id: UUID,
+        catalogue_tool_ids: set[UUID],
+    ) -> list[Tool]:
+        all_tools = await self.list_by_organization(organization_id, active=None)
+        id_to_catalogue = connected_to_catalogue_map(all_tools)
+        connected = [tool for tool in all_tools if not tool.catalogue_only]
+        return find_connected_for_team(
+            connected,
+            team_id=team_id,
+            catalogue_tool_ids=catalogue_tool_ids,
+            id_to_catalogue=id_to_catalogue,
+        )

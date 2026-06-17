@@ -35,8 +35,36 @@ export {
   toToolUpdateBodyFromPartial,
 } from "./adapters/tools";
 
-export async function fetchTools(): Promise<AiTool[]> {
-  const rows = await apiRequest<ApiTool[]>("/tools");
+export async function fetchToolOptions(): Promise<
+  Array<{ id: string; name: string; provider: string }>
+> {
+  const rows = await apiRequest<
+    Array<{ id: string; name: string; vendor: string }>
+  >("/tools?active=true&catalogue_only=true");
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    provider: row.vendor,
+  }));
+}
+
+/** @deprecated Use fetchToolOptions — catalogue and tool options are the same list. */
+export async function fetchCatalogueToolOptions(): Promise<
+  Array<{ id: string; name: string; provider: string }>
+> {
+  return fetchToolOptions();
+}
+
+export async function fetchTools(options?: { catalogueOnly?: boolean }): Promise<AiTool[]> {
+  const params = new URLSearchParams();
+  const catalogueOnly = options?.catalogueOnly ?? true;
+  if (catalogueOnly) {
+    params.set("catalogue_only", "true");
+  } else {
+    params.set("catalogue_only", "false");
+  }
+  const qs = params.toString();
+  const rows = await apiRequest<ApiTool[]>(`/tools?${qs}`);
   return rows.map(mapApiTool);
 }
 

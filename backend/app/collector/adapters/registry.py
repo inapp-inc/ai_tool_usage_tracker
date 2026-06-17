@@ -60,10 +60,9 @@ _ADAPTERS: dict[str, ProviderAdapter] = {
 def get_adapter(provider: str) -> ProviderAdapter:
     normalized = provider.strip().lower()
     adapter = _ADAPTERS.get(normalized)
-    if adapter is None:
-        msg = f"Unsupported provider: {provider}"
-        raise ValueError(msg)
-    return adapter
+    if adapter is not None:
+        return adapter
+    return GenericUsageAdapter(normalized)
 
 
 def _merge_adapter_config(

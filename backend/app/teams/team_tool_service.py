@@ -21,6 +21,7 @@ from app.teams.schemas import (
     TeamToolUpdateRequest,
 )
 from app.teams.team_tool_repository import TeamToolRepository
+from app.tools.catalogue import catalogue_tool_id_from_connected, connected_to_catalogue_map, team_id_from_connected
 from app.tools.pricing import merge_pricing_config, normalize_pricing_config, validate_pricing_model
 from app.tools.repository import ToolRepository
 from app.tools.service import ToolService
@@ -106,22 +107,45 @@ class TeamToolService:
         user: User,
         team_id: UUID,
     ) -> TeamSyncResponse:
-        """Pull usage/members from providers for all credentialed tools on this team."""
+        """Pull usage/members from all connected credentials assigned to this team."""
         team = await self._require_team_access(user, team_id, write=True)
         tool_service = ToolService(self._session)
-        tool_ids = await self._collect_team_tool_ids(team)
+        org_tools = await self._tools.list_by_organization(user.organization_id, active=None)
+        id_to_catalogue = connected_to_catalogue_map(org_tools)
+        raw_tool_ids = set(await self._collect_team_tool_ids(team))
+        catalogue_tool_ids = {id_to_catalogue.get(tool_id, tool_id) for tool_id in raw_tool_ids}
+        connected_tools = await self._tools.list_connected_for_team(
+            user.organization_id,
+            team_id=team.id,
+            catalogue_tool_ids=catalogue_tool_ids,
+        )
         results: list[TeamToolSyncResult] = []
 
-        for tool_id in tool_ids:
-            tool = await self._tools.get_by_id(tool_id, user.organization_id)
-            if tool is None:
-                continue
+        for connected in connected_tools:
+            catalogue_id = catalogue_tool_id_from_connected(connected)
+            if catalogue_id is not None:
+                await self._ensure_tool_on_team(team, catalogue_id)
+            if team_id_from_connected(connected) != team.id:
+                config = (
+                    dict(connected.pricing_config)
+                    if isinstance(connected.pricing_config, dict)
+                    else {}
+                )
+                config["team_id"] = str(team.id)
+                connected.pricing_config = config
+                flag_modified(connected, "pricing_config")
+            catalogue_tool = (
+                await self._tools.get_by_id(catalogue_id, user.organization_id)
+                if catalogue_id is not None
+                else None
+            )
+            display_name = self._sync_display_name(catalogue_tool, connected)
 
-            if not ToolService._decrypt_api_key(tool):
+            if not ToolService._decrypt_api_key(connected):
                 results.append(
                     TeamToolSyncResult(
-                        tool_id=tool.id,
-                        tool_name=tool.name,
+                        tool_id=catalogue_id or connected.id,
+                        tool_name=display_name,
                         status="skipped",
                         message="No credentials connected.",
                     )
@@ -129,11 +153,11 @@ class TeamToolService:
                 continue
 
             try:
-                await tool_service.sync_tool(user.organization_id, tool.id)
+                await tool_service.sync_tool(user.organization_id, connected.id)
                 results.append(
                     TeamToolSyncResult(
-                        tool_id=tool.id,
-                        tool_name=tool.name,
+                        tool_id=catalogue_id or connected.id,
+                        tool_name=display_name,
                         status="synced",
                         message="Usage data collected.",
                     )
@@ -142,8 +166,8 @@ class TeamToolService:
                 detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
                 results.append(
                     TeamToolSyncResult(
-                        tool_id=tool.id,
-                        tool_name=tool.name,
+                        tool_id=catalogue_id or connected.id,
+                        tool_name=display_name,
                         status="failed",
                         message=detail,
                     )
@@ -151,12 +175,34 @@ class TeamToolService:
             except Exception as exc:  # noqa: BLE001
                 results.append(
                     TeamToolSyncResult(
-                        tool_id=tool.id,
-                        tool_name=tool.name,
+                        tool_id=catalogue_id or connected.id,
+                        tool_name=display_name,
                         status="failed",
                         message=str(exc)[:200],
                     )
                 )
+
+        await self._session.commit()
+
+        connected_catalogue_ids = {
+            catalogue_tool_id_from_connected(row)
+            for row in connected_tools
+            if catalogue_tool_id_from_connected(row) is not None
+        }
+        for tool_id in sorted(catalogue_tool_ids, key=str):
+            if tool_id in connected_catalogue_ids:
+                continue
+            catalogue_tool = await self._tools.get_by_id(tool_id, user.organization_id)
+            if catalogue_tool is None or not catalogue_tool.catalogue_only:
+                continue
+            results.append(
+                TeamToolSyncResult(
+                    tool_id=catalogue_tool.id,
+                    tool_name=catalogue_tool.name,
+                    status="skipped",
+                    message="No credentials connected.",
+                )
+            )
 
         synced_count = sum(1 for row in results if row.status == "synced")
         skipped_count = sum(1 for row in results if row.status == "skipped")
@@ -169,6 +215,14 @@ class TeamToolService:
             failed_count=failed_count,
             results=results,
         )
+
+    @staticmethod
+    def _sync_display_name(catalogue_tool: Tool | None, connected: Tool) -> str:
+        base_name = catalogue_tool.name if catalogue_tool is not None else connected.name
+        label = (connected.credential_label or connected.name or "").strip()
+        if label and label.lower() != base_name.lower():
+            return f"{base_name} ({label})"
+        return base_name
 
     async def _collect_team_tool_ids(self, team: Team) -> list[UUID]:
         ids: set[UUID] = set()
@@ -228,6 +282,11 @@ class TeamToolService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Tool not found.",
+            )
+        if not tool.catalogue_only:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Assign tools from the catalogue only.",
             )
         return tool
 

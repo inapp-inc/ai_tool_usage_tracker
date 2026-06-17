@@ -46,7 +46,7 @@ export type {
   CreateCredentialRequest,
   CreateCredentialResponse,
   Credential,
-  CredentialEnvironment,
+  SyncSchedule,
   UpdateCredentialRequest,
 } from "./credentials";
 export { API_BASE, ApiClientError, apiFetch, apiRequest, getAccessToken, setAccessToken } from "./client";

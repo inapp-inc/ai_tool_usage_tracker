@@ -17,6 +17,7 @@ def _tool(**overrides) -> Tool:
     tool = MagicMock(spec=Tool)
     tool.id = overrides.get("id", uuid4())
     tool.name = overrides.get("name", "OpenAI")
+    tool.catalogue_only = overrides.get("catalogue_only", True)
     tool.pricing_model = overrides.get("pricing_model", "flat_token")
     tool.token_price = overrides.get("token_price", Decimal("0.002"))
     tool.package_allowance = overrides.get("package_allowance", None)
@@ -135,7 +136,7 @@ async def test_team_admin_denied_for_unassigned_team() -> None:
 async def test_sync_team_tools_skips_tools_without_credentials() -> None:
     org_id = uuid4()
     team_id = uuid4()
-    tool_id = uuid4()
+    catalogue_tool_id = uuid4()
     user = MagicMock()
     user.role = "super_admin"
     user.organization_id = org_id
@@ -143,22 +144,74 @@ async def test_sync_team_tools_skips_tools_without_credentials() -> None:
 
     team = MagicMock()
     team.id = team_id
-    team.tool_ids = [str(tool_id)]
+    team.tool_ids = [str(catalogue_tool_id)]
 
-    tool = MagicMock()
-    tool.id = tool_id
-    tool.name = "OpenAI"
-    tool.api_token_ciphertext = ""
+    catalogue_tool = MagicMock()
+    catalogue_tool.id = catalogue_tool_id
+    catalogue_tool.name = "OpenAI"
+    catalogue_tool.catalogue_only = True
 
     session = AsyncMock()
     service = TeamToolService(session)
     service._require_team_access = AsyncMock(return_value=team)
-    service._collect_team_tool_ids = AsyncMock(return_value=[tool_id])
-    service._tools.get_by_id = AsyncMock(return_value=tool)
+    service._collect_team_tool_ids = AsyncMock(return_value=[catalogue_tool_id])
+    service._tools.list_by_organization = AsyncMock(return_value=[catalogue_tool])
+    service._tools.list_connected_for_team = AsyncMock(return_value=[])
+    service._tools.get_by_id = AsyncMock(return_value=catalogue_tool)
 
-    with patch.object(ToolService, "_decrypt_api_key", return_value=""):
-        result = await service.sync_team_tools(user, team_id)
+    result = await service.sync_team_tools(user, team_id)
 
     assert result.synced_count == 0
     assert result.skipped_count == 1
     assert result.results[0].status == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_sync_team_tools_syncs_all_connected_credentials() -> None:
+    org_id = uuid4()
+    team_id = uuid4()
+    catalogue_tool_id = uuid4()
+    user = MagicMock()
+    user.role = "super_admin"
+    user.organization_id = org_id
+    user.id = uuid4()
+
+    team = MagicMock()
+    team.id = team_id
+    team.tool_ids = [str(catalogue_tool_id)]
+
+    connected_a = MagicMock()
+    connected_a.id = uuid4()
+    connected_a.name = "OpenAI Prod"
+    connected_a.credential_label = "Prod"
+    connected_a.catalogue_only = False
+    connected_a.pricing_config = {"catalogue_tool_id": str(catalogue_tool_id), "team_id": str(team_id)}
+    connected_a.api_token_ciphertext = "encrypted"
+
+    connected_b = MagicMock()
+    connected_b.id = uuid4()
+    connected_b.name = "OpenAI Sandbox"
+    connected_b.credential_label = "Sandbox"
+    connected_b.catalogue_only = False
+    connected_b.pricing_config = {"catalogue_tool_id": str(catalogue_tool_id), "team_id": str(team_id)}
+    connected_b.api_token_ciphertext = "encrypted"
+
+    catalogue_tool = MagicMock()
+    catalogue_tool.id = catalogue_tool_id
+    catalogue_tool.name = "OpenAI"
+    catalogue_tool.catalogue_only = True
+
+    session = AsyncMock()
+    service = TeamToolService(session)
+    service._require_team_access = AsyncMock(return_value=team)
+    service._collect_team_tool_ids = AsyncMock(return_value=[catalogue_tool_id])
+    service._tools.list_by_organization = AsyncMock(return_value=[catalogue_tool, connected_a, connected_b])
+    service._tools.list_connected_for_team = AsyncMock(return_value=[connected_a, connected_b])
+    service._tools.get_by_id = AsyncMock(return_value=catalogue_tool)
+
+    with patch.object(ToolService, "_decrypt_api_key", return_value="sk-test"):
+        with patch.object(ToolService, "sync_tool", new=AsyncMock()) as sync_tool:
+            result = await service.sync_team_tools(user, team_id)
+
+    assert result.synced_count == 2
+    assert sync_tool.await_count == 2

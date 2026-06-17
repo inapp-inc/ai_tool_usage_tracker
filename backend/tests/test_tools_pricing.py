@@ -21,9 +21,13 @@ def test_validate_vendor_accepts_figma() -> None:
     assert validate_vendor("figma") == "figma"
 
 
-def test_validate_vendor_rejects_unknown() -> None:
-    with pytest.raises(ValueError, match="Unsupported vendor"):
-        validate_vendor("unknown-vendor")
+def test_validate_vendor_normalizes_custom_slug() -> None:
+    assert validate_vendor("My_Internal_LLM") == "my_internal_llm"
+
+
+def test_validate_vendor_rejects_empty() -> None:
+    with pytest.raises(ValueError, match="Vendor is required"):
+        validate_vendor("   ")
 
 
 def test_normalize_pricing_config_mirrors_columns() -> None:

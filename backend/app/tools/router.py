@@ -40,10 +40,15 @@ async def _reload_scheduler(request: Request) -> None:
 @router.get("", response_model=ToolListResponse)
 async def list_tools(
     active: bool | None = Query(default=None),
+    catalogue_only: bool | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolListResponse:
-    return await service.list_tools(current_user.organization_id, active=active)
+    return await service.list_tools(
+        current_user.organization_id,
+        active=active,
+        catalogue_only=catalogue_only,
+    )
 
 
 @router.post("", response_model=ToolResponse, status_code=status.HTTP_201_CREATED)

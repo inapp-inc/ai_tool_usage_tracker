@@ -25,6 +25,7 @@ const ROUTE_TITLES: Record<string, string> = {
   "/admin/members": "Members",
   "/admin/credentials": "Credentials",
   "/admin/audit-log": "Audit log",
+  "/admin/settings": "Settings",
   "/login": "",
 };
 

@@ -21,6 +21,8 @@ SUPPORTED_VENDORS = frozenset(
     }
 )
 
+SPECIALIZED_ADAPTER_VENDORS = SUPPORTED_VENDORS - {"custom", "mabl", "windsurf"}
+
 
 def normalize_vendor(value: str) -> str:
     slug = value.strip().lower().replace(" ", "_").replace("-", "_")
@@ -32,11 +34,21 @@ def normalize_vendor(value: str) -> str:
 
 
 def validate_vendor(value: str) -> str:
+    """Normalize vendor slug; existence is validated against admin.providers in service layer."""
     slug = normalize_vendor(value)
-    if slug not in SUPPORTED_VENDORS:
-        msg = f"Unsupported vendor: {value}"
+    if not slug:
+        msg = "Vendor is required."
         raise ValueError(msg)
     return slug
+
+
+def vendor_requires_api_endpoint(vendor: str, *, built_in: bool) -> bool:
+    """User-defined and generic providers must supply tool.api_endpoint."""
+    if vendor in {"custom", "mabl", "windsurf"}:
+        return True
+    if not built_in:
+        return True
+    return False
 
 
 def validate_pricing_model(pricing_model: str) -> None:

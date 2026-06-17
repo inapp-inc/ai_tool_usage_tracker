@@ -13,6 +13,7 @@ from app.models.collector import UsageEvent
 from app.teams.cost_calculator import calculate_pricing_cost
 from app.teams.pricing_resolution import resolve_team_tool_pricing
 from app.teams.team_tool_repository import TeamToolRepository
+from app.tools.catalogue import connected_to_catalogue_map, find_connected_for_catalogue
 from app.tools.repository import ToolRepository
 
 
@@ -51,10 +52,13 @@ class TeamMetricsLoader:
             from_dt, to_dt = current_month_window()
 
         team_ids = [team.id for team in teams]
-        team_tool_ids = self._team_tool_id_map(teams)
+        org_tools = await self._tools.list_by_organization(organization_id, active=None)
+        id_to_catalogue = connected_to_catalogue_map(org_tools)
+        team_tool_ids = self._team_tool_id_map(teams, id_to_catalogue)
         assignments_by_pair = await self._load_assignments(team_ids)
         for pair in assignments_by_pair:
-            team_tool_ids.setdefault(pair[0], set()).add(pair[1])
+            catalogue_id = id_to_catalogue.get(pair[1], pair[1])
+            team_tool_ids.setdefault(pair[0], set()).add(catalogue_id)
 
         all_tool_ids = sorted({tool_id for ids in team_tool_ids.values() for tool_id in ids})
         tools_by_id = await self._load_tools(organization_id, all_tool_ids)
@@ -88,9 +92,11 @@ class TeamMetricsLoader:
                 if tool is None:
                     continue
 
-                input_tokens, output_tokens, tool_total, _event_cost = usage_by_team_tool.get(
-                    (team.id, tool_id),
-                    (0, 0, 0, Decimal("0")),
+                input_tokens, output_tokens, tool_total, _event_cost = self._usage_for_catalogue_tool(
+                    team.id,
+                    tool_id,
+                    usage_by_team_tool,
+                    id_to_catalogue,
                 )
 
                 assignment = assignments_by_pair.get((team.id, tool_id))
@@ -103,7 +109,12 @@ class TeamMetricsLoader:
                 )
 
             pricing_total += unscoped_cost.get(team.id, Decimal("0"))
-            last_synced_at = self._last_synced_at(team, team_tool_ids.get(team.id, set()), tools_by_id)
+            last_synced_at = self._last_synced_at(
+                team,
+                team_tool_ids.get(team.id, set()),
+                tools_by_id,
+                org_tools,
+            )
 
             metrics[team.id] = TeamMetrics(
                 tokens_used=tokens_used,
@@ -121,7 +132,7 @@ class TeamMetricsLoader:
     ) -> dict[UUID, Tool]:
         if not tool_ids:
             return {}
-        tools = await self._tools.list_by_organization(organization_id, active=None)
+        tools = await self._tools.list_by_organization(organization_id, active=None, catalogue_only=True)
         wanted = set(tool_ids)
         return {tool.id: tool for tool in tools if tool.id in wanted}
 
@@ -228,16 +239,42 @@ class TeamMetricsLoader:
         }
 
     @staticmethod
-    def _team_tool_id_map(teams: list[Team]) -> dict[UUID, set[UUID]]:
+    def _usage_for_catalogue_tool(
+        team_id: UUID,
+        catalogue_tool_id: UUID,
+        usage_by_team_tool: dict[tuple[UUID, UUID], tuple[int, int, int, Decimal]],
+        id_to_catalogue: dict[UUID, UUID],
+    ) -> tuple[int, int, int, Decimal]:
+        input_tokens = 0
+        output_tokens = 0
+        total_tokens = 0
+        cost = Decimal("0")
+        for (event_team_id, event_tool_id), values in usage_by_team_tool.items():
+            if event_team_id != team_id:
+                continue
+            if id_to_catalogue.get(event_tool_id, event_tool_id) != catalogue_tool_id:
+                continue
+            input_tokens += values[0]
+            output_tokens += values[1]
+            total_tokens += values[2]
+            cost += values[3]
+        return input_tokens, output_tokens, total_tokens, cost
+
+    @staticmethod
+    def _team_tool_id_map(
+        teams: list[Team],
+        id_to_catalogue: dict[UUID, UUID],
+    ) -> dict[UUID, set[UUID]]:
         mapping: dict[UUID, set[UUID]] = {}
         for team in teams:
             ids: set[UUID] = set()
             raw = team.tool_ids if isinstance(team.tool_ids, list) else []
             for item in raw:
                 try:
-                    ids.add(UUID(str(item)))
+                    raw_id = UUID(str(item))
                 except ValueError:
                     continue
+                ids.add(id_to_catalogue.get(raw_id, raw_id))
             mapping[team.id] = ids
         return mapping
 
@@ -246,12 +283,20 @@ class TeamMetricsLoader:
         team: Team,
         tool_ids: set[UUID],
         tools_by_id: dict[UUID, Tool],
+        org_tools: list[Tool],
     ) -> datetime | None:
         latest: datetime | None = None
         for tool_id in tool_ids:
             tool = tools_by_id.get(tool_id)
-            if tool is None or tool.last_sync_at is None:
+            if tool is None:
                 continue
-            if latest is None or tool.last_sync_at > latest:
-                latest = tool.last_sync_at
+            sync_tool = tool
+            if tool.catalogue_only:
+                connected = find_connected_for_catalogue(org_tools, tool_id)
+                if connected is not None:
+                    sync_tool = connected
+            if sync_tool.last_sync_at is None:
+                continue
+            if latest is None or sync_tool.last_sync_at > latest:
+                latest = sync_tool.last_sync_at
         return latest

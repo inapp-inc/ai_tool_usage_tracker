@@ -2,10 +2,10 @@
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal, Self
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.tools.pricing import validate_vendor
 
@@ -40,20 +40,13 @@ class ToolCreateRequest(BaseModel):
 
     @field_validator("vendor")
     @classmethod
-    def normalize_vendor(cls, value: str) -> str:
+    def normalize_vendor_field(cls, value: str) -> str:
         return validate_vendor(value)
 
     @field_validator("api_endpoint")
     @classmethod
     def validate_api_endpoint_format(cls, value: str | None) -> str | None:
         return normalize_api_endpoint(value)
-
-    @model_validator(mode="after")
-    def require_api_endpoint_for_custom(self) -> Self:
-        if self.vendor == "custom" and not self.api_endpoint:
-            msg = "api_endpoint is required when vendor is custom."
-            raise ValueError(msg)
-        return self
 
 
 class ToolUpdateRequest(BaseModel):

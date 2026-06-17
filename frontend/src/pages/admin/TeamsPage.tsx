@@ -49,7 +49,6 @@ import {
   type Team,
 } from "@/api/teams";
 import { useToast } from "@/hooks/useToast";
-import { fetchToolOptions } from "@/api/usage";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const schema = z.object({
@@ -168,23 +167,18 @@ export function TeamsPage() {
     queryFn: fetchTeams,
   });
 
-  const toolOptionsQuery = useQuery({
-    queryKey: ["tool-options"],
-    queryFn: fetchToolOptions,
-  });
-
   const catalogToolsQuery = useQuery({
     queryKey: ["tools", "catalog"],
-    queryFn: fetchTools,
+    queryFn: () => fetchTools(),
   });
 
   const toolNameById = useMemo(() => {
     const map = new Map<string, string>();
-    for (const tool of toolOptionsQuery.data ?? []) {
+    for (const tool of catalogToolsQuery.data ?? []) {
       map.set(tool.id, tool.name);
     }
     return map;
-  }, [toolOptionsQuery.data]);
+  }, [catalogToolsQuery.data]);
 
   const providerByToolId = useMemo(() => {
     const map = new Map<string, ToolProvider>();
@@ -194,7 +188,14 @@ export function TeamsPage() {
     return map;
   }, [catalogToolsQuery.data]);
 
-  const toolOptions = toolOptionsQuery.data ?? [];
+  const toolOptions = useMemo(
+    () =>
+      (catalogToolsQuery.data ?? []).map((tool) => ({
+        id: tool.id,
+        name: tool.name,
+      })),
+    [catalogToolsQuery.data],
+  );
 
   const createMutation = useMutation({
     mutationFn: createTeam,
@@ -301,10 +302,17 @@ export function TeamsPage() {
         ]);
 
         if (result.syncedCount === 0 && result.failedCount === 0) {
+          const skipped = result.results.filter((row) => row.status === "skipped");
+          const detail =
+            skipped.length > 0 && skipped[0].message
+              ? skipped[0].message
+              : result.skippedCount > 0
+                ? "Connect credentials for this team's tools in Credentials first."
+                : `${team.name} has no tools assigned.`;
           showToast(
             result.skippedCount > 0
-              ? `No data collected — connect credentials for ${team.name}'s tools first.`
-              : `${team.name} has no tools assigned.`,
+              ? `No data collected — ${detail}`
+              : detail,
             "info",
           );
           return;
@@ -312,14 +320,14 @@ export function TeamsPage() {
 
         if (result.failedCount > 0) {
           showToast(
-            `Collected data for ${result.syncedCount} tool(s); ${result.failedCount} failed.`,
+            `Collected data for ${result.syncedCount} account(s); ${result.failedCount} failed.`,
             "warning",
           );
           return;
         }
 
         showToast(
-          `Collected usage data for ${result.syncedCount} tool(s) on ${team.name}.`,
+          `Collected usage data for ${result.syncedCount} connected account(s) on ${team.name}.`,
           "success",
         );
       } catch {
@@ -638,7 +646,7 @@ export function TeamsPage() {
                       fullWidth
                       size="small"
                       error={Boolean(errors.toolIds)}
-                      disabled={toolOptionsQuery.isPending}
+                      disabled={catalogToolsQuery.isPending}
                       sx={{ mb: 2 }}
                     >
                       <InputLabel id="team-tools-label">Assigned tools</InputLabel>
@@ -666,7 +674,7 @@ export function TeamsPage() {
                             .join(", ");
                           return (
                             <Typography noWrap sx={{ fontSize: "0.8125rem" }}>
-                              {names || (toolOptionsQuery.isPending ? "Loading tools…" : "")}
+                              {names || (catalogToolsQuery.isPending ? "Loading tools…" : "")}
                             </Typography>
                           );
                         }}

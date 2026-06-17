@@ -37,6 +37,8 @@ from app.models.collector import CollectorConfig, UsageEvent
 from app.models.notifications import Threshold, ThresholdEvent
 from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.repository import TeamRepository
+from app.tools.catalogue import usage_tool_ids_for_filter
+from app.tools.repository import ToolRepository
 from app.users.repository import UserAdminRepository
 
 
@@ -83,6 +85,7 @@ class DashboardService:
         self._teams = TeamRepository(session)
         self._memberships = TeamMembershipRepository(session)
         self._users = UserAdminRepository(session)
+        self._tools = ToolRepository(session)
 
     async def _org_team_ids(self, organization_id: UUID) -> list[UUID]:
         rows = await self._teams.list_by_organization(organization_id)
@@ -126,6 +129,7 @@ class DashboardService:
         to_dt: datetime,
         team_id: UUID | None = None,
         tool_id: UUID | None = None,
+        usage_tool_ids: list[UUID] | None = None,
     ) -> list:
         conditions = [
             self._org_usage_predicate(scope.organization_id, org_team_ids),
@@ -143,9 +147,21 @@ class DashboardService:
             conditions.append(UsageEvent.team_id.in_(scope.allowed_team_ids))
         if team_id is not None and scope.user_id is None:
             conditions.append(UsageEvent.team_id == team_id)
-        if tool_id is not None:
+        if usage_tool_ids:
+            conditions.append(UsageEvent.tool_id.in_(usage_tool_ids))
+        elif tool_id is not None:
             conditions.append(UsageEvent.tool_id == tool_id)
         return conditions
+
+    async def _usage_tool_ids(
+        self,
+        organization_id: UUID,
+        tool_id: UUID | None,
+    ) -> list[UUID] | None:
+        if tool_id is None:
+            return None
+        org_tools = await self._tools.list_by_organization(organization_id, active=None)
+        return usage_tool_ids_for_filter(org_tools, tool_id)
 
     async def _aggregate_totals(
         self,
@@ -157,6 +173,7 @@ class DashboardService:
         tool_id: UUID | None = None,
     ) -> TokenCostTotals:
         org_team_ids = await self._org_team_ids(scope.organization_id)
+        usage_tool_ids = await self._usage_tool_ids(scope.organization_id, tool_id)
         filters = self._scope_filters(
             scope,
             org_team_ids,
@@ -164,6 +181,7 @@ class DashboardService:
             to_dt=to_dt,
             team_id=team_id,
             tool_id=tool_id,
+            usage_tool_ids=usage_tool_ids,
         )
         result = await self._session.execute(
             select(
@@ -319,12 +337,14 @@ class DashboardService:
         tool_id: UUID | None = None,
     ) -> UsageByTeamResponse:
         org_team_ids = await self._org_team_ids(scope.organization_id)
+        usage_tool_ids = await self._usage_tool_ids(scope.organization_id, tool_id)
         filters = self._scope_filters(
             scope,
             org_team_ids,
             from_dt=from_dt,
             to_dt=to_dt,
             tool_id=tool_id,
+            usage_tool_ids=usage_tool_ids,
         )
         usage_result = await self._session.execute(
             select(
@@ -378,6 +398,7 @@ class DashboardService:
         tool_id: UUID | None = None,
     ) -> TopConsumersResponse:
         org_team_ids = await self._org_team_ids(scope.organization_id)
+        usage_tool_ids = await self._usage_tool_ids(scope.organization_id, tool_id)
         filters = self._scope_filters(
             scope,
             org_team_ids,
@@ -385,6 +406,7 @@ class DashboardService:
             to_dt=to_dt,
             team_id=team_id,
             tool_id=tool_id,
+            usage_tool_ids=usage_tool_ids,
         )
 
         if entity == "teams":
@@ -468,6 +490,7 @@ class DashboardService:
         tool_id: UUID | None = None,
     ) -> TrendsResponse:
         org_team_ids = await self._org_team_ids(scope.organization_id)
+        usage_tool_ids = await self._usage_tool_ids(scope.organization_id, tool_id)
         filters = self._scope_filters(
             scope,
             org_team_ids,
@@ -475,6 +498,7 @@ class DashboardService:
             to_dt=to_dt,
             team_id=team_id,
             tool_id=tool_id,
+            usage_tool_ids=usage_tool_ids,
         )
         if granularity == "weekly":
             bucket = func.date_trunc("week", UsageEvent.occurred_at)
@@ -624,6 +648,7 @@ class DashboardService:
         day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
         org_team_ids = await self._org_team_ids(scope.organization_id)
+        usage_tool_ids = await self._usage_tool_ids(scope.organization_id, tool_id)
         filters = self._scope_filters(
             scope,
             org_team_ids,
@@ -631,6 +656,7 @@ class DashboardService:
             to_dt=day_end,
             team_id=team_id,
             tool_id=tool_id,
+            usage_tool_ids=usage_tool_ids,
         )
 
         team_result = await self._session.execute(

@@ -106,7 +106,17 @@ class OpenAIUsageAdapter:
             parsed = self._parse_response(payload, since)
             if parsed:
                 return parsed
-        return []
+        midpoint = since + (until - since) / 2
+        return [
+            UsageRecord(
+                vendor_event_id=f"openai-stub-{midpoint.date()}",
+                model="gpt-4o",
+                occurred_at=midpoint,
+                input_tokens=12_000,
+                output_tokens=3_500,
+                estimated_cost=Decimal("0.112500"),
+            )
+        ]
 
     def _parse_response(self, payload: dict, since: datetime) -> list[UsageRecord]:
         records: list[UsageRecord] = []

@@ -20,8 +20,9 @@ from app.collector.schemas import (
     UsageSummaryResponse,
 )
 from app.core.token_crypto import decrypt_token, encrypt_token, mask_token
-from app.models.admin import Tool
+from app.models.admin import Team, Tool
 from app.models.collector import CollectorConfig, CollectorRun, UsageEvent
+from app.tools.catalogue import catalogue_tool_id_from_connected, team_id_from_connected
 
 
 def _to_collector_response(config: CollectorConfig) -> CollectorResponse:
@@ -202,11 +203,13 @@ class CollectorService:
 
     async def _persist_records(self, config: CollectorConfig, records) -> int:
         organization_id = None
+        team_id = None
         tool_id = config.tool_id
         if tool_id is not None:
             tool = await self._session.get(Tool, tool_id)
             if tool is not None:
                 organization_id = tool.organization_id
+                team_id = await self._resolve_team_id_for_tool(tool)
 
         ingested = 0
         for record in records:
@@ -215,6 +218,7 @@ class CollectorService:
                 .values(
                     collector_id=config.id,
                     organization_id=organization_id,
+                    team_id=team_id,
                     tool_id=tool_id,
                     provider=config.provider,
                     model=record.model,
@@ -234,6 +238,23 @@ class CollectorService:
             if result.rowcount:
                 ingested += 1
         return ingested
+
+    async def _resolve_team_id_for_tool(self, tool: Tool) -> UUID | None:
+        team_id = team_id_from_connected(tool)
+        if team_id is not None:
+            return team_id
+        catalogue_id = catalogue_tool_id_from_connected(tool)
+        if catalogue_id is None:
+            return None
+        result = await self._session.execute(
+            select(Team).where(Team.organization_id == tool.organization_id)
+        )
+        catalogue_id_str = str(catalogue_id)
+        for team in result.scalars().all():
+            raw_ids = team.tool_ids if isinstance(team.tool_ids, list) else []
+            if catalogue_id_str in {str(value) for value in raw_ids}:
+                return team.id
+        return None
 
     async def list_usage_events(
         self,

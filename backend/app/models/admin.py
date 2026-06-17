@@ -123,6 +123,30 @@ class TeamMembership(Base):
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class Provider(Base):
+    """Configurable AI provider lookup (admin.providers)."""
+
+    __tablename__ = "providers"
+    __table_args__ = {"schema": "admin"}
+
+    slug: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    logo_url: Mapped[str | None] = mapped_column(String(512))
+    built_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class Tool(Base):
     """AI tool configuration with encrypted API credential (admin.tools)."""
 
@@ -167,6 +191,7 @@ class Tool(Base):
     rotation_reminder_days: Mapped[int | None] = mapped_column(BigInteger)
     last_rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     api_endpoint: Mapped[str | None] = mapped_column(String(512))
+    catalogue_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
