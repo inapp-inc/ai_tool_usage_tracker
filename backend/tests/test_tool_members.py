@@ -6,6 +6,7 @@ from app.collector.adapters.base import ProviderMember
 from app.collector.adapters.member_parsing import (
     dedupe_members,
     parse_cursor_members,
+    parse_figma_members,
     parse_generic_members,
     parse_openai_org_users,
 )
@@ -89,3 +90,17 @@ def test_parse_cursor_usage_page() -> None:
     assert records[0].total_tokens == 726
     assert records[0].estimated_cost == Decimal("0.2136")
     assert records[0].model == "claude-4.5-sonnet"
+
+
+def test_parse_figma_members_nested_user() -> None:
+    payload = {
+        "members": [
+            {"user": {"email": "designer@example.com", "handle": "designer"}},
+            {"user": {"email": "designer@example.com", "handle": "duplicate"}},
+            {"user": {"email": "lead@example.com", "handle": "lead"}},
+        ]
+    }
+    members = parse_figma_members(payload)
+    assert len(members) == 2
+    assert members[0].email == "designer@example.com"
+    assert members[1].email == "lead@example.com"

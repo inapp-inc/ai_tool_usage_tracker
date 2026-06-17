@@ -98,3 +98,32 @@ def parse_generic_members(payload: object) -> list[ProviderMember]:
             )
         )
     return dedupe_members(members)
+
+
+def parse_figma_members(payload: object) -> list[ProviderMember]:
+    if not isinstance(payload, dict):
+        return []
+    rows = payload.get("members")
+    if not isinstance(rows, list):
+        return []
+
+    members: list[ProviderMember] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        user = row.get("user")
+        if isinstance(user, dict):
+            email = user.get("email")
+            handle = user.get("handle")
+        else:
+            email = row.get("email")
+            handle = row.get("handle") or row.get("name")
+        if not isinstance(email, str) or not email.strip():
+            continue
+        members.append(
+            ProviderMember(
+                email=email.strip(),
+                name=handle.strip() if isinstance(handle, str) and handle.strip() else None,
+            )
+        )
+    return dedupe_members(members)

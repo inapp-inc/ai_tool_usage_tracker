@@ -9,11 +9,11 @@ Stack:
 
   - PostgreSQL 15 (postgres, host port 5433)
 
-  - FastAPI API (API_PORT, default 4500 -> container 8000)
+  - FastAPI API (internal in prod â€” proxied at /aitool/api/ via frontend nginx)
 
-  - React frontend (FRONTEND_PORT, default 4501 -> container 4501, profile prod)
+  - React frontend gateway (APP_PORT / FRONTEND_PORT, default 4501, profile prod)
 
-  - Host nginx on server routes /aitool/ (see deploy/nginx.example.conf)
+  - Host nginx: single location /aitool/ â†’ port 4501 (deploy/nginx.example.conf)
 
 
 
@@ -27,11 +27,11 @@ Manual start:
 
   1. Copy deploy/.env.example to .env and update secrets/passwords
 
-  2. Set ENVIRONMENT=production, API_PORT and FRONTEND_PORT
+  2. Set APP_PORT=4501, VITE_API_BASE_URL=/aitool/api/v1
 
-  3. docker compose --profile prod up --build -d
+  3. docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up --build -d
 
-  4. Open http://localhost:4501/aitool/ (frontend) and http://localhost:4500/api/v1/health (api)
+  4. curl http://127.0.0.1:4501/aitool/api/v1/health
 
 
 
@@ -45,9 +45,9 @@ Services:
 
   postgres   - database
 
-  api        - FastAPI (API_PORT -> container 8000)
+  api        - FastAPI (internal; /aitool/api/ via frontend nginx)
 
-  frontend   - React SPA (FRONTEND_PORT -> container 4501, requires --profile prod)
+  frontend   - React SPA + API gateway (FRONTEND_PORT -> 4501, requires --profile prod)
 
 
 

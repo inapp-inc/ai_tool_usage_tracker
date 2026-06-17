@@ -27,7 +27,12 @@ describe("paths (production — base /aitool/)", () => {
     expect(appPath("/login")).toBe("/aitool/login");
   });
 
-  it("resolveApiBase derives /aitool/api/v1 from base", () => {
+  it("resolveApiBase derives /aitool/api/v1 from base when env unset", () => {
+    expect(resolveApiBase()).toBe("/aitool/api/v1");
+  });
+
+  it("resolveApiBase uses explicit VITE_API_BASE_URL when set", () => {
+    vi.stubEnv("VITE_API_BASE_URL", "/aitool/api/v1");
     expect(resolveApiBase()).toBe("/aitool/api/v1");
   });
 });

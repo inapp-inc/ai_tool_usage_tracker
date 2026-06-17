@@ -167,7 +167,7 @@ check_deploy_resources() {
 }
 
 compose_prod() {
-  "${COMPOSE_CMD[@]}" --profile prod "$@"
+  "${COMPOSE_CMD[@]}" -f docker-compose.yml -f docker-compose.prod.yml --profile prod "$@"
 }
 
 build_images() {
@@ -381,6 +381,20 @@ ensure_env_value "$DEST_ENV_FILE" "POSTGRES_USER" "$POSTGRES_USER"
 ensure_env_value "$DEST_ENV_FILE" "POSTGRES_DB" "$POSTGRES_DB"
 set_env_value "$DEST_ENV_FILE" "POSTGRES_PORT" "5433"
 set_env_value "$DEST_ENV_FILE" "ENVIRONMENT" "production"
+ensure_env_value "$DEST_ENV_FILE" "SEED_SUPER_ADMIN_ON_STARTUP" "true"
+ensure_env_value "$DEST_ENV_FILE" "SEED_SUPER_ADMIN_SYNC_CREDENTIALS" "true"
+
+SUPER_ADMIN_EMAIL="$(env_value "$DEST_ENV_FILE" SUPER_ADMIN_EMAIL || env_value "$DEST_ENV_FILE" DEV_SUPER_ADMIN_EMAIL || true)"
+SUPER_ADMIN_EMAIL="${SUPER_ADMIN_EMAIL:-admin@foundry.inapp.com}"
+set_env_value "$DEST_ENV_FILE" "SUPER_ADMIN_EMAIL" "$SUPER_ADMIN_EMAIL"
+
+SUPER_ADMIN_PASSWORD="$(env_value "$DEST_ENV_FILE" SUPER_ADMIN_PASSWORD || env_value "$DEST_ENV_FILE" DEV_SUPER_ADMIN_PASSWORD || true)"
+if [[ -z "$SUPER_ADMIN_PASSWORD" || "$SUPER_ADMIN_PASSWORD" == change_me* ]]; then
+  SUPER_ADMIN_PASSWORD="$(openssl rand -base64 24 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 24 || date +%s%N)"
+  set_env_value "$DEST_ENV_FILE" "SUPER_ADMIN_PASSWORD" "$SUPER_ADMIN_PASSWORD"
+  echo "Generated SUPER_ADMIN_PASSWORD for $SUPER_ADMIN_EMAIL (saved in $DEST_ENV_FILE)"
+fi
+set_env_value "$DEST_ENV_FILE" "SUPER_ADMIN_PASSWORD" "$SUPER_ADMIN_PASSWORD"
 
 if [[ -n "$POSTGRES_PASSWORD" ]]; then
   set_env_value "$DEST_ENV_FILE" "POSTGRES_PASSWORD" "$POSTGRES_PASSWORD"
@@ -403,19 +417,20 @@ if [[ -z "$COLLECTOR_KEY" || "$COLLECTOR_KEY" == change_me* ]]; then
   echo "Generated COLLECTOR_ENCRYPTION_KEY"
 fi
 
-PREFERRED_API_PORT="$(env_value "$DEST_ENV_FILE" API_PORT || env_value "$DEST_ENV_FILE" BACKEND_PORT || true)"
-API_PORT="$(choose_port "$PREFERRED_API_PORT" "$PORT_RANGE_START" "$PORT_RANGE_END")"
-set_env_value "$DEST_ENV_FILE" "API_PORT" "$API_PORT"
-
-PREFERRED_FRONTEND_PORT="$(env_value "$DEST_ENV_FILE" FRONTEND_PORT || env_value "$DEST_ENV_FILE" APP_PORT || true)"
-FRONTEND_PORT="$(choose_distinct_port "$PREFERRED_FRONTEND_PORT" "$PORT_RANGE_START" "$PORT_RANGE_END" "$API_PORT")"
+PREFERRED_APP_PORT="$(env_value "$DEST_ENV_FILE" APP_PORT || env_value "$DEST_ENV_FILE" FRONTEND_PORT || true)"
+FRONTEND_PORT="$(choose_port "$PREFERRED_APP_PORT" "$PORT_RANGE_START" "$PORT_RANGE_END")"
+set_env_value "$DEST_ENV_FILE" "APP_PORT" "$FRONTEND_PORT"
 set_env_value "$DEST_ENV_FILE" "FRONTEND_PORT" "$FRONTEND_PORT"
 
 BASE_PATH="$(env_value "$DEST_ENV_FILE" VITE_BASE_PATH || true)"
 BASE_PATH="${BASE_PATH:-/aitool/}"
 BASE_PATH="${BASE_PATH%/}"
 set_env_value "$DEST_ENV_FILE" "VITE_BASE_PATH" "${BASE_PATH}/"
-set_env_value "$DEST_ENV_FILE" "VITE_API_BASE_URL" "${BASE_PATH}/api/v1"
+if [[ -z "$(env_value "$DEST_ENV_FILE" VITE_API_BASE_URL || true)" ]]; then
+  set_env_value "$DEST_ENV_FILE" "VITE_API_BASE_URL" "${BASE_PATH}/api/v1"
+fi
+VITE_API_BASE_URL="$(env_value "$DEST_ENV_FILE" VITE_API_BASE_URL)"
+API_HEALTH_URL="http://127.0.0.1:${FRONTEND_PORT}${VITE_API_BASE_URL}/health"
 
 CORS_VALUE="$(env_value "$DEST_ENV_FILE" CORS_ORIGINS || true)"
 if [[ -z "$CORS_VALUE" ]]; then
@@ -462,10 +477,10 @@ wait_for_postgres_container
 echo "Starting api + frontend..."
 compose_prod up -d --no-build --remove-orphans
 
-echo "Waiting for API health on port ${API_PORT}..."
+echo "Waiting for API health via frontend gateway..."
 ready=0
 for _ in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:${API_PORT}/api/v1/health" >/dev/null 2>&1; then
+  if curl -fsS "$API_HEALTH_URL" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -490,34 +505,28 @@ Deploy root:  $DEPLOY_ROOT
 Env file:     $DEST_ENV_FILE
 Environment:  production
 
-API:          http://127.0.0.1:${API_PORT}/api/v1/
-Frontend:     http://127.0.0.1:${FRONTEND_PORT}${BASE_PATH}/
-Health:       http://127.0.0.1:${API_PORT}/api/v1/health
-Public URL:   $PUBLIC_ORIGIN
+App port:       ${FRONTEND_PORT} (SPA + API gateway)
+Frontend:       http://127.0.0.1:${FRONTEND_PORT}${BASE_PATH}/
+API (public):   http://127.0.0.1:${FRONTEND_PORT}${VITE_API_BASE_URL}/
+Health:         ${API_HEALTH_URL}
+Public URL:     $PUBLIC_ORIGIN
+Super admin:    ${SUPER_ADMIN_EMAIL} (password in $DEST_ENV_FILE — SUPER_ADMIN_PASSWORD)
 
 Configure host nginx using:
   $DEPLOY_ROOT/deploy/nginx.example.conf
-  (replace BACKEND_PORT=${API_PORT} and FRONTEND_PORT=${FRONTEND_PORT})
+  Single upstream on port ${FRONTEND_PORT} — proxy /aitool/ only
 
 Useful commands:
   cd $DEPLOY_ROOT
-  ${COMPOSE_CMD[*]} --profile prod ps
-  ${COMPOSE_CMD[*]} --profile prod logs -f api frontend
-  ${COMPOSE_CMD[*]} --profile prod down
-  ${COMPOSE_CMD[*]} --profile prod down -v    # reset database
+  ${COMPOSE_CMD[*]} -f docker-compose.yml -f docker-compose.prod.yml --profile prod ps
+  ${COMPOSE_CMD[*]} -f docker-compose.yml -f docker-compose.prod.yml --profile prod logs -f api frontend
+  ${COMPOSE_CMD[*]} -f docker-compose.yml -f docker-compose.prod.yml --profile prod down
+  ${COMPOSE_CMD[*]} -f docker-compose.yml -f docker-compose.prod.yml --profile prod down -v    # reset database
 
-Suggested host nginx routes:
+Suggested host nginx (one location, one port):
 
-  location /aitool/api/ {
-    proxy_pass http://127.0.0.1:${API_PORT}/api/;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-  }
-
-  location /aitool/ {
-    proxy_pass http://127.0.0.1:${FRONTEND_PORT}/aitool/;
+  location ${BASE_PATH}/ {
+    proxy_pass http://127.0.0.1:${FRONTEND_PORT}${BASE_PATH}/;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -528,13 +537,13 @@ EOF
 if [[ "$ready" -ne 1 ]]; then
   echo
   echo "Warning: API health check did not pass within 120s. Check logs:" >&2
-  echo "  cd $DEPLOY_ROOT && ${COMPOSE_CMD[*]} --profile prod logs api" >&2
+  echo "  cd $DEPLOY_ROOT && ${COMPOSE_CMD[*]} -f docker-compose.yml -f docker-compose.prod.yml --profile prod logs api frontend" >&2
   exit 1
 fi
 
 if [[ "$frontend_ready" -ne 1 ]]; then
   echo
   echo "Warning: frontend did not respond at http://127.0.0.1:${FRONTEND_PORT}${BASE_PATH}/ within 60s." >&2
-  echo "  cd $DEPLOY_ROOT && ${COMPOSE_CMD[*]} --profile prod logs frontend" >&2
+  echo "  cd $DEPLOY_ROOT && ${COMPOSE_CMD[*]} -f docker-compose.yml -f docker-compose.prod.yml --profile prod logs frontend" >&2
   exit 1
 fi

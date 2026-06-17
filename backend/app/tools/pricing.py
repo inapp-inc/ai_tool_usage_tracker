@@ -17,6 +17,7 @@ SUPPORTED_VENDORS = frozenset(
         "mabl",
         "windsurf",
         "cursor",
+        "figma",
     }
 )
 

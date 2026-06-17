@@ -6,6 +6,7 @@ import pytest
 
 from app.collector.adapters.base import ProviderValidationError
 from app.collector.adapters.cursor import CursorUsageAdapter
+from app.collector.adapters.figma import FigmaUsageAdapter
 from app.collector.adapters.generic import GenericUsageAdapter
 from app.collector.adapters.openai import OpenAIUsageAdapter
 from app.collector.adapters.registry import SUPPORTED_PROVIDERS, get_adapter
@@ -47,3 +48,15 @@ def test_registry_has_all_providers(provider: str) -> None:
 def test_cursor_adapter_is_registered() -> None:
     adapter = get_adapter("cursor")
     assert isinstance(adapter, CursorUsageAdapter)
+
+
+def test_figma_adapter_is_registered() -> None:
+    adapter = get_adapter("figma")
+    assert isinstance(adapter, FigmaUsageAdapter)
+
+
+@pytest.mark.asyncio
+async def test_figma_adapter_rejects_short_token() -> None:
+    adapter = FigmaUsageAdapter()
+    with pytest.raises(ProviderValidationError):
+        await adapter.validate_api_key("short")

@@ -18,6 +18,7 @@ CollectorProvider = Literal[
     "mabl",
     "windsurf",
     "cursor",
+    "figma",
 ]
 CollectorRunStatus = Literal["queued", "running", "completed", "failed"]
 RunTrigger = Literal["scheduled", "manual"]

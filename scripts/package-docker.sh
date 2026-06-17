@@ -41,23 +41,23 @@ AI Tool Usage Tracker - Docker Deployment Package
 
 Stack:
   - PostgreSQL 15 (postgres, host port 5433)
-  - FastAPI API (API_PORT, default 4500 -> container 8000)
-  - React frontend (FRONTEND_PORT, default 4501, profile prod)
-  - Host nginx on server routes /aitool/ (deploy/nginx.example.conf)
+  - FastAPI API (internal only in prod — api:8000 on Docker network)
+  - React frontend gateway (APP_PORT / FRONTEND_PORT, default 4501, profile prod)
+  - Host nginx: single location /aitool/ → port 4501 (deploy/nginx.example.conf)
 
 Quick start (Linux):
   1. ./scripts/deploy-docker.sh ai-tools-token-tracker.zip
 
 Manual start:
   1. Copy deploy/.env.example to .env and update secrets/passwords
-  2. Set ENVIRONMENT=production, API_PORT and FRONTEND_PORT
-  3. docker compose --profile prod up --build -d
-  4. Open http://localhost:4501/aitool/ and http://localhost:4500/api/v1/health
+  2. Set APP_PORT=4501, VITE_API_BASE_URL=/aitool/api/v1
+  3. docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up --build -d
+  4. curl http://127.0.0.1:4501/aitool/api/v1/health
 
 Services:
   postgres   - database
-  api        - FastAPI (API_PORT -> container 8000)
-  frontend   - React SPA (FRONTEND_PORT -> 4501, requires --profile prod)
+  api        - FastAPI (internal; proxied via frontend nginx at /aitool/api/)
+  frontend   - React SPA + API gateway (FRONTEND_PORT -> 4501, requires --profile prod)
 
 Production env: deploy/.env.example
 Host nginx: deploy/nginx.example.conf
@@ -93,7 +93,7 @@ rm -f "$ARCHIVE_PATH"
 )
 
 echo "Created $ARCHIVE_PATH"
-echo "Package: docker-compose (postgres + api:${API_PORT:-4500} + frontend:${FRONTEND_PORT:-4501}, profile prod)"
-echo "Deploy uses: docker compose --profile prod up --build -d"
+echo "Package: single gateway port ${FRONTEND_PORT:-4501} (profile prod + docker-compose.prod.yml)"
+echo "Deploy: docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up --build -d"
 echo "Production env template: deploy/.env.example"
 echo "Host nginx example: deploy/nginx.example.conf"

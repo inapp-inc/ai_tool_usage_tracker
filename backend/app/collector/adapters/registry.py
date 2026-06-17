@@ -13,6 +13,7 @@ from app.collector.adapters.base import (
 )
 from app.collector.adapters.cohere import CohereUsageAdapter
 from app.collector.adapters.cursor import CursorUsageAdapter
+from app.collector.adapters.figma import FigmaUsageAdapter
 from app.collector.adapters.generic import GenericUsageAdapter
 from app.collector.adapters.google import GoogleUsageAdapter
 from app.collector.adapters.mistral import MistralUsageAdapter
@@ -52,6 +53,7 @@ _ADAPTERS: dict[str, ProviderAdapter] = {
     "mabl": GenericUsageAdapter("mabl"),
     "windsurf": GenericUsageAdapter("windsurf"),
     "cursor": CursorUsageAdapter(),
+    "figma": FigmaUsageAdapter(),
 }
 
 

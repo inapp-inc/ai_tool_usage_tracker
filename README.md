@@ -67,7 +67,12 @@ OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collecto
    {"status": "ok", "database": "ok"}
    ```
 
-5. Sign in (dev seed user):
+5. Sign in (bootstrap super admin — created on first API startup when `auth.users` is empty):
+
+   | Variable | Local default |
+   |----------|----------------|
+   | `SUPER_ADMIN_EMAIL` | `admin@example.com` |
+   | `SUPER_ADMIN_PASSWORD` | `change_me_dev_only` |
 
    ```bash
    curl -X POST http://localhost:8000/api/v1/auth/login \
@@ -129,22 +134,24 @@ Production defaults in `.env.example`:
 | Setting | Value |
 |---------|--------|
 | `POSTGRES_PORT` | `5433` (host) |
-| `FRONTEND_PORT` | `4501` |
+| `APP_PORT` / `FRONTEND_PORT` | `4501` (single gateway — SPA + API) |
 | `VITE_BASE_PATH` | `/aitool/` |
 | `VITE_API_BASE_URL` | `/aitool/api/v1` |
+| `SUPER_ADMIN_EMAIL` | set in `deploy/.env.example` |
+| `SEED_SUPER_ADMIN_ON_STARTUP` | `true` (production) |
 
-1. Copy `.env.example` to `.env`, set strong secrets, and set `ENVIRONMENT=production`.
+1. Copy `deploy/.env.example` to `.env`, set strong secrets, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD`.
 2. Set `CORS_ORIGINS` to your public frontend origin (e.g. `https://foundry.inapp.com`).
 3. Start the stack:
 
    ```bash
-   docker compose --profile prod up --build -d postgres api frontend
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up --build -d
    ```
 
 4. App URL: `https://foundry.inapp.com/aitool/` (via server nginx)  
-   API health: `curl http://<server>:8000/api/v1/health` or via nginx at `/aitool/api/v1/health`
+   API health: `curl http://127.0.0.1:4501/aitool/api/v1/health`
 
-On the server firewall, expose **4501** (frontend) and **8000** (API) for nginx upstreams, or only nginx ports if the proxy is on the same host.
+Host nginx proxies **only** `/aitool/` to port **4501**. The frontend container proxies `/aitool/api/` to the API internally.
 
 ## Project structure
 

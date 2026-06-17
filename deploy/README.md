@@ -131,6 +131,87 @@ docker volume rm ai-tracker-postgres-data
 
 A new password will be generated and postgres will initialize cleanly.
 
+---
+
+## Single port (`/aitool/` for SPA + API)
+
+Production uses **one published port** (`APP_PORT` / `FRONTEND_PORT`, default **4501**). The frontend container nginx:
+
+- serves the React app at `/aitool/`
+- proxies `/aitool/api/` to the API container (`api:8000`) on the Docker network
+
+Host nginx only needs **one** upstream:
+
+```nginx
+location /aitool/ {
+    proxy_pass http://127.0.0.1:4501/aitool/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+### Server `.env`
+
+```bash
+APP_PORT=4501
+FRONTEND_PORT=4501
+VITE_BASE_PATH=/aitool/
+VITE_API_BASE_URL=/aitool/api/v1
+```
+
+Deploy with prod overlay (API not published on host):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d
+```
+
+### Verify
+
+```bash
+curl -s http://127.0.0.1:4501/aitool/api/v1/health
+curl -sI http://127.0.0.1:4501/aitool/
+```
+
+After changing `VITE_API_BASE_URL`, rebuild the frontend image.
+
+---
+
+## Super admin login (production seed)
+
+Set credentials in `.env` before deploy:
+
+```env
+SEED_SUPER_ADMIN_ON_STARTUP=true
+SEED_SUPER_ADMIN_SYNC_CREDENTIALS=true
+SUPER_ADMIN_EMAIL=admin@foundry.inapp.com
+SUPER_ADMIN_PASSWORD=your-strong-password-here
+```
+
+On **first startup** (empty `auth.users`), the API creates that super admin. On **redeploy**, if you change email/password in `.env` and restart the API, credentials are synced automatically (`SEED_SUPER_ADMIN_SYNC_CREDENTIALS=true`).
+
+`deploy-docker.sh` generates `SUPER_ADMIN_PASSWORD` if left as `change_me_*` — check `$DEST_ENV_FILE` after deploy.
+
+### Manual seed / sync
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod \
+  exec api python -m app.scripts.seed_super_admin
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod restart api
+```
+
+### Verify login
+
+```bash
+curl -X POST http://127.0.0.1:4501/aitool/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@foundry.inapp.com","password":"your-strong-password-here"}'
+```
+
+---
+
 ### Fix C — change password inside postgres to match `.env`
 
 ```bash

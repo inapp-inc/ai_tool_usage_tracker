@@ -19,6 +19,7 @@ SUPPORTED_PROVIDERS = frozenset(
         "mabl",
         "windsurf",
         "cursor",
+        "figma",
     }
 )
 

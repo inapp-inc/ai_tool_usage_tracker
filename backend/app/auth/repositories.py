@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_refresh_token
@@ -23,6 +23,16 @@ class UserRepository:
 
     async def get_by_id(self, user_id: UUID) -> User | None:
         return await self._session.get(User, user_id)
+
+    async def count(self) -> int:
+        result = await self._session.execute(select(func.count()).select_from(User))
+        return int(result.scalar_one())
+
+    async def get_super_admin(self) -> User | None:
+        result = await self._session.execute(
+            select(User).where(User.role == "super_admin").limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def create(
         self,
@@ -49,14 +59,32 @@ class UserRepository:
         user.last_login_at = datetime.now(UTC)
         await self._session.flush()
 
+    async def update_credentials(
+        self,
+        user: User,
+        *,
+        email: str,
+        password_hash: str,
+        display_name: str | None = None,
+    ) -> None:
+        user.email = email.strip().lower()
+        user.password_hash = password_hash
+        if display_name is not None:
+            user.display_name = display_name
+        await self._session.flush()
+
 
 class OrganizationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
     async def count(self) -> int:
-        result = await self._session.execute(select(Organization))
-        return len(result.scalars().all())
+        result = await self._session.execute(select(func.count()).select_from(Organization))
+        return int(result.scalar_one())
+
+    async def get_first(self) -> Organization | None:
+        result = await self._session.execute(select(Organization).limit(1))
+        return result.scalar_one_or_none()
 
     async def create(self, *, name: str, slug: str) -> Organization:
         org = Organization(name=name, slug=slug)

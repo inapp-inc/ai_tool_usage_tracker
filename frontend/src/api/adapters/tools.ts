@@ -10,7 +10,8 @@ export type ToolProvider =
   | "custom"
   | "mabl"
   | "windsurf"
-  | "cursor";
+  | "cursor"
+  | "figma";
 
 export type PricingModel = "per_token" | "per_seat" | "flat_fee" | "hybrid";
 
@@ -137,6 +138,7 @@ const VENDOR_TO_PROVIDER: Record<string, ToolProvider> = {
   mabl: "mabl",
   windsurf: "windsurf",
   cursor: "cursor",
+  figma: "figma",
 };
 
 export function emptyToolPricing(): ToolPricing {

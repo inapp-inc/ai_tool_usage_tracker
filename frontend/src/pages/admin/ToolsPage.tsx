@@ -63,6 +63,7 @@ const PROVIDER_OPTIONS: Array<{ value: ToolProvider; label: string }> = [
   { value: "cursor", label: "Cursor" },
   { value: "mabl", label: "Mabl" },
   { value: "windsurf", label: "Windsurf" },
+  { value: "figma", label: "Figma" },
   { value: "custom", label: "Custom" },
 ];
 
@@ -93,6 +94,7 @@ const providerValues = [
   "cursor",
   "mabl",
   "windsurf",
+  "figma",
   "custom",
 ] as const;
 
@@ -384,6 +386,7 @@ export function ToolsPage() {
   });
 
   const pricingModel = watch("pricing.model");
+  const selectedProvider = watch("provider");
 
   useEffect(() => {
     if (!slideOver.open) {
@@ -723,12 +726,20 @@ export function ToolsPage() {
               label="API Key"
               size="small"
               type={isEditMode ? "text" : "password"}
-              placeholder={isEditMode ? undefined : "sk-..."}
+              placeholder={
+                isEditMode
+                  ? undefined
+                  : selectedProvider === "figma"
+                    ? "figd_..."
+                    : "sk-..."
+              }
               helperText={
                 errors.apiKey?.message ??
                 (isEditMode
                   ? "Current key shown masked. Enter a new key only to replace it."
-                  : undefined)
+                  : selectedProvider === "figma"
+                    ? "Figma personal access token (Settings → Security → Personal access tokens)."
+                    : undefined)
               }
               error={Boolean(errors.apiKey)}
             />
