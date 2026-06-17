@@ -53,8 +53,14 @@ class UploadService:
         self._users = UserAdminRepository(session)
         self._memberships = TeamMembershipRepository(session)
 
-    async def list_uploads(self, organization_id: UUID) -> UploadListResponse:
+    async def list_uploads(
+        self,
+        organization_id: UUID,
+        team_ids: list[UUID] | None = None,
+    ) -> UploadListResponse:
         rows = await self._uploads.list_by_organization(organization_id)
+        if team_ids is not None:
+            rows = [r for r in rows if r.team_id is None or r.team_id in set(team_ids)]
         uploader_names = await self._uploader_names(rows)
         team_names = await self._team_names(organization_id, rows)
         data = [
@@ -496,6 +502,17 @@ class UploadService:
         upload = await self._require_upload(organization_id, upload_id)
         await self._uploads.soft_delete(upload)
         await self._session.commit()
+
+    async def assert_upload_scope(
+        self,
+        organization_id: UUID,
+        upload_id: UUID,
+        managed_team_ids: list[UUID],
+    ) -> None:
+        """Raise 404 if the upload does not belong to any of team_admin's managed teams."""
+        upload = await self._require_upload(organization_id, upload_id)
+        if upload.team_id not in managed_team_ids:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found.")
 
     async def _require_upload(self, organization_id: UUID, upload_id: UUID) -> Upload:
         upload = await self._uploads.get_by_id(upload_id, organization_id)

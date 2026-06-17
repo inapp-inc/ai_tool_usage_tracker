@@ -9,6 +9,7 @@ import {
     IconShield,
     IconTool,
     IconUpload,
+    IconUser,
     IconUsers,
   } from "@tabler/icons-react";
   import { Box, Tooltip, Typography } from "@mui/material";
@@ -39,6 +40,17 @@ import {
           icon: IconLayoutDashboard,
           path: "/insights",
           roles: "all",
+        },
+      ],
+    },
+    {
+      heading: "My Data",
+      items: [
+        {
+          label: "My Usage",
+          icon: IconUser,
+          path: "/my-usage",
+          roles: [Role.TeamMember],
         },
       ],
     },

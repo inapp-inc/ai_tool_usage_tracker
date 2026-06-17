@@ -25,7 +25,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        // 127.0.0.1 avoids Windows IPv6 localhost → wslrelay conflict (use localhost in .env only if 127.0.0.1 works for you)
+        target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
     },

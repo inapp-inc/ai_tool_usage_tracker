@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
+from app.core.rbac import require_team_admin_or_above
 from app.dashboard.schemas import (
     ActiveAlertsResponse,
     CostOverviewWidget,
@@ -43,7 +44,7 @@ async def get_dashboard_tokens(
     to_dt: datetime = Query(alias="to"),
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> TokenUsageWidget:
@@ -63,7 +64,7 @@ async def get_dashboard_cost(
     to_dt: datetime = Query(alias="to"),
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> CostOverviewWidget:
@@ -82,7 +83,7 @@ async def get_dashboard_usage_by_tool(
     from_dt: datetime = Query(alias="from"),
     to_dt: datetime = Query(alias="to"),
     team_id: UUID | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> UsageByToolResponse:
@@ -101,7 +102,7 @@ async def get_dashboard_usage_by_team(
     to_dt: datetime = Query(alias="to"),
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> UsageByTeamResponse:
@@ -122,7 +123,7 @@ async def get_dashboard_top_consumers(
     entity: str = Query(default="users"),
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> TopConsumersResponse:
@@ -142,7 +143,7 @@ async def get_dashboard_top_consumers(
 async def get_dashboard_alerts(
     team_id: UUID | None = None,
     limit: int = Query(default=10, ge=1, le=50),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> ActiveAlertsResponse:
@@ -157,7 +158,7 @@ async def get_dashboard_trends(
     granularity: TrendGranularityApi = Query(),
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> TrendsResponse:
@@ -172,6 +173,7 @@ async def get_dashboard_trends(
     )
 
 
+# my-usage stays open to all authenticated users — it only returns the caller's own data
 @router.get("/my-usage", response_model=MyUsageResponse)
 async def get_dashboard_my_usage(
     from_dt: datetime = Query(alias="from"),
@@ -195,7 +197,7 @@ async def get_dashboard_daily_breakdown(
     date: datetime = Query(description="Calendar day (ISO 8601)"),
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> DailyBreakdownResponse:

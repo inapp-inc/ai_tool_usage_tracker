@@ -29,8 +29,14 @@ class ThresholdService:
         self._events = ThresholdEventRepository(session)
         self._teams = TeamRepository(session)
 
-    async def list_thresholds(self, organization_id: UUID) -> ThresholdListResponse:
+    async def list_thresholds(
+        self,
+        organization_id: UUID,
+        team_ids: list[UUID] | None = None,
+    ) -> ThresholdListResponse:
         rows = await self._thresholds.list_by_organization(organization_id)
+        if team_ids is not None:
+            rows = [r for r in rows if r.team_id is None or r.team_id in set(team_ids)]
         stats = await self._events.stats_for_thresholds(
             organization_id,
             [row.id for row in rows],
@@ -138,7 +144,11 @@ class ThresholdService:
         await self._thresholds.delete(row)
         await self._session.commit()
 
-    async def list_events(self, organization_id: UUID) -> ThresholdEventListResponse:
+    async def list_events(
+        self,
+        organization_id: UUID,
+        team_ids: list[UUID] | None = None,
+    ) -> ThresholdEventListResponse:
         events = await self._events.list_by_organization(organization_id)
         if not events:
             return ThresholdEventListResponse(data=[], meta=PaginationMeta(has_more=False))
@@ -146,6 +156,20 @@ class ThresholdService:
         threshold_ids = {event.threshold_id for event in events}
         thresholds = await self._thresholds.list_by_organization(organization_id)
         threshold_map = {row.id: row for row in thresholds if row.id in threshold_ids}
+
+        if team_ids is not None:
+            team_id_set = set(team_ids)
+            events = [
+                e for e in events
+                if (e.team_id and e.team_id in team_id_set)
+                or (
+                    e.threshold_id in threshold_map
+                    and threshold_map[e.threshold_id].team_id in team_id_set
+                )
+            ]
+            if not events:
+                return ThresholdEventListResponse(data=[], meta=PaginationMeta(has_more=False))
+
         team_names = await self._team_name_map(
             organization_id,
             [row for row in thresholds if row.id in threshold_ids],
@@ -182,6 +206,7 @@ class ThresholdService:
         organization_id: UUID,
         event_id: UUID,
         user: User,
+        managed_team_ids: list[UUID] | None = None,
     ) -> ThresholdEventResponse:
         event = await self._events.get_by_id(event_id, organization_id)
         if event is None:
@@ -189,6 +214,20 @@ class ThresholdService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Alert event not found.",
             )
+        if managed_team_ids is not None:
+            threshold_row = await self._thresholds.get_by_id(event.threshold_id, organization_id)
+            in_scope = (
+                threshold_row is not None
+                and (
+                    (event.team_id and event.team_id in managed_team_ids)
+                    or (threshold_row.team_id and threshold_row.team_id in managed_team_ids)
+                )
+            )
+            if not in_scope:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Alert event not found.",
+                )
         if event.acknowledged_at is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -214,6 +253,17 @@ class ThresholdService:
             acknowledged_at=event.acknowledged_at,
             acknowledged_by=display_name,
         )
+
+    async def assert_threshold_scope(
+        self,
+        organization_id: UUID,
+        threshold_id: UUID,
+        managed_team_ids: list[UUID],
+    ) -> None:
+        """Raise 404 if the threshold does not belong to any of team_admin's managed teams."""
+        row = await self._require_threshold(organization_id, threshold_id)
+        if row.team_id not in managed_team_ids:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Threshold not found.")
 
     async def _require_threshold(self, organization_id: UUID, threshold_id: UUID) -> Threshold:
         row = await self._thresholds.get_by_id(threshold_id, organization_id)

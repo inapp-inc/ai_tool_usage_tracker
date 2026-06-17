@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.router import get_audit_recorder, record_audit_event
 from app.audit.recorder import AuditRecorder
 from app.auth.dependencies import get_current_user
+from app.core.rbac import require_team_admin_or_above
 from app.db.session import get_session
 from app.models.auth import User
 from app.tools.schemas import ToolCreateRequest, ToolListResponse, ToolMembersListResponse, ToolResponse, ToolUpdateRequest
@@ -41,7 +42,7 @@ async def _reload_scheduler(request: Request) -> None:
 async def list_tools(
     active: bool | None = Query(default=None),
     catalogue_only: bool | None = Query(default=None),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolListResponse:
     return await service.list_tools(
@@ -76,7 +77,7 @@ async def create_tool(
 @router.get("/{tool_id}/members", response_model=ToolMembersListResponse)
 async def list_tool_members(
     tool_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolMembersListResponse:
     return await service.list_tool_members(current_user.organization_id, tool_id)
@@ -85,7 +86,7 @@ async def list_tool_members(
 @router.get("/{tool_id}", response_model=ToolResponse)
 async def get_tool(
     tool_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_team_admin_or_above),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolResponse:
     return await service.get_tool(current_user.organization_id, tool_id)
