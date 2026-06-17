@@ -6,8 +6,16 @@ import { defineConfig } from "vite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Dev: base `/` (default). Production: set in frontend/.env.production or Docker build args.
+const basePath = process.env.VITE_BASE_PATH ?? "/";
+
 export default defineConfig({
+  base: basePath,
   plugins: [react()],
+  build: {
+    sourcemap: false,
+    reportCompressedSize: false,
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -21,6 +29,11 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  preview: {
+    port: 4501,
+    host: "0.0.0.0",
+    allowedHosts: ["foundry.inapp.com"],
   },
   test: {
     environment: "jsdom",

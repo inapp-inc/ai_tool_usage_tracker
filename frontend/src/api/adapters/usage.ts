@@ -39,6 +39,8 @@ export interface ApiDailyBreakdownResponse {
 }
 
 export interface ApiTokenUsageWidget {
+  input_tokens?: number;
+  output_tokens?: number;
   total_tokens: number;
 }
 
@@ -59,7 +61,9 @@ export function buildUsageSummary(
   from: string,
   to: string,
 ): UsageSummary {
-  const totalTokens = tokens.total_tokens;
+  const inputTokens = tokens.input_tokens ?? 0;
+  const outputTokens = tokens.output_tokens ?? 0;
+  const totalTokens = Math.max(tokens.total_tokens, inputTokens + outputTokens);
   const totalCost = Number(cost.actual_spend);
   return {
     totalTokens,

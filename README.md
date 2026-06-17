@@ -12,9 +12,10 @@ Centralized platform for monitoring AI tool consumption, costs, and adoption acr
 
 | Service | Image / build | Purpose |
 |---------|---------------|---------|
-| `postgres` | `postgres:15-alpine` | PostgreSQL 15 |
+| `postgres` | `postgres:15-alpine` | PostgreSQL 15 (host port **5433** → container 5432) |
 | `api` | `backend/Dockerfile` | FastAPI + Alembic migrations on startup + **in-process token collector scheduler** |
-| `frontend` | `node:20-alpine` | Vite dev server (profile `dev` only) |
+| `frontend` | `frontend/Dockerfile` | Production SPA (profile **`prod`** — `/aitool/` on port **4501**) |
+| `frontend-dev` | `node:20-alpine` | Vite dev server (profile `dev` only) |
 
 The API container runs scheduled token pulls (APScheduler). Configure pull interval from the frontend via `POST/PATCH /api/v1/collectors` (`pull_interval_minutes`).
 
@@ -30,11 +31,21 @@ OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collecto
 
    Edit `.env` and replace placeholder values. At minimum, set `POSTGRES_PASSWORD`.
 
-2. Start the stack (runs migrations automatically before the API starts):
+2. Start the API and database:
 
    ```bash
    docker compose up --build postgres api
    ```
+
+3. Run the frontend locally (served at **`/`**, API proxied to **`/api/v1`**):
+
+   ```bash
+   cd frontend
+   npm ci
+   npm run dev
+   ```
+
+   Open **http://localhost:5173**
 
    **If you see migration errors** such as `Can't locate revision identified by '007_role_permissions'`, your database volume is from an older branch. Reset it:
 
@@ -90,10 +101,10 @@ npm run dev
 
 Open http://localhost:5173 — API requests proxy to `http://localhost:8000/api/v1`.
 
-**Docker (optional):**
+**Docker (optional Vite dev server):**
 
 ```bash
-docker compose --profile dev up --build frontend api postgres
+docker compose --profile dev up --build frontend-dev api postgres
 ```
 
 ### Apply order for OpenSpec changes
@@ -107,9 +118,33 @@ docker compose --profile dev up --build frontend api postgres
 ```bash
 docker compose down
 docker compose down -v          # destructive — removes volumes
-docker compose logs -f api worker beat
-docker compose up --build api worker beat
+docker compose logs -f api frontend
+docker compose up --build postgres api frontend
 ```
+
+## Server deployment
+
+Production defaults in `.env.example`:
+
+| Setting | Value |
+|---------|--------|
+| `POSTGRES_PORT` | `5433` (host) |
+| `FRONTEND_PORT` | `4501` |
+| `VITE_BASE_PATH` | `/aitool/` |
+| `VITE_API_BASE_URL` | `/aitool/api/v1` |
+
+1. Copy `.env.example` to `.env`, set strong secrets, and set `ENVIRONMENT=production`.
+2. Set `CORS_ORIGINS` to your public frontend origin (e.g. `https://foundry.inapp.com`).
+3. Start the stack:
+
+   ```bash
+   docker compose --profile prod up --build -d postgres api frontend
+   ```
+
+4. App URL: `https://foundry.inapp.com/aitool/` (via server nginx)  
+   API health: `curl http://<server>:8000/api/v1/health` or via nginx at `/aitool/api/v1/health`
+
+On the server firewall, expose **4501** (frontend) and **8000** (API) for nginx upstreams, or only nginx ports if the proxy is on the same host.
 
 ## Project structure
 

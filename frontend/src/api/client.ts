@@ -1,6 +1,7 @@
 import type { ApiError, ApiResponse } from "@/types";
+import { appPath, resolveApiBase } from "@/lib/paths";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
+const API_BASE = resolveApiBase();
 
 let accessToken: string | null = null;
 
@@ -183,7 +184,7 @@ async function clearSessionAndRedirect(): Promise<void> {
   const { useAuthStore } = await import("@/stores/authStore");
   clearPersistedRefreshToken();
   useAuthStore.getState().clearAuth();
-  window.location.assign("/login");
+  window.location.assign(appPath("/login"));
 }
 
 export async function apiRequest<T>(

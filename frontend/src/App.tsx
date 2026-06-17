@@ -107,7 +107,7 @@ export function AppRoutes() {
 
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "") || undefined}>
       <Suspense fallback={<PageSkeleton />}>
         <AppRoutes />
       </Suspense>

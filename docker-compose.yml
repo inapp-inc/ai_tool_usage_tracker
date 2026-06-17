@@ -1,95 +1,243 @@
 name: ai-tool-tracker
 
-# Minimal stack: PostgreSQL + API (migrations run on API startup; collector scheduler in-process).
+
+
+# Stack: PostgreSQL + API + production frontend (static SPA on port 4501).
+# Server nginx handles /aitool/ routing and /aitool/api/ proxy to the API.
+
+# Vite dev server: docker compose --profile dev up frontend-dev api postgres
+
+
 
 services:
+
   postgres:
+
     image: postgres:15-alpine
+
     container_name: ai-tracker-postgres
+
     environment:
+
       POSTGRES_USER: ${POSTGRES_USER:-aitracker}
+
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+
       POSTGRES_DB: ${POSTGRES_DB:-aitracker}
+
     volumes:
+
       - postgres_data:/var/lib/postgresql/data
+
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+
+      - "${POSTGRES_PORT:-5433}:5432"
+
     healthcheck:
+
       test:
+
         [
+
           "CMD-SHELL",
+
           "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+
         ]
+
       interval: 10s
+
       timeout: 5s
+
       retries: 5
+
       start_period: 10s
+
     restart: unless-stopped
+
     networks:
+
       - ai-tracker
+
+
 
   api:
+
     build:
+
       context: ./backend
+
       dockerfile: Dockerfile
+
+      provenance: false
+
+      sbom: false
+
     container_name: ai-tracker-api
+
     command:
+
       [
+
         "sh",
+
         "-c",
+
         "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000",
+
       ]
+
     env_file:
+
       - .env
+
     environment:
+
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aitracker}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aitracker}
+
       COLLECTOR_SCHEDULER_ENABLED: "true"
-      ENVIRONMENT: development
-      FRONTEND_PORT: ${FRONTEND_PORT:-5173}
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      FRONTEND_PORT: ${FRONTEND_PORT:-4501}
+
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:4501}
+
+    expose:
+
+      - "8000"
+
     ports:
+
       - "${API_PORT:-8000}:8000"
+
     depends_on:
+
       postgres:
+
         condition: service_healthy
+
     healthcheck:
+
       test:
+
         [
+
           "CMD",
+
           "python",
+
           "-c",
+
           "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')",
+
         ]
+
       interval: 15s
+
       timeout: 5s
+
       retries: 5
+
       start_period: 20s
+
     restart: unless-stopped
+
     networks:
+
       - ai-tracker
+
+
 
   frontend:
-    image: node:20-alpine
+
+    profiles: [prod]
+
+    build:
+
+      context: ./frontend
+
+      dockerfile: Dockerfile
+
+      provenance: false
+
+      sbom: false
+
+      args:
+
+        VITE_API_BASE_URL: /aitool/api/v1
+
+        VITE_BASE_PATH: /aitool/
+
     container_name: ai-tracker-frontend
-    profiles: [dev]
-    working_dir: /app
-    volumes:
-      - ./frontend:/app
-    command: ["sh", "-c", "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"]
+
     ports:
-      - "${FRONTEND_PORT:-5173}:5173"
-    environment:
-      VITE_API_BASE_URL: http://localhost:${API_PORT:-8000}/api/v1
+
+      - "${FRONTEND_PORT:-4501}:4501"
+
     depends_on:
+
       api:
+
         condition: service_healthy
+
+    restart: unless-stopped
+
     networks:
+
       - ai-tracker
 
+
+
+  frontend-dev:
+
+    image: node:20-alpine
+
+    container_name: ai-tracker-frontend-dev
+
+    profiles: [dev]
+
+    working_dir: /app
+
+    volumes:
+
+      - ./frontend:/app
+
+    command: ["sh", "-c", "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"]
+
+    ports:
+
+      - "5173:5173"
+
+    environment:
+
+      VITE_API_BASE_URL: http://localhost:${API_PORT:-8000}/api/v1
+
+    depends_on:
+
+      api:
+
+        condition: service_healthy
+
+    networks:
+
+      - ai-tracker
+
+
+
 networks:
+
   ai-tracker:
+
     name: ai-tracker-network
 
+
+
 volumes:
+
   postgres_data:
+
     name: ai-tracker-postgres-data
+

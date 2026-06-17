@@ -1,7 +1,12 @@
 """Unit tests for dashboard analytics helpers."""
 
-from app.dashboard.service import _pct_delta, _previous_period
+from app.dashboard.service import _pct_delta, _previous_period, effective_token_total
 from datetime import UTC, datetime
+
+
+def test_effective_token_total_sums_input_and_output() -> None:
+    assert effective_token_total(1_250_000, 980_000) == 2_230_000
+    assert effective_token_total(0, 0) == 0
 
 
 def test_pct_delta_handles_zero_previous() -> None:
