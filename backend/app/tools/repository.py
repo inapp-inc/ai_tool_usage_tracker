@@ -53,6 +53,24 @@ class ToolRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_catalogue_by_vendor(
+        self,
+        organization_id: UUID,
+        vendor: str,
+    ) -> Tool | None:
+        result = await self._session.execute(
+            select(Tool).where(
+                Tool.organization_id == organization_id,
+                Tool.catalogue_only.is_(True),
+                Tool.vendor == vendor,
+                Tool.active.is_(True),
+            )
+        )
+        rows = list(result.scalars().all())
+        if not rows:
+            return None
+        return sorted(rows, key=lambda row: (not row.built_in, row.created_at))[0]
+
     async def create(
         self,
         *,
@@ -66,8 +84,10 @@ class ToolRepository:
         package_allowance: int | None,
         overage_price: Decimal | None,
         pricing_config: dict,
+        integration_config: dict | None = None,
         api_token_ciphertext: str,
         catalogue_only: bool = False,
+        built_in: bool = False,
     ) -> Tool:
         tool = Tool(
             organization_id=organization_id,
@@ -75,6 +95,7 @@ class ToolRepository:
             vendor=vendor,
             description=description.strip() if description else None,
             api_endpoint=api_endpoint,
+            integration_config=integration_config or {},
             pricing_model=pricing_model,
             token_price=token_price,
             package_allowance=package_allowance,
@@ -84,6 +105,7 @@ class ToolRepository:
             api_token_ciphertext=api_token_ciphertext,
             sync_status="inactive",
             catalogue_only=catalogue_only,
+            built_in=built_in,
         )
         self._session.add(tool)
         await self._session.flush()

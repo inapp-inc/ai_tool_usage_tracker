@@ -8,14 +8,16 @@ from pydantic import ValidationError
 from app.tools.schemas import ToolCreateRequest, ToolResponse, normalize_api_endpoint
 
 
-def test_custom_vendor_without_api_endpoint_returns_422() -> None:
-    with pytest.raises(ValidationError, match="api_endpoint is required when vendor is custom"):
-        ToolCreateRequest(
-            name="Custom Tool",
-            vendor="custom",
-            pricing_model="flat_token",
-            token_price=Decimal("0"),
-        )
+def test_custom_vendor_without_api_endpoint_allowed_at_schema_level() -> None:
+    """api_endpoint requirement is enforced in ToolService, not Pydantic schema."""
+    body = ToolCreateRequest(
+        name="Custom Tool",
+        vendor="custom",
+        pricing_model="flat_token",
+        token_price=Decimal("0"),
+    )
+    assert body.api_endpoint is None
+    assert body.vendor == "custom"
 
 
 def test_api_endpoint_must_use_https() -> None:
@@ -91,6 +93,7 @@ def test_tool_response_includes_api_endpoint() -> None:
         package_allowance=None,
         overage_price=None,
         pricing_config={},
+        integration_config={},
         active=True,
         api_token_masked="",
         token_count=0,
@@ -104,3 +107,43 @@ def test_tool_response_includes_api_endpoint() -> None:
         updated_at=now,
     )
     assert response.api_endpoint == "https://api.cursor.com/v1/me"
+
+
+def test_integration_config_requires_usage_mappings() -> None:
+    with pytest.raises(ValidationError, match="vendor_event_id"):
+        ToolCreateRequest(
+            name="Custom Tool",
+            vendor="custom",
+            api_endpoint="https://api.example.com/usage",
+            pricing_model="flat_token",
+            token_price=Decimal("0"),
+            integration_config={
+                "usage": {
+                    "url": "{api_endpoint}",
+                    "response": {"fields": {"occurred_at": "date", "input_tokens": "n"}},
+                }
+            },
+        )
+
+
+def test_integration_config_accepts_valid_usage_block() -> None:
+    body = ToolCreateRequest(
+        name="Custom Tool",
+        vendor="custom",
+        api_endpoint="https://api.example.com/usage",
+        pricing_model="flat_token",
+        token_price=Decimal("0"),
+        integration_config={
+            "usage": {
+                "url": "{api_endpoint}",
+                "response": {
+                    "fields": {
+                        "vendor_event_id": "id",
+                        "occurred_at": "date",
+                        "input_tokens": "total_tokens",
+                    }
+                },
+            }
+        },
+    )
+    assert body.integration_config["usage"]["url"] == "{api_endpoint}"

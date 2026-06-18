@@ -134,6 +134,7 @@ class UsageEvent(Base):
         nullable=True,
     )
     user_email: Mapped[str | None] = mapped_column(String(255))
+    user_name: Mapped[str | None] = mapped_column(String(255))
     upload_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("ingestion.uploads.id", ondelete="SET NULL"),

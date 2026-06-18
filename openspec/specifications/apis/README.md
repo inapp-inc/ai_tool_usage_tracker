@@ -13,6 +13,7 @@ OpenAPI 3.0 contracts for the **AI Tool Usage Tracker** platform.
 | [testing.md](../testing.md) | Test strategy — unit, integration, contract, E2E, performance, security, acceptance |
 | [deployment.md](../deployment.md) | Docker, CI/CD, secrets, rollback, monitoring, alerting, backup, DR |
 | [database.md](../database.md) | PostgreSQL entities, indexes, constraints, migrations, retention |
+| [provider-creation.md](../provider-creation.md) | **Dynamic provider integration** — UI fields, backend config, API surface (no per-vendor code) |
 | [components/schemas.yaml](./components/schemas.yaml) | Request/response schemas and validation rules |
 | [components/responses.yaml](./components/responses.yaml) | Standard error and success response definitions |
 | [components/parameters.yaml](./components/parameters.yaml) | Shared query, path, and header parameters |

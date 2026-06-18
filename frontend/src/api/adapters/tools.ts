@@ -5,13 +5,11 @@ export type ToolProvider =
   | "anthropic"
   | "google"
   | "azure_openai"
-  | "cohere"
-  | "mistral"
-  | "custom"
-  | "mabl"
-  | "windsurf"
+  | "copilot"
+  | "bedrock"
   | "cursor"
-  | "figma";
+  | "figma"
+  | "custom";
 
 export type PricingModel = "per_token" | "per_seat" | "flat_fee" | "hybrid";
 
@@ -28,16 +26,25 @@ export interface ToolPricing {
   planName: string | null;
   includedTokens: number | null;
   overageRate: number | null;
+  organizationId: string | null;
+  parentSlug: string | null;
 }
+
+import type { ToolIntegrationConfig } from "@/types/integrationConfig";
 
 export interface AiTool {
   id: string;
   name: string;
   provider: ToolProvider;
+  parentSlug: string | null;
+  parentLabel: string | null;
+  productLabel: string | null;
   description: string;
   apiEndpoint: string | null;
+  integrationConfig: ToolIntegrationConfig | null;
   pricing: ToolPricing;
   status: "active" | "inactive" | "error";
+  builtIn: boolean;
   apiKeyMasked: string;
   lastSyncAt: string | null;
   tokenCount: number;
@@ -58,6 +65,7 @@ export interface CreateToolRequest {
   provider: ToolProvider;
   description: string;
   apiEndpoint?: string | null;
+  integrationConfig?: ToolIntegrationConfig | null;
   pricing: ToolPricing;
 }
 
@@ -67,6 +75,8 @@ export type UpdateToolRequest = Partial<CreateToolRequest>;
 export interface ApiPricingConfig {
   model?: PricingModel | string;
   provider_slug?: string;
+  organization_id?: string | null;
+  parent_slug?: string | null;
   input_cost_per_1k?: number | null;
   output_cost_per_1k?: number | null;
   cost_per_seat?: number | null;
@@ -83,6 +93,7 @@ export interface ApiToolWriteBody {
   vendor: string;
   description: string;
   api_endpoint?: string | null;
+  integration_config?: ApiToolIntegrationConfig;
   pricing_model: ApiPricingModel;
   token_price: number;
   package_allowance: number | null;
@@ -99,6 +110,27 @@ export interface ApiToolPricingFields {
 }
 
 /** OpenAPI GET /tools response item (snake_case). */
+export interface ApiToolIntegrationConfig {
+  version?: number;
+  auth?: {
+    type?: string;
+    header?: string;
+    prefix?: string;
+  };
+  headers?: Record<string, string>;
+  usage?: {
+    method?: string;
+    url?: string;
+    query?: Record<string, string>;
+    response?: {
+      type?: string;
+      records_path?: string;
+      fields?: Record<string, string>;
+    };
+  };
+}
+
+/** OpenAPI GET /tools response item (snake_case). */
 export interface ApiTool {
   id: string;
   organization_id: string;
@@ -106,6 +138,7 @@ export interface ApiTool {
   vendor: string;
   description?: string | null;
   api_endpoint?: string | null;
+  integration_config?: ApiToolIntegrationConfig;
   pricing_model: ApiPricingModel | string;
   token_price: number | string;
   package_allowance?: number | null;
@@ -120,6 +153,10 @@ export interface ApiTool {
   sync_status: "active" | "inactive" | "error";
   last_sync_at?: string | null;
   last_sync_error?: string | null;
+  built_in?: boolean;
+  parent_slug?: string | null;
+  parent_label?: string | null;
+  product_label?: string | null;
   created_at: string;
   updated_at?: string;
 }
@@ -134,11 +171,9 @@ const VENDOR_TO_PROVIDER: Record<string, ToolProvider> = {
   anthropic: "anthropic",
   google: "google",
   azure_openai: "azure_openai",
-  cohere: "cohere",
-  mistral: "mistral",
+  copilot: "copilot",
+  bedrock: "bedrock",
   custom: "custom",
-  mabl: "mabl",
-  windsurf: "windsurf",
   cursor: "cursor",
   figma: "figma",
 };
@@ -154,6 +189,8 @@ export function emptyToolPricing(): ToolPricing {
     planName: null,
     includedTokens: null,
     overageRate: null,
+    organizationId: null,
+    parentSlug: null,
   };
 }
 
@@ -188,6 +225,14 @@ function pricingFromApi(tool: ApiTool): ToolPricing {
     ),
     includedTokens: toNullableNumber(tool.package_allowance ?? config.included_tokens),
     overageRate: toNullableNumber(tool.overage_price ?? config.overage_rate),
+    organizationId:
+      typeof config.organization_id === "string" && config.organization_id.trim()
+        ? config.organization_id.trim()
+        : null,
+    parentSlug:
+      typeof config.parent_slug === "string" && config.parent_slug.trim()
+        ? config.parent_slug.trim()
+        : null,
   };
 }
 
@@ -231,6 +276,14 @@ export function normalizePricing(pricing: ToolPricing): ToolPricing {
     ),
     includedTokens: toNullableNumber(pricing.includedTokens),
     overageRate: toNullableNumber(pricing.overageRate),
+    organizationId:
+      typeof pricing.organizationId === "string" && pricing.organizationId.trim()
+        ? pricing.organizationId.trim()
+        : null,
+    parentSlug:
+      typeof pricing.parentSlug === "string" && pricing.parentSlug.trim()
+        ? pricing.parentSlug.trim()
+        : null,
   };
 }
 
@@ -259,6 +312,8 @@ function packagePricingConfig(
     output_cost_per_1k: pricing.outputCostPer1K,
     cost_per_seat: pricing.costPerSeat,
     seat_count: pricing.seatCount,
+    organization_id: pricing.organizationId,
+    parent_slug: pricing.parentSlug,
   };
 }
 
@@ -292,15 +347,29 @@ function statusFromApi(tool: ApiTool): AiTool["status"] {
   return "active";
 }
 
+function mapIntegrationConfig(
+  raw: ApiToolIntegrationConfig | undefined,
+): ToolIntegrationConfig | null {
+  if (!raw?.usage?.url) {
+    return null;
+  }
+  return raw as ToolIntegrationConfig;
+}
+
 export function mapApiTool(api: ApiTool): AiTool {
   return {
     id: api.id,
     name: api.name,
     provider: providerFromVendor(api.vendor, api.pricing_config),
+    parentSlug: api.parent_slug ?? null,
+    parentLabel: api.parent_label ?? null,
+    productLabel: api.product_label ?? null,
     description: api.description ?? "",
     apiEndpoint: api.api_endpoint ?? null,
+    integrationConfig: mapIntegrationConfig(api.integration_config),
     pricing: pricingFromApi(api),
     status: statusFromApi(api),
+    builtIn: Boolean(api.built_in),
     apiKeyMasked: api.api_token_masked,
     lastSyncAt: api.last_sync_at ?? null,
     tokenCount: api.token_count,
@@ -365,6 +434,8 @@ export function pricingToApiFields(
         plan_name: null,
         included_tokens: null,
         overage_rate: null,
+        organization_id: normalized.organizationId,
+        parent_slug: normalized.parentSlug,
       },
     };
 
@@ -411,6 +482,7 @@ export function toToolWriteBody(body: CreateToolRequest): ApiToolWriteBody {
     vendor: body.provider,
     description: body.description,
     api_endpoint: body.apiEndpoint ?? null,
+    integration_config: body.integrationConfig ?? {},
     pricing_model: pricing.pricing_model,
     token_price: pricing.token_price,
     package_allowance: pricing.package_allowance,
@@ -433,6 +505,7 @@ export function toToolUpdateBodyFromPartial(body: UpdateToolRequest): ApiToolWri
     provider: body.provider ?? "custom",
     description: body.description ?? "",
     apiEndpoint: body.apiEndpoint ?? null,
+    integrationConfig: body.integrationConfig ?? null,
     pricing: normalizePricing(body.pricing ?? emptyToolPricing()),
   });
 }

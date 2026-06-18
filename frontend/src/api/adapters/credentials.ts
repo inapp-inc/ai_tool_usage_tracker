@@ -79,6 +79,7 @@ export function toCredentialCreateBody(body: CreateCredentialRequest): {
   tool_id: string;
   team_id: string;
   secret_value: string;
+  organization_id?: string | null;
   pull_interval_minutes: number;
   rotation_reminder_days: number | null;
   expires_at: string | null;
@@ -89,6 +90,9 @@ export function toCredentialCreateBody(body: CreateCredentialRequest): {
     tool_id: body.catalogueToolId,
     team_id: body.teamId,
     secret_value: body.apiKey,
+    ...(body.organizationId?.trim()
+      ? { organization_id: body.organizationId.trim() }
+      : {}),
     pull_interval_minutes: SYNC_SCHEDULE_MINUTES[body.syncSchedule],
     rotation_reminder_days: body.rotationReminderDays,
     expires_at: body.expiresAt,

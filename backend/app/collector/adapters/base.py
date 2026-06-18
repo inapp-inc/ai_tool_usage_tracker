@@ -5,23 +5,11 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
+from app.settings.builtin_catalog import ADAPTER_ALIASES, BUILTIN_PRODUCT_SLUGS
+
 SyncStatus = Literal["active", "inactive", "error"]
 
-SUPPORTED_PROVIDERS = frozenset(
-    {
-        "openai",
-        "anthropic",
-        "google",
-        "azure_openai",
-        "cohere",
-        "mistral",
-        "custom",
-        "mabl",
-        "windsurf",
-        "cursor",
-        "figma",
-    }
-)
+SUPPORTED_PROVIDERS = frozenset(BUILTIN_PRODUCT_SLUGS) | frozenset(ADAPTER_ALIASES.keys())
 
 
 def resolve_provider_api_url(
@@ -49,6 +37,8 @@ class UsageRecord:
     input_tokens: int
     output_tokens: int
     estimated_cost: Decimal
+    user_email: str | None = None
+    user_name: str | None = None
 
     @property
     def total_tokens(self) -> int:

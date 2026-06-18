@@ -30,17 +30,14 @@ Implement in `frontend/src/api/adapters/tools.ts` when wiring the backend (mirro
 
 ## Provider / vendor mapping
 
-| Frontend `ToolProvider` | Suggested `vendor` string (OpenAPI) |
-|-------------------------|-----------------------------------|
-| `openai` | `OpenAI` |
-| `anthropic` | `Anthropic` |
-| `google` | `Google` |
-| `azure_openai` | `Azure OpenAI` |
-| `cohere` | `Cohere` |
-| `mistral` | `Mistral` |
-| `custom` | `Custom` |
+Tools reference providers by **`provider_id`** (UUID from Settings). The OpenAPI `vendor` field holds the provider **label** for display and legacy compatibility.
 
-Store normalized slug in `pricing_config.provider_slug` for round-trip if display name differs.
+| Frontend | API |
+|----------|-----|
+| `providerId` | `provider_id` on tool create/update |
+| `provider` (display) | Resolve label from `GET /settings/providers` by id |
+
+Store `provider_id` on the tool record; resolve label for display via the providers lookup — no slug field.
 
 ---
 
@@ -99,7 +96,7 @@ Store normalized slug in `pricing_config.provider_slug` for round-trip if displa
 
 | Source | Target |
 |--------|--------|
-| `vendor` | `provider` (reverse slug map) |
+| `vendor` / `provider_id` | `provider` (label from providers lookup by id) |
 | `active` | `status` (`active` / `inactive`) |
 | `token_price`, `package_allowance`, `overage_price`, `pricing_config` | `pricing` object |
 | — | `description` from `pricing_config.description` or DB column |

@@ -5,9 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.admin import Provider
 from app.settings.repository import ProviderRepository
+from app.settings.parent_repository import ProviderParentRepository
 from app.settings.schemas import (
     ProviderCreateRequest,
     ProviderListResponse,
+    ProviderParentListResponse,
+    ProviderParentResponse,
     ProviderResponse,
     ProviderUpdateRequest,
 )
@@ -17,6 +20,20 @@ class ProviderService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._providers = ProviderRepository(session)
+        self._parents = ProviderParentRepository(session)
+
+    async def list_provider_parents(self) -> ProviderParentListResponse:
+        rows = await self._parents.list_parents()
+        return ProviderParentListResponse(
+            data=[
+                ProviderParentResponse(
+                    slug=row.slug,
+                    label=row.label,
+                    sort_order=row.sort_order,
+                )
+                for row in rows
+            ]
+        )
 
     async def list_providers(self, *, active: bool | None = None) -> ProviderListResponse:
         rows = await self._providers.list_providers(active=active)
@@ -99,11 +116,16 @@ class ProviderService:
 
     @staticmethod
     def _to_response(provider: Provider) -> ProviderResponse:
+        parent = provider.parent
         return ProviderResponse(
             slug=provider.slug,
             label=provider.label,
             description=provider.description,
             logo_url=provider.logo_url,
+            parent_slug=provider.parent_slug,
+            parent_label=parent.label if parent is not None else None,
+            adapter_key=provider.adapter_key,
+            requires_api_endpoint=bool(provider.requires_api_endpoint),
             built_in=provider.built_in,
             active=provider.active,
             sort_order=provider.sort_order,

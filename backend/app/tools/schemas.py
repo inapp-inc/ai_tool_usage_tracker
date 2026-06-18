@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.integration.engine import IntegrationConfigError, validate_integration_config
 from app.tools.pricing import validate_vendor
 
 PricingModel = Literal["flat_token", "package_with_overage", "custom"]
@@ -37,6 +38,18 @@ class ToolCreateRequest(BaseModel):
     package_allowance: int | None = Field(default=None, ge=0)
     overage_price: Decimal | None = Field(default=None, ge=0)
     pricing_config: dict = Field(default_factory=dict)
+    integration_config: dict = Field(default_factory=dict)
+
+    @field_validator("integration_config")
+    @classmethod
+    def validate_integration_config_field(cls, value: dict) -> dict:
+        if not value:
+            return {}
+        try:
+            validate_integration_config(value)
+        except IntegrationConfigError as exc:
+            raise ValueError(str(exc)) from exc
+        return value
 
     @field_validator("vendor")
     @classmethod
@@ -61,7 +74,19 @@ class ToolUpdateRequest(BaseModel):
     package_allowance: int | None = Field(default=None, ge=0)
     overage_price: Decimal | None = Field(default=None, ge=0)
     pricing_config: dict | None = None
+    integration_config: dict | None = None
     active: bool | None = None
+
+    @field_validator("integration_config")
+    @classmethod
+    def validate_integration_config_field(cls, value: dict | None) -> dict | None:
+        if value is None or not value:
+            return value if value is None else {}
+        try:
+            validate_integration_config(value)
+        except IntegrationConfigError as exc:
+            raise ValueError(str(exc)) from exc
+        return value
 
     @field_validator("vendor")
     @classmethod
@@ -95,6 +120,7 @@ class ToolResponse(BaseModel):
     vendor: str
     description: str | None = None
     api_endpoint: str | None = None
+    integration_config: dict = Field(default_factory=dict)
     pricing_model: str
     token_price: Decimal
     package_allowance: int | None = None
@@ -109,6 +135,10 @@ class ToolResponse(BaseModel):
     sync_status: SyncStatus
     last_sync_at: datetime | None = None
     last_sync_error: str | None = None
+    built_in: bool = False
+    parent_slug: str | None = None
+    parent_label: str | None = None
+    product_label: str | None = None
     created_at: datetime
     updated_at: datetime
 

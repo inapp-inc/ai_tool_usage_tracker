@@ -12,6 +12,10 @@ class ProviderResponse(BaseModel):
     label: str
     description: str | None = None
     logo_url: str | None = None
+    parent_slug: str | None = None
+    parent_label: str | None = None
+    adapter_key: str | None = None
+    requires_api_endpoint: bool = False
     built_in: bool
     active: bool
     sort_order: int
@@ -19,6 +23,16 @@ class ProviderResponse(BaseModel):
 
 class ProviderListResponse(BaseModel):
     data: list[ProviderResponse]
+
+
+class ProviderParentResponse(BaseModel):
+    slug: str
+    label: str
+    sort_order: int
+
+
+class ProviderParentListResponse(BaseModel):
+    data: list[ProviderParentResponse]
 
 
 class ProviderCreateRequest(BaseModel):

@@ -2,6 +2,7 @@
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.admin import Provider
 
@@ -11,7 +12,11 @@ class ProviderRepository:
         self._session = session
 
     async def list_providers(self, *, active: bool | None = None) -> list[Provider]:
-        stmt = select(Provider).order_by(Provider.sort_order.asc(), Provider.label.asc())
+        stmt = (
+            select(Provider)
+            .options(selectinload(Provider.parent))
+            .order_by(Provider.sort_order.asc(), Provider.label.asc())
+        )
         if active is not None:
             stmt = stmt.where(Provider.active == active)
         result = await self._session.execute(stmt)
@@ -19,7 +24,9 @@ class ProviderRepository:
 
     async def get_by_slug(self, slug: str) -> Provider | None:
         result = await self._session.execute(
-            select(Provider).where(Provider.slug == slug)
+            select(Provider)
+            .options(selectinload(Provider.parent))
+            .where(Provider.slug == slug)
         )
         return result.scalar_one_or_none()
 

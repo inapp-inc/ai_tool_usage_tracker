@@ -1,4 +1,4 @@
-"""Generic adapter for custom integrations (Custom, Mabl, Windsurf)."""
+"""Generic adapter for config-driven and legacy custom integrations."""
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -8,14 +8,19 @@ from app.collector.adapters.base import (
     ProviderSnapshot,
     ProviderValidationError,
     UsageRecord,
-    resolve_provider_api_url,
 )
-from app.collector.adapters.http_utils import get_json
+from app.collector.adapters.http_utils import get_with_detail
 from app.collector.adapters.member_parsing import parse_generic_members
+from app.integration.engine import (
+    IntegrationConfigError,
+    fetch_usage_from_config,
+    validate_connection_from_config,
+)
+from app.integration.http_log import log_provider_http
 
 
 class GenericUsageAdapter:
-    """Format validation + optional custom validation URL from pricing_config."""
+    """Validation and usage via integration_config when present; legacy URL probe otherwise."""
 
     def __init__(self, provider: str) -> None:
         self.provider = provider
@@ -33,6 +38,21 @@ class GenericUsageAdapter:
 
         config = pricing_config or {}
         endpoint = api_endpoint or config.get("api_endpoint")
+        integration_config = config.get("integration_config")
+
+        if isinstance(integration_config, dict) and integration_config.get("usage"):
+            try:
+                await validate_connection_from_config(
+                    api_token,
+                    integration_config=integration_config,
+                    api_endpoint=endpoint,
+                    tool_vendor=self.provider,
+                    pricing_config=config,
+                )
+            except IntegrationConfigError as exc:
+                raise ProviderValidationError(str(exc)) from exc
+            return
+
         validate_url = config.get("validate_url")
         if self.provider == "custom" or self.provider not in {
             "mabl",
@@ -55,15 +75,24 @@ class GenericUsageAdapter:
             validate_url = endpoint
 
         if validate_url:
-            status, _ = await get_json(
+            result = await get_with_detail(
                 validate_url,
                 headers={"Authorization": f"Bearer {api_token}"},
             )
-            if status == 401:
+            log_provider_http(
+                operation="validate",
+                method="GET",
+                url=validate_url,
+                status_code=result.status_code,
+                response_body=result.text,
+                tool_vendor=self.provider,
+            )
+            if result.status_code == 401:
                 raise ProviderValidationError("Invalid API key for custom validation URL.")
-            if status >= 400:
+            if result.status_code >= 400:
                 raise ProviderValidationError(
-                    f"Custom API key validation failed (HTTP {status})."
+                    f"Custom API key validation failed (HTTP {result.status_code}). "
+                    "See Docker api logs for the provider response body."
                 )
 
     async def fetch_snapshot(
@@ -72,12 +101,18 @@ class GenericUsageAdapter:
         *,
         package_allowance: int | None = None,
         pricing_config: dict | None = None,
+        api_endpoint: str | None = None,
         **_kwargs: object,
     ) -> ProviderSnapshot:
-        del api_token, pricing_config
         until = datetime.now(UTC)
         since = until - timedelta(days=30)
-        records = await self.fetch_usage("token", since=since, until=until)
+        records = await self.fetch_usage(
+            api_token,
+            since=since,
+            until=until,
+            pricing_config=pricing_config,
+            api_endpoint=api_endpoint,
+        )
         tokens_used = sum(record.total_tokens for record in records)
         total_cost = sum((record.estimated_cost for record in records), Decimal("0"))
         balance = None
@@ -103,13 +138,21 @@ class GenericUsageAdapter:
         members_url = (pricing_config or {}).get("members_url")
         if not members_url:
             return []
-        status, payload = await get_json(
+        result = await get_with_detail(
             members_url,
             headers={"Authorization": f"Bearer {api_token}"},
         )
-        if status != 200:
+        log_provider_http(
+            operation="members",
+            method="GET",
+            url=members_url,
+            status_code=result.status_code,
+            response_body=result.text,
+            tool_vendor=self.provider,
+        )
+        if result.status_code != 200:
             return []
-        return parse_generic_members(payload)
+        return parse_generic_members(result.json)
 
     async def fetch_usage(
         self,
@@ -117,7 +160,26 @@ class GenericUsageAdapter:
         *,
         since: datetime,
         until: datetime,
+        pricing_config: dict | None = None,
+        api_endpoint: str | None = None,
     ) -> list[UsageRecord]:
+        config = pricing_config or {}
+        integration_config = config.get("integration_config")
+        if isinstance(integration_config, dict) and integration_config.get("usage"):
+            endpoint = api_endpoint or config.get("api_endpoint")
+            try:
+                return await fetch_usage_from_config(
+                    api_token,
+                    integration_config=integration_config,
+                    since=since,
+                    until=until,
+                    api_endpoint=endpoint,
+                    tool_vendor=self.provider,
+                    pricing_config=config,
+                )
+            except IntegrationConfigError as exc:
+                raise ProviderValidationError(str(exc)) from exc
+
         del api_token
         midpoint = since + (until - since) / 2
         return [

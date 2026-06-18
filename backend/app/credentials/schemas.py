@@ -37,6 +37,11 @@ class CredentialCreateRequest(BaseModel):
     tool_id: UUID = Field(description="Catalogue tool id from the Tools page.")
     team_id: UUID
     secret_value: str = Field(min_length=1, max_length=4096)
+    organization_id: str | None = Field(
+        default=None,
+        max_length=100,
+        description="GitHub organization login — required when connecting Microsoft Copilot.",
+    )
     pull_interval_minutes: int = Field(default=60, ge=5, le=1440)
     rotation_reminder_days: int | None = Field(default=None, gt=0)
     expires_at: datetime | None = None

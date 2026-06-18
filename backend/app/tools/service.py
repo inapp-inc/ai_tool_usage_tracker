@@ -10,18 +10,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.collector.adapters.base import ProviderValidationError
-from app.collector.adapters.registry import fetch_provider_members, fetch_provider_snapshot
+from app.collector.adapters.registry import fetch_provider_members, fetch_provider_snapshot, fetch_provider_usage
+from app.integration.resolve import resolve_tool_polling_context
 from app.collector.service import CollectorService
 from app.core.token_crypto import decrypt_token, encrypt_token, mask_token
-from app.models.admin import Tool
+from app.models.admin import Provider, Tool
 from app.models.collector import CollectorConfig
+from app.settings.builtin_catalog import BUILTIN_CATALOGUE_SLUGS
+from app.settings.parent_repository import ProviderParentRepository
 from app.settings.repository import ProviderRepository
 from app.tools.pricing import (
     merge_pricing_config,
     normalize_pricing_config,
+    organization_id_from_pricing,
     pricing_config_for_response,
     validate_pricing_model,
     vendor_requires_api_endpoint,
+    vendor_requires_organization_id,
 )
 from app.tools.repository import ToolRepository
 from app.tools.synced_members import store_synced_members
@@ -44,6 +49,7 @@ class ToolService:
         self._tools = ToolRepository(session)
         self._collectors = CollectorService(session)
         self._providers = ProviderRepository(session)
+        self._provider_parents = ProviderParentRepository(session)
 
     async def list_tools(
         self,
@@ -57,14 +63,27 @@ class ToolService:
             active=active,
             catalogue_only=catalogue_only,
         )
+        provider_order = await self._provider_sort_order()
+        provider_map, parent_map = await self._catalogue_lookup_maps()
+        rows.sort(
+            key=lambda tool: (
+                not tool.built_in,
+                provider_order.get(tool.vendor, 999),
+                (tool.name or "").lower(),
+            )
+        )
         return ToolListResponse(
-            data=[self._to_response(row) for row in rows],
+            data=[
+                self._to_response(row, provider_map=provider_map, parent_map=parent_map)
+                for row in rows
+            ],
             meta=PaginationMeta(has_more=False),
         )
 
     async def get_tool(self, organization_id: UUID, tool_id: UUID) -> ToolResponse:
         tool = await self._require_tool(organization_id, tool_id)
-        return self._to_response(tool)
+        provider_map, parent_map = await self._catalogue_lookup_maps()
+        return self._to_response(tool, provider_map=provider_map, parent_map=parent_map)
 
     async def create_tool(
         self,
@@ -82,11 +101,19 @@ class ToolService:
             )
 
         provider = await self._require_active_provider(body.vendor)
-        await self._validate_vendor_api_endpoint(
-            body.vendor,
-            body.api_endpoint,
-            built_in=provider.built_in,
-        )
+        if body.vendor in BUILTIN_CATALOGUE_SLUGS:
+            existing_builtin = await self._tools.get_catalogue_by_vendor(
+                organization_id,
+                body.vendor,
+            )
+            if existing_builtin is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Built-in catalogue tool '{provider.label}' already exists. "
+                        "Edit the existing entry or add a Custom Integration."
+                    ),
+                )
 
         pricing_config = normalize_pricing_config(
             body.pricing_model,
@@ -95,6 +122,16 @@ class ToolService:
             overage_price=body.overage_price,
         )
         pricing_config.setdefault("provider_slug", body.vendor)
+
+        await self._validate_vendor_api_endpoint(
+            provider,
+            body.api_endpoint,
+            integration_config=body.integration_config,
+            pricing_config=pricing_config,
+        )
+        if body.vendor == "custom":
+            await self._validate_custom_parent_slug(pricing_config)
+        self._validate_polling_config(body.vendor, body.api_endpoint, body.integration_config)
 
         tool = await self._tools.create(
             organization_id=organization_id,
@@ -107,13 +144,15 @@ class ToolService:
             package_allowance=body.package_allowance,
             overage_price=body.overage_price,
             pricing_config=pricing_config,
+            integration_config=body.integration_config or {},
             api_token_ciphertext=encrypt_token(""),
             catalogue_only=True,
         )
 
         await self._session.commit()
         await self._session.refresh(tool)
-        return self._to_response(tool)
+        provider_map, parent_map = await self._catalogue_lookup_maps()
+        return self._to_response(tool, provider_map=provider_map, parent_map=parent_map)
 
     async def update_tool(
         self,
@@ -148,6 +187,10 @@ class ToolService:
 
         if "api_endpoint" in updates:
             tool.api_endpoint = body.api_endpoint
+
+        if "integration_config" in updates and body.integration_config is not None:
+            tool.integration_config = body.integration_config
+            flag_modified(tool, "integration_config")
 
         if "pricing_model" in updates and body.pricing_model is not None:
             validate_pricing_model(body.pricing_model)
@@ -200,10 +243,29 @@ class ToolService:
             tool.package_allowance,
             tool.overage_price,
         )
+
+        effective_api_endpoint = (
+            body.api_endpoint if "api_endpoint" in updates else tool.api_endpoint
+        )
+        effective_integration_config = (
+            body.integration_config
+            if "integration_config" in updates and body.integration_config is not None
+            else (tool.integration_config if isinstance(tool.integration_config, dict) else {})
+        )
         await self._validate_vendor_api_endpoint(
-            tool.vendor,
-            tool.api_endpoint,
-            built_in=provider.built_in,
+            provider,
+            effective_api_endpoint,
+            integration_config=effective_integration_config,
+            pricing_config=tool.pricing_config if isinstance(tool.pricing_config, dict) else {},
+        )
+        if tool.vendor == "custom":
+            await self._validate_custom_parent_slug(
+                tool.pricing_config if isinstance(tool.pricing_config, dict) else {}
+            )
+        self._validate_polling_config(
+            provider.slug,
+            effective_api_endpoint,
+            effective_integration_config,
         )
 
         if "name" in updates and body.name is not None:
@@ -213,10 +275,16 @@ class ToolService:
 
         await self._session.commit()
         await self._session.refresh(tool)
-        return self._to_response(tool)
+        provider_map, parent_map = await self._catalogue_lookup_maps()
+        return self._to_response(tool, provider_map=provider_map, parent_map=parent_map)
 
     async def delete_tool(self, organization_id: UUID, tool_id: UUID) -> None:
         tool = await self._require_tool(organization_id, tool_id)
+        if tool.built_in:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Built-in catalogue tools cannot be deleted.",
+            )
         if not tool.catalogue_only:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -236,7 +304,8 @@ class ToolService:
         await self._apply_sync(tool, api_key)
         await self._session.commit()
         await self._session.refresh(tool)
-        return self._to_response(tool)
+        provider_map, parent_map = await self._catalogue_lookup_maps()
+        return self._to_response(tool, provider_map=provider_map, parent_map=parent_map)
 
     async def list_tool_members(
         self,
@@ -278,7 +347,10 @@ class ToolService:
     async def _apply_sync(self, tool: Tool, api_key: str) -> None:
         collector = await self._get_collector(tool.id)
         run_error: str | None = None
-        pricing_config = tool.pricing_config if isinstance(tool.pricing_config, dict) else {}
+        pricing_config, api_endpoint, integration_config = await resolve_tool_polling_context(
+            self._session,
+            tool,
+        )
         until = datetime.now(UTC)
         since = until - timedelta(days=SYNC_LOOKBACK_DAYS)
 
@@ -288,14 +360,17 @@ class ToolService:
                 api_key,
                 package_allowance=tool.package_allowance,
                 pricing_config=pricing_config,
-                api_endpoint=tool.api_endpoint,
+                api_endpoint=api_endpoint,
+                integration_config=integration_config,
+                since=since,
+                until=until,
             )
 
             members = await fetch_provider_members(
                 tool.vendor,
                 api_key,
                 pricing_config=pricing_config,
-                api_endpoint=tool.api_endpoint,
+                api_endpoint=api_endpoint,
             )
             store_synced_members(tool, members)
 
@@ -368,14 +443,82 @@ class ToolService:
             )
         return provider
 
+    async def _catalogue_lookup_maps(
+        self,
+    ) -> tuple[dict[str, Provider], dict[str, object]]:
+        providers = await self._providers.list_providers()
+        provider_map = {row.slug: row for row in providers}
+        parents = await self._provider_parents.list_parents()
+        parent_map = {row.slug: row for row in parents}
+        return provider_map, parent_map
+
+    async def _validate_custom_parent_slug(self, pricing_config: dict | None) -> None:
+        parent_slug = (pricing_config or {}).get("parent_slug")
+        if not parent_slug or not str(parent_slug).strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Provider (parent company) is required for custom tools.",
+            )
+        parent = await self._provider_parents.get_by_slug(str(parent_slug).strip())
+        if parent is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown provider: {parent_slug}",
+            )
+
+    async def _provider_sort_order(self) -> dict[str, int]:
+        rows = await self._providers.list_providers()
+        return {row.slug: row.sort_order for row in rows}
+
     @staticmethod
-    async def _validate_vendor_api_endpoint(
+    def _validate_polling_config(
         vendor: str,
         api_endpoint: str | None,
-        *,
-        built_in: bool,
+        integration_config: dict | None,
     ) -> None:
-        if vendor_requires_api_endpoint(vendor, built_in=built_in) and not api_endpoint:
+        if vendor != "custom":
+            return
+        config = integration_config or {}
+        usage = config.get("usage") if isinstance(config, dict) else None
+        if not usage or not isinstance(usage, dict):
+            return
+        if not api_endpoint or not str(api_endpoint).strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="api_endpoint is required when usage polling is enabled.",
+            )
+
+    @staticmethod
+    async def _validate_vendor_api_endpoint(
+        provider: Provider,
+        api_endpoint: str | None,
+        *,
+        integration_config: dict | None = None,
+        pricing_config: dict | None = None,
+    ) -> None:
+        config = integration_config or {}
+        pricing = pricing_config or {}
+
+        if vendor_requires_organization_id(provider.slug):
+            if not organization_id_from_pricing(pricing):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="GitHub organization ID is required for Microsoft Copilot.",
+                )
+            return
+
+        if provider.slug == "custom" and isinstance(config, dict) and config.get("usage"):
+            if not api_endpoint or not str(api_endpoint).strip():
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="api_endpoint is required when usage polling is enabled.",
+                )
+            return
+        if vendor_requires_api_endpoint(
+            provider.slug,
+            built_in=provider.built_in,
+            requires_api_endpoint=bool(provider.requires_api_endpoint),
+        ) and not api_endpoint:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="api_endpoint is required for this provider.",
@@ -401,7 +544,12 @@ class ToolService:
             )
 
     @staticmethod
-    def _to_response(tool: Tool) -> ToolResponse:
+    def _to_response(
+        tool: Tool,
+        *,
+        provider_map: dict[str, Provider] | None = None,
+        parent_map: dict[str, object] | None = None,
+    ) -> ToolResponse:
         plain = ToolService._decrypt_api_key(tool)
         if plain:
             masked = mask_token(plain)
@@ -412,6 +560,32 @@ class ToolService:
         sync_status = tool.sync_status
         if not tool.active:
             sync_status = "inactive"
+
+        pricing_raw = tool.pricing_config if isinstance(tool.pricing_config, dict) else {}
+        parent_slug: str | None = None
+        parent_label: str | None = None
+        product_label: str | None = None
+
+        if tool.vendor == "custom":
+            product_label = tool.name
+            raw_parent = pricing_raw.get("parent_slug")
+            parent_slug = str(raw_parent).strip() if raw_parent else None
+            if parent_slug and parent_map:
+                parent_row = parent_map.get(parent_slug)
+                if parent_row is not None:
+                    parent_label = getattr(parent_row, "label", None)
+        else:
+            product = (provider_map or {}).get(tool.vendor)
+            if product is not None:
+                product_label = product.label
+                parent_slug = product.parent_slug
+                if product.parent is not None:
+                    parent_label = product.parent.label
+                elif parent_slug and parent_map:
+                    parent_row = parent_map.get(parent_slug)
+                    if parent_row is not None:
+                        parent_label = getattr(parent_row, "label", None)
+
         return ToolResponse(
             id=tool.id,
             organization_id=tool.organization_id,
@@ -419,6 +593,7 @@ class ToolService:
             vendor=tool.vendor,
             description=tool.description,
             api_endpoint=tool.api_endpoint,
+            integration_config=tool.integration_config if isinstance(tool.integration_config, dict) else {},
             pricing_model=tool.pricing_model,
             token_price=tool.token_price,
             package_allowance=tool.package_allowance,
@@ -438,6 +613,10 @@ class ToolService:
             sync_status=sync_status,  # type: ignore[arg-type]
             last_sync_at=tool.last_sync_at,
             last_sync_error=tool.last_sync_error,
+            built_in=bool(tool.built_in),
+            parent_slug=parent_slug,
+            parent_label=parent_label,
+            product_label=product_label,
             created_at=tool.created_at,
             updated_at=tool.updated_at,
         )

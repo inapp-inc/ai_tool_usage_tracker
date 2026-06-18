@@ -36,15 +36,19 @@ export {
 } from "./adapters/tools";
 
 export async function fetchToolOptions(): Promise<
-  Array<{ id: string; name: string; provider: string }>
+  Array<{ id: string; name: string; provider: string; organizationId: string | null }>
 > {
   const rows = await apiRequest<
-    Array<{ id: string; name: string; vendor: string }>
+    Array<{ id: string; name: string; vendor: string; pricing_config?: { organization_id?: string } }>
   >("/tools?active=true&catalogue_only=true");
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
     provider: row.vendor,
+    organizationId:
+      typeof row.pricing_config?.organization_id === "string"
+        ? row.pricing_config.organization_id
+        : null,
   }));
 }
 

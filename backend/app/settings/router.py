@@ -9,6 +9,7 @@ from app.models.auth import User
 from app.settings.schemas import (
     ProviderCreateRequest,
     ProviderListResponse,
+    ProviderParentListResponse,
     ProviderResponse,
     ProviderUpdateRequest,
 )
@@ -39,6 +40,15 @@ async def list_providers(
     service: ProviderService = Depends(get_provider_service),
 ) -> ProviderListResponse:
     return await service.list_providers(active=active)
+
+
+@router.get("/provider-parents", response_model=ProviderParentListResponse)
+async def list_provider_parents(
+    _current_user: User = Depends(get_current_user),
+    service: ProviderService = Depends(get_provider_service),
+) -> ProviderParentListResponse:
+    """List vendor / platform companies (Microsoft, Anthropic, …)."""
+    return await service.list_provider_parents()
 
 
 @router.post(

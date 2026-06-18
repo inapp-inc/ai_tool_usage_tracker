@@ -26,6 +26,7 @@ def test_to_response_includes_api_endpoint(_decrypt: MagicMock) -> None:
     tool.package_allowance = None
     tool.overage_price = None
     tool.pricing_config = {"provider_slug": "custom"}
+    tool.integration_config = {}
     tool.active = True
     tool.api_token_ciphertext = "encrypted"
     tool.token_count = 0
@@ -35,6 +36,10 @@ def test_to_response_includes_api_endpoint(_decrypt: MagicMock) -> None:
     tool.sync_status = "inactive"
     tool.last_sync_at = None
     tool.last_sync_error = None
+    tool.built_in = False
+    tool.parent_slug = None
+    tool.parent_label = None
+    tool.product_label = None
     tool.created_at = now
     tool.updated_at = now
 

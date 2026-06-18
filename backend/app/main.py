@@ -30,6 +30,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with session_factory() as session:
         await seed_dev_admin(session, settings)
 
+    from app.settings.seed import sync_builtin_providers
+    from app.tools.builtin_seed import sync_all_org_builtin_catalogue_tools
+
+    async with session_factory() as session:
+        await sync_builtin_providers(session)
+
+    async with session_factory() as session:
+        await sync_all_org_builtin_catalogue_tools(session)
+
     scheduler: CollectorScheduler | None = None
     if settings.collector_scheduler_enabled:
         scheduler = CollectorScheduler(session_factory)

@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -123,6 +123,28 @@ class TeamMembership(Base):
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ProviderParent(Base):
+    """Vendor / platform company (admin.provider_parents)."""
+
+    __tablename__ = "provider_parents"
+    __table_args__ = {"schema": "admin"}
+
+    slug: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    providers: Mapped[list["Provider"]] = relationship(back_populates="parent")
+
+
 class Provider(Base):
     """Configurable AI provider lookup (admin.providers)."""
 
@@ -133,6 +155,13 @@ class Provider(Base):
     label: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     logo_url: Mapped[str | None] = mapped_column(String(512))
+    parent_slug: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("admin.provider_parents.slug", ondelete="SET NULL"),
+        nullable=True,
+    )
+    adapter_key: Mapped[str | None] = mapped_column(String(64))
+    requires_api_endpoint: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     built_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -145,6 +174,8 @@ class Provider(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+    parent: Mapped["ProviderParent | None"] = relationship(back_populates="providers")
 
 
 class Tool(Base):
@@ -191,7 +222,11 @@ class Tool(Base):
     rotation_reminder_days: Mapped[int | None] = mapped_column(BigInteger)
     last_rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     api_endpoint: Mapped[str | None] = mapped_column(String(512))
+    integration_config: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     catalogue_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    built_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -9,6 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
+import logging
+
 from app.collector.adapters.base import ProviderValidationError
 from app.collector.adapters.registry import validate_provider_api_key
 from app.core.token_crypto import decrypt_token, encrypt_token, mask_token
@@ -22,13 +24,21 @@ from app.credentials.schemas import (
     CredentialValidateResponse,
     PaginationMeta,
 )
-from app.models.admin import Team, Tool
+from app.models.admin import Provider, Team, Tool
 from app.models.collector import CollectorConfig
 from app.settings.repository import ProviderRepository
 from app.teams.repository import TeamRepository
-from app.tools.pricing import normalize_pricing_config, vendor_requires_api_endpoint
+from app.tools.pricing import (
+    normalize_pricing_config,
+    organization_id_from_pricing,
+    validate_organization_id,
+    vendor_requires_api_endpoint,
+    vendor_requires_organization_id,
+)
 from app.tools.catalogue import catalogue_tool_id_from_connected, team_id_from_connected
 from app.tools.repository import ToolRepository
+
+logger = logging.getLogger(__name__)
 
 
 class CredentialService:
@@ -75,6 +85,13 @@ class CredentialService:
         try:
             await self._validate_secret_for_tool(catalogue_tool, body.secret_value)
         except ProviderValidationError as exc:
+            logger.warning(
+                "Credential validation failed | tool_id=%s vendor=%s api_endpoint=%s detail=%s",
+                catalogue_tool.id,
+                catalogue_tool.vendor,
+                catalogue_tool.api_endpoint,
+                str(exc),
+            )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=str(exc),
@@ -96,11 +113,19 @@ class CredentialService:
             body.tool_id,
         )
         team = await self._require_team(organization_id, body.team_id)
+        await self._apply_copilot_organization_id(catalogue_tool, body.organization_id)
         await self._validate_catalogue_tool_for_connect(catalogue_tool)
 
         try:
             await self._validate_secret_for_tool(catalogue_tool, body.secret_value)
         except ProviderValidationError as exc:
+            logger.warning(
+                "Credential connect validation failed | tool_id=%s vendor=%s api_endpoint=%s detail=%s",
+                catalogue_tool.id,
+                catalogue_tool.vendor,
+                catalogue_tool.api_endpoint,
+                str(exc),
+            )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=str(exc),
@@ -140,6 +165,9 @@ class CredentialService:
             package_allowance=catalogue_tool.package_allowance,
             overage_price=catalogue_tool.overage_price,
             pricing_config=pricing_config,
+            integration_config=dict(catalogue_tool.integration_config)
+            if isinstance(catalogue_tool.integration_config, dict)
+            else {},
             api_token_ciphertext=encrypt_token(body.secret_value),
             catalogue_only=False,
         )
@@ -246,7 +274,37 @@ class CredentialService:
         return decrypt_token(tool.api_token_ciphertext)
 
     async def _validate_secret_for_tool(self, tool: Tool, secret_value: str) -> None:
-        pricing_config = tool.pricing_config if isinstance(tool.pricing_config, dict) else {}
+        pricing_config = dict(tool.pricing_config) if isinstance(tool.pricing_config, dict) else {}
+        integration_config = (
+            dict(tool.integration_config)
+            if isinstance(tool.integration_config, dict) and tool.integration_config.get("usage")
+            else None
+        )
+        if integration_config is None:
+            catalogue_id = catalogue_tool_id_from_connected(tool)
+            if catalogue_id is not None:
+                catalogue = await self._tools.get_by_id(catalogue_id, tool.organization_id)
+                if catalogue is not None:
+                    if not pricing_config.get("organization_id") and isinstance(
+                        catalogue.pricing_config, dict
+                    ):
+                        pricing_config.update(
+                            {
+                                key: value
+                                for key, value in catalogue.pricing_config.items()
+                                if key == "organization_id" and value
+                            }
+                        )
+                    if isinstance(catalogue.integration_config, dict) and catalogue.integration_config.get(
+                        "usage"
+                    ):
+                        integration_config = dict(catalogue.integration_config)
+                        if not tool.api_endpoint:
+                            tool.api_endpoint = catalogue.api_endpoint
+        if integration_config:
+            pricing_config["integration_config"] = integration_config
+        if tool.api_endpoint:
+            pricing_config.setdefault("api_endpoint", tool.api_endpoint)
         await validate_provider_api_key(
             tool.vendor,
             secret_value,
@@ -283,11 +341,32 @@ class CredentialService:
 
     async def _validate_catalogue_tool_for_connect(self, catalogue_tool: Tool) -> None:
         provider = await self._require_active_provider(catalogue_tool.vendor)
+        if vendor_requires_organization_id(catalogue_tool.vendor):
+            if not organization_id_from_pricing(
+                catalogue_tool.pricing_config if isinstance(catalogue_tool.pricing_config, dict) else {}
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="GitHub organization ID is required for Microsoft Copilot.",
+                )
+            return
         await self._validate_vendor_api_endpoint(
-            catalogue_tool.vendor,
+            provider,
             catalogue_tool.api_endpoint,
-            built_in=provider.built_in,
         )
+
+    async def _apply_copilot_organization_id(
+        self,
+        catalogue_tool: Tool,
+        organization_id: str | None,
+    ) -> None:
+        if not vendor_requires_organization_id(catalogue_tool.vendor):
+            return
+        config = dict(catalogue_tool.pricing_config) if isinstance(catalogue_tool.pricing_config, dict) else {}
+        if organization_id:
+            config["organization_id"] = validate_organization_id(organization_id)
+            catalogue_tool.pricing_config = config
+            flag_modified(catalogue_tool, "pricing_config")
 
     async def _require_active_provider(self, slug: str):
         provider = await self._providers.get_by_slug(slug)
@@ -305,12 +384,14 @@ class CredentialService:
 
     @staticmethod
     async def _validate_vendor_api_endpoint(
-        vendor: str,
+        provider: Provider,
         api_endpoint: str | None,
-        *,
-        built_in: bool,
     ) -> None:
-        if vendor_requires_api_endpoint(vendor, built_in=built_in) and not api_endpoint:
+        if vendor_requires_api_endpoint(
+            provider.slug,
+            built_in=provider.built_in,
+            requires_api_endpoint=bool(provider.requires_api_endpoint),
+        ) and not api_endpoint:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="api_endpoint is required for this provider.",

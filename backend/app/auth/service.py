@@ -148,6 +148,9 @@ async def seed_super_admin_if_empty(
     org = await org_repo.get_first()
     if org is None:
         org = await org_repo.create(name="Default Organization", slug="default")
+        from app.tools.builtin_seed import sync_org_builtin_catalogue_tools
+
+        await sync_org_builtin_catalogue_tools(session, org.id)
 
     await user_repo.create(
         organization_id=org.id,

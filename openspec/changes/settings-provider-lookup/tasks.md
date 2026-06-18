@@ -7,16 +7,16 @@
 - [x] 1.3 `ProviderRepository`: list (active filter), create, update, delete (guard built-in)
 - [x] 1.4 API router at `/api/v1/settings/providers` — GET (public auth), POST/PATCH/DELETE (super_admin)
 - [x] 1.5 DELETE guard: return 409 if `built_in = TRUE`
-- [x] 1.6 Slug validation: `^[a-z0-9_]+$`, unique constraint
-- [x] 1.7 Tool vendor validation against active providers; generic adapter fallback for unknown slugs
+- [x] 1.6 Label validation: unique constraint among active providers
+- [x] 1.7 Tool vendor validation against active providers; generic adapter fallback for unconfigured providers
 - [x] 1.8 Custom (non-built-in) providers require `api_endpoint` on tool create/update
 
 ## 2. Frontend
 
 - [x] 2.1 Add "Settings" menu item to sidebar (super_admin only, route `/admin/settings`)
 - [x] 2.2 Create `SettingsPage.tsx` with Providers table
-- [x] 2.3 Providers DataTable: slug, label, active badge, built-in badge, edit/delete actions
-- [x] 2.4 Add Provider slide-over form (slug, label, description)
+- [x] 2.3 Providers DataTable: label, active badge, built-in badge, edit/delete actions
+- [x] 2.4 Add Provider slide-over form (label, description)
 - [x] 2.5 Edit Provider slide-over (label, description, active toggle)
 - [x] 2.6 `frontend/src/api/providers.ts` with CRUD + `providerRequiresApiEndpoint`
 - [x] 2.7 `ToolsPage.tsx` loads providers dynamically; requires API URL for custom providers

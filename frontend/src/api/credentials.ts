@@ -38,6 +38,7 @@ export interface CreateCredentialRequest {
   catalogueToolId: string;
   teamId: string;
   apiKey: string;
+  organizationId?: string | null;
   syncSchedule: SyncSchedule;
   rotationReminderDays: number | null;
   expiresAt: string | null;

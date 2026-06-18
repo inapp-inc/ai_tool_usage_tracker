@@ -17,8 +17,8 @@ Add a "Settings" menu item in the main sidebar (Super Admin only). Initial tab: 
 ### 2. Providers lookup table
 
 A configurable list of provider entries, each with:
-- `slug` — unique identifier (machine-readable, e.g. `openai`, `my_internal_llm`)
-- `label` — display name (e.g. "OpenAI", "My Internal LLM")
+- `id` — UUID primary key (system-assigned on create)
+- `label` — display name (e.g. "OpenAI", "My Internal LLM"); unique among active providers
 - `description` — optional short description
 - `logo_url` — optional external image URL for display
 - `built_in` — boolean; built-in providers (seeded) cannot be deleted but can be disabled
@@ -27,10 +27,10 @@ A configurable list of provider entries, each with:
 ### 3. API endpoints
 
 ```
-GET    /api/v1/settings/providers           → ProviderListResponse
-POST   /api/v1/settings/providers           → Provider (201)  [super_admin]
-PATCH  /api/v1/settings/providers/{slug}    → Provider (200)  [super_admin]
-DELETE /api/v1/settings/providers/{slug}    → 204             [super_admin; non-built-in only]
+GET    /api/v1/settings/providers              → ProviderListResponse
+POST   /api/v1/settings/providers              → Provider (201)  [super_admin]
+PATCH  /api/v1/settings/providers/{providerId} → Provider (200)  [super_admin]
+DELETE /api/v1/settings/providers/{providerId} → 204             [super_admin; non-built-in only]
 ```
 
 `GET` is accessible to all authenticated users (needed by tool/credential dropdowns).
@@ -41,13 +41,12 @@ Tool form and credential form load providers from `GET /api/v1/settings/provider
 
 ### 5. Seed data
 
-Built-in provider seeds (added in migration):
-`openai`, `anthropic`, `google`, `azure_openai`, `cohere`, `mistral`, `cursor`, `mabl`, `windsurf`, `figma`, `custom`
+Built-in provider seeds (added in migration): OpenAI, Anthropic, Google, Azure OpenAI, Cohere, Mistral, Cursor, Mabl, Windsurf, Figma, Custom — each with a stable UUID `id`.
 
 ## Out of Scope
 
 - Per-provider OAuth or SSO configuration
-- Provider-specific adapter registration (adapter code still requires a deploy)
+- Provider-specific adapter registration — **superseded by** [provider-creation.md](../../specifications/provider-creation.md) (config-driven integration engine)
 - Other settings categories (notifications, appearance, etc.)
 
 ## Dependencies

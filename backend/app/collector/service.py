@@ -10,7 +10,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collector.adapters.base import ProviderValidationError
-from app.collector.adapters.registry import get_adapter, validate_provider_api_key
+from app.collector.adapters.registry import fetch_provider_usage, validate_provider_api_key
+from app.integration.resolve import resolve_tool_polling_context
 from app.collector.schemas import (
     CollectorCreateRequest,
     CollectorResponse,
@@ -180,26 +181,28 @@ class CollectorService:
         since: datetime | None = None,
         until: datetime | None = None,
     ):
-        adapter = get_adapter(config.provider)
         token = decrypt_token(config.api_token_ciphertext)
         until = until or datetime.now(UTC)
         since = since or (until - timedelta(minutes=config.pull_interval_minutes))
 
-        pricing_config: dict = {}
+        tool = None
         if config.tool_id is not None:
             tool = await self._session.get(Tool, config.tool_id)
-            if tool is not None and isinstance(tool.pricing_config, dict):
-                pricing_config = tool.pricing_config
 
-        try:
-            return await adapter.fetch_usage(
-                token,
-                since=since,
-                until=until,
-                pricing_config=pricing_config,
-            )
-        except TypeError:
-            return await adapter.fetch_usage(token, since=since, until=until)
+        pricing_config, api_endpoint, integration_config = await resolve_tool_polling_context(
+            self._session,
+            tool,
+        )
+
+        return await fetch_provider_usage(
+            config.provider,
+            token,
+            since=since,
+            until=until,
+            pricing_config=pricing_config,
+            api_endpoint=api_endpoint,
+            integration_config=integration_config,
+        )
 
     async def _persist_records(self, config: CollectorConfig, records) -> int:
         organization_id = None
@@ -228,6 +231,8 @@ class CollectorService:
                     total_tokens=record.input_tokens + record.output_tokens,
                     estimated_cost=record.estimated_cost,
                     vendor_event_id=record.vendor_event_id,
+                    user_email=getattr(record, "user_email", None),
+                    user_name=getattr(record, "user_name", None),
                 )
                 .on_conflict_do_nothing(
                     index_elements=["provider", "vendor_event_id"],

@@ -20,6 +20,10 @@ async def test_create_provider_persists_custom_slug() -> None:
     created.label = "My Internal LLM"
     created.description = "Private gateway"
     created.logo_url = None
+    created.parent = None
+    created.parent_slug = None
+    created.adapter_key = None
+    created.requires_api_endpoint = False
     created.built_in = False
     created.active = True
     created.sort_order = 0

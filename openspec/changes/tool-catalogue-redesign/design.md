@@ -29,7 +29,7 @@
 | Column | Notes |
 |--------|-------|
 | Tool | Tool display name |
-| Provider | Provider display name from Settings lookup (fallback to formatted slug) |
+| Provider | Provider display name from Settings lookup (by `provider_id`) |
 | Status | active / inactive / error |
 | Actions | Edit, Delete only — no sync or members actions on this page |
 

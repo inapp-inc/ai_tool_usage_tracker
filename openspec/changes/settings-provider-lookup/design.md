@@ -1,13 +1,15 @@
 # Design: Settings — Provider Lookup Keys
 
+**Target identity model:** Providers are identified by UUID `id` and human-readable `label` only — no slug. See [provider-creation.md](../../specifications/provider-creation.md) for integration config and migration from legacy slug keys.
+
 ## Database
 
-New table `admin.providers`:
+Table `admin.providers` (target shape):
 
 ```sql
 CREATE TABLE admin.providers (
-    slug          VARCHAR(64) PRIMARY KEY,
-    label         VARCHAR(200) NOT NULL,
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    label         VARCHAR(200) NOT NULL UNIQUE,
     description   TEXT,
     logo_url      VARCHAR(512),
     built_in      BOOLEAN NOT NULL DEFAULT FALSE,
@@ -18,21 +20,21 @@ CREATE TABLE admin.providers (
 );
 ```
 
-Seed insert (migration):
+Seed insert (migration) — stable UUIDs assigned per row; tools reference `provider_id`:
 
 ```sql
-INSERT INTO admin.providers (slug, label, built_in, sort_order) VALUES
-  ('openai',       'OpenAI',       TRUE, 10),
-  ('anthropic',    'Anthropic',    TRUE, 20),
-  ('google',       'Google',       TRUE, 30),
-  ('azure_openai', 'Azure OpenAI', TRUE, 40),
-  ('cohere',       'Cohere',       TRUE, 50),
-  ('mistral',      'Mistral',      TRUE, 60),
-  ('cursor',       'Cursor',       TRUE, 70),
-  ('mabl',         'Mabl',         TRUE, 80),
-  ('windsurf',     'Windsurf',     TRUE, 90),
-  ('figma',        'Figma',        TRUE, 100),
-  ('custom',       'Custom',       TRUE, 110);
+INSERT INTO admin.providers (id, label, built_in, sort_order) VALUES
+  ('…', 'OpenAI',       TRUE, 10),
+  ('…', 'Anthropic',    TRUE, 20),
+  ('…', 'Google',       TRUE, 30),
+  ('…', 'Azure OpenAI', TRUE, 40),
+  ('…', 'Cohere',       TRUE, 50),
+  ('…', 'Mistral',      TRUE, 60),
+  ('…', 'Cursor',       TRUE, 70),
+  ('…', 'Mabl',         TRUE, 80),
+  ('…', 'Windsurf',     TRUE, 90),
+  ('…', 'Figma',        TRUE, 100),
+  ('…', 'Custom',       TRUE, 110);
 ```
 
 ## API Schemas
@@ -40,7 +42,7 @@ INSERT INTO admin.providers (slug, label, built_in, sort_order) VALUES
 ### `Provider` response
 
 ```yaml
-slug: string
+id: uuid
 label: string
 description: string | null
 logo_url: string | null
@@ -52,8 +54,7 @@ sort_order: integer
 ### `ProviderCreateRequest`
 
 ```yaml
-slug: string (required, pattern: ^[a-z0-9_]+$, maxLength: 64)
-label: string (required, maxLength: 200)
+label: string (required, maxLength: 200, unique among active providers)
 description: string | null
 logo_url: string | null
 sort_order: integer (default: 0)
@@ -84,8 +85,8 @@ New "Settings" item in the sidebar nav (`/admin/settings`), visible only to Supe
 ### SettingsPage (`frontend/src/pages/admin/SettingsPage.tsx`)
 
 - Tab bar: "Providers" (only tab for this slice)
-- Providers tab: DataTable with columns: Label, Slug, Active, Built-in, Actions (edit, toggle active, delete non-built-in)
-- "Add Provider" button → slide-over form with Slug, Label, Description fields
+- Providers tab: DataTable with columns: Label, Active, Built-in, Actions (edit, toggle active, delete non-built-in)
+- "Add Provider" button → slide-over form with Label, Description fields
 - Edit slide-over: same fields + Active toggle
 
 ### Provider API module (`frontend/src/api/providers.ts`)
@@ -93,8 +94,8 @@ New "Settings" item in the sidebar nav (`/admin/settings`), visible only to Supe
 ```ts
 fetchProviders(activeOnly?: boolean): Promise<Provider[]>
 createProvider(body): Promise<Provider>
-updateProvider(slug, body): Promise<Provider>
-deleteProvider(slug): Promise<void>
+updateProvider(providerId, body): Promise<Provider>
+deleteProvider(providerId): Promise<void>
 ```
 
 ### Tool/credential dropdowns
@@ -105,7 +106,7 @@ Replace hardcoded provider arrays with:
 const { data: providers } = useQuery({ queryKey: ['providers'], queryFn: () => fetchProviders(true) })
 ```
 
-Fallback to built-in static list on query failure to ensure dropdowns never appear empty.
+Dropdown displays `label`; forms persist `provider_id`. Fallback to built-in static list on query failure to ensure dropdowns never appear empty.
 
 ## RBAC
 

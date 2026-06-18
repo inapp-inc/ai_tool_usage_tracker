@@ -39,6 +39,8 @@ Each feature includes user stories mapped to roles, testable acceptance criteria
 
 **Test strategy:** [../specifications/testing.md](../specifications/testing.md) · **Traceability index:** [../specifications/testing-traceability.md](../specifications/testing-traceability.md)
 
+**Dynamic providers:** [../specifications/provider-creation.md](../specifications/provider-creation.md) — configure vendor HTTP integrations in Settings without new adapter code.
+
 ## Implementation Specifications
 
 | Feature | Document |

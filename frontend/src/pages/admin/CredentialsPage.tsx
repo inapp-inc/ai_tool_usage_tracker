@@ -40,6 +40,7 @@ import {
 } from "@/api/credentials";
 import { ApiClientError } from "@/api/client";
 import { fetchToolOptions } from "@/api/tools";
+import { providerRequiresOrganizationId } from "@/api/providers";
 import { fetchTeams } from "@/api/teams";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
@@ -58,6 +59,7 @@ const createSchema = z.object({
   teamId: z.string().min(1, "Select a team"),
   syncSchedule: z.enum(["hourly", "daily"]),
   apiKey: z.string().min(1, "API key is required"),
+  organizationId: z.string().max(100).optional(),
   rotationReminderDays: z.number().int().positive().nullable(),
   expiresAt: z.string().nullable(),
 });
@@ -85,6 +87,7 @@ function defaultFormValues(): CreateFormValues {
     teamId: "",
     syncSchedule: "hourly",
     apiKey: "",
+    organizationId: "",
     rotationReminderDays: null,
     expiresAt: null,
   };
@@ -250,8 +253,14 @@ export function CredentialsPage() {
   const savePending = createMutation.isPending || updateMutation.isPending;
 
   const rotationReminderDays = watch("rotationReminderDays");
+  const selectedCatalogueToolId = watch("catalogueToolId");
   const teams = teamsQuery.data ?? [];
   const catalogueTools = catalogueToolsQuery.data ?? [];
+  const selectedCatalogueTool = catalogueTools.find(
+    (tool) => tool.id === selectedCatalogueToolId,
+  );
+  const showOrganizationId =
+    !isEditMode && providerRequiresOrganizationId(selectedCatalogueTool?.provider ?? "");
 
   const handleCopyCredential = useCallback(async (credentialId: string) => {
     setCopyError(null);
@@ -291,6 +300,16 @@ export function CredentialsPage() {
 
     reset(defaultFormValues());
   }, [reset, slideOver]);
+
+  useEffect(() => {
+    if (!slideOver.open || isEditMode || !selectedCatalogueTool?.organizationId) {
+      return;
+    }
+    reset((current) => ({
+      ...current,
+      organizationId: selectedCatalogueTool.organizationId ?? "",
+    }));
+  }, [isEditMode, reset, selectedCatalogueTool?.organizationId, slideOver.open]);
 
   const handleSlideOverClose = () => {
     closeSlideOver();
@@ -341,10 +360,16 @@ export function CredentialsPage() {
       return;
     }
 
+    if (showOrganizationId && !data.organizationId?.trim()) {
+      setSaveError("GitHub organization ID is required for Microsoft Copilot.");
+      return;
+    }
+
     createMutation.mutate({
       ...buildPayload(data),
       catalogueToolId: (data as CreateFormValues).catalogueToolId,
       apiKey: data.apiKey,
+      organizationId: showOrganizationId ? data.organizationId?.trim() || null : null,
     });
   };
 
@@ -752,6 +777,22 @@ export function CredentialsPage() {
                   )}
                 />
               </Box>
+
+              {showOrganizationId && (
+                <TextField
+                  {...register("organizationId")}
+                  fullWidth
+                  label="GitHub organization ID"
+                  size="small"
+                  placeholder="my-company"
+                  error={Boolean(errors.organizationId)}
+                  helperText={
+                    errors.organizationId?.message ??
+                    "Required for Copilot — bound into the GitHub API URL for usage collection."
+                  }
+                  sx={{ mb: 2 }}
+                />
+              )}
 
               <Controller
                 name="syncSchedule"

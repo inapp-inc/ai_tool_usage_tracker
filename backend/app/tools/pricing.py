@@ -5,23 +5,15 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
-SUPPORTED_VENDORS = frozenset(
-    {
-        "openai",
-        "anthropic",
-        "google",
-        "azure_openai",
-        "cohere",
-        "mistral",
-        "custom",
-        "mabl",
-        "windsurf",
-        "cursor",
-        "figma",
-    }
-)
+from app.settings.builtin_catalog import ADAPTER_ALIASES, BUILTIN_PRODUCT_SLUGS
 
-SPECIALIZED_ADAPTER_VENDORS = SUPPORTED_VENDORS - {"custom", "mabl", "windsurf"}
+SUPPORTED_VENDORS = frozenset(BUILTIN_PRODUCT_SLUGS) | frozenset(ADAPTER_ALIASES.keys())
+
+SPECIALIZED_ADAPTER_VENDORS = frozenset(
+    slug
+    for slug in BUILTIN_PRODUCT_SLUGS
+    if slug not in {"custom"}
+)
 
 
 def normalize_vendor(value: str) -> str:
@@ -42,13 +34,40 @@ def validate_vendor(value: str) -> str:
     return slug
 
 
-def vendor_requires_api_endpoint(vendor: str, *, built_in: bool) -> bool:
-    """User-defined and generic providers must supply tool.api_endpoint."""
-    if vendor in {"custom", "mabl", "windsurf"}:
+def vendor_requires_organization_id(vendor: str) -> bool:
+    return vendor.strip().lower().replace("-", "_") in {"copilot", "github_copilot", "github"}
+
+
+def organization_id_from_pricing(pricing_config: dict | None) -> str | None:
+    raw = (pricing_config or {}).get("organization_id")
+    if raw is None:
+        return None
+    stripped = str(raw).strip()
+    return stripped or None
+
+
+def validate_organization_id(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        msg = "organization_id is required for this provider."
+        raise ValueError(msg)
+    if len(stripped) > 100:
+        msg = "organization_id must be at most 100 characters."
+        raise ValueError(msg)
+    return stripped
+
+
+def vendor_requires_api_endpoint(vendor: str, *, built_in: bool, requires_api_endpoint: bool = False) -> bool:
+    """Prefer provider.requires_api_endpoint from DB; fallback for legacy callers."""
+    if vendor_requires_organization_id(vendor):
+        return False
+    if requires_api_endpoint:
+        return True
+    if vendor == "custom":
         return True
     if not built_in:
         return True
-    return False
+    return vendor in {"azure_openai", "bedrock"}
 
 
 def validate_pricing_model(pricing_model: str) -> None:

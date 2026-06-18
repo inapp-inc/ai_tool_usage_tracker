@@ -4,6 +4,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
   FormControl,
   IconButton,
@@ -27,9 +28,15 @@ import {
   type AiTool,
   type ToolProvider,
 } from "@/api/tools";
-import { BUILT_IN_PROVIDERS, fetchProviders, providerRequiresApiEndpoint, type Provider } from "@/api/providers";
+import {
+  BUILT_IN_PROVIDER_PARENTS,
+  fetchProviderParents,
+  providerRequiresOrganizationId,
+  type ProviderParent,
+} from "@/api/providers";
 import { ApiClientError } from "@/api/client";
 import { RoleGuard } from "@/components/auth/RoleGuard";
+import { ToolUsagePollingForm, type ToolFormWithPolling } from "@/components/tools/ToolUsagePollingForm";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { StatusBadge } from "@/components/data-display/StatusBadge";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
@@ -38,50 +45,126 @@ import { SlideOver } from "@/components/layout/SlideOver";
 import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { useToast } from "@/hooks/useToast";
-/** Static fallback — used when GET /settings/providers is unavailable. */
-const FALLBACK_PROVIDER_OPTIONS = BUILT_IN_PROVIDERS.map((p) => ({
-  value: p.slug as ToolProvider,
-  label: p.label,
-}));
+import {
+  defaultUsagePollingFormValues,
+  formValuesToIntegrationConfig,
+  integrationConfigToFormValues,
+} from "@/types/integrationConfig";
 
-const toolFormSchema = z.object({
-  name: z.string().min(1, "Name is required").max(80),
-  provider: z.string().min(1, "Provider is required"),
-  description: z.string().max(200),
-  apiEndpoint: z
-    .string()
-    .max(512)
-    .optional()
-    .refine(
-      (val) => !val || val.startsWith("https://"),
-      "API Endpoint URL must start with https://",
-    ),
-});
+const toolFormSchema = z
+  .object({
+    name: z.string().min(1, "Name is required").max(80),
+    parentProvider: z.string().min(1, "Provider is required"),
+    provider: z.string().min(1),
+    description: z.string().max(200),
+    apiEndpoint: z
+      .string()
+      .max(512)
+      .optional()
+      .refine(
+        (val) => !val || val.startsWith("https://"),
+        "API Endpoint URL must start with https://",
+      ),
+    organizationId: z.string().max(100).optional(),
+    enabled: z.boolean(),
+    authType: z.enum(["bearer", "api_key_header"]),
+    authHeader: z.string().min(1, "Auth header is required"),
+    authPrefix: z.string(),
+    method: z.enum(["GET", "POST"]),
+    usageUrl: z.string(),
+    querySinceName: z.string(),
+    querySinceValue: z.string(),
+    queryUntilName: z.string(),
+    queryUntilValue: z.string(),
+    extraHeadersJson: z.string(),
+    responseType: z.enum(["json_array", "json_object"]),
+    recordsPath: z.string(),
+    fieldEventId: z.string(),
+    fieldOccurredAt: z.string(),
+    fieldInputTokens: z.string(),
+    fieldOutputTokens: z.string(),
+    fieldCost: z.string(),
+    fieldModel: z.string(),
+    fieldUserEmail: z.string(),
+    fieldUserName: z.string(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.provider === "custom" && !data.parentProvider?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select the vendor / platform company for this tool",
+        path: ["parentProvider"],
+      });
+    }
+    if (data.provider === "copilot" && !data.organizationId?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "GitHub organization ID is required for Microsoft Copilot",
+        path: ["organizationId"],
+      });
+    }
+    if (data.provider !== "custom" || !data.enabled) {
+      return;
+    }
+    if (!data.apiEndpoint?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "API Endpoint URL is required when usage polling is enabled",
+        path: ["apiEndpoint"],
+      });
+    } else if (!data.apiEndpoint.trim().startsWith("https://")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "API Endpoint URL must start with https://",
+        path: ["apiEndpoint"],
+      });
+    }
+    if (!data.usageUrl.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Usage URL is required when polling is enabled",
+        path: ["usageUrl"],
+      });
+    }
+    if (!data.fieldEventId.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Event ID mapping is required",
+        path: ["fieldEventId"],
+      });
+    }
+    if (!data.fieldOccurredAt.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Occurred at mapping is required",
+        path: ["fieldOccurredAt"],
+      });
+    }
+    if (!data.fieldInputTokens.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Input tokens mapping is required",
+        path: ["fieldInputTokens"],
+      });
+    }
+  });
 
-type FormValues = z.infer<typeof toolFormSchema>;
+type FormValues = ToolFormWithPolling;
 
 function defaultFormValues(): FormValues {
   return {
     name: "",
-    provider: "openai",
+    parentProvider: "",
+    provider: "custom",
     description: "",
     apiEndpoint: "",
+    organizationId: "",
+    ...defaultUsagePollingFormValues(),
   };
 }
 
-function formatProviderLabel(provider: ToolProvider): string {
-  return provider
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function resolveProviderLabel(
-  slug: string,
-  options: Array<{ value: string; label: string }>,
-): string {
-  const match = options.find((option) => option.value === slug);
-  return match?.label ?? formatProviderLabel(slug as ToolProvider);
+function displayToolName(row: AiTool): string {
+  return row.productLabel ?? row.name;
 }
 
 interface SlideOverState {
@@ -113,19 +196,18 @@ export function ToolsPage() {
   });
 
   const providersQuery = useQuery({
-    queryKey: ["settings", "providers"],
-    queryFn: () => fetchProviders(true),
+    queryKey: ["settings", "provider-parents"],
+    queryFn: () => fetchProviderParents(),
     staleTime: 5 * 60 * 1000,
   });
 
-  const providerOptions =
+  const providerParents =
     providersQuery.data && providersQuery.data.length > 0
-      ? providersQuery.data.map((p: Provider) => ({ value: p.slug, label: p.label }))
-      : FALLBACK_PROVIDER_OPTIONS;
+      ? providersQuery.data
+      : BUILT_IN_PROVIDER_PARENTS;
 
-  const allProviders = providersQuery.data ?? BUILT_IN_PROVIDERS;
-
-  const createMutation = useMutation({    mutationFn: createTool,
+  const createMutation = useMutation({
+    mutationFn: createTool,
     onSuccess: async () => {
       showToast("Tool added successfully.", "success");
       setSaveError(null);
@@ -172,7 +254,12 @@ export function ToolsPage() {
     },
   });
 
-  const isEditMode = slideOver.tool !== null;  const savePending = createMutation.isPending || updateMutation.isPending;
+  const isEditMode = slideOver.tool !== null;
+  const editingBuiltIn = Boolean(slideOver.tool?.builtIn);
+  const editingCustom = isEditMode && !editingBuiltIn;
+  const isAddCustom = !isEditMode;
+  const showParentProviderField = isAddCustom || editingCustom;
+  const savePending = createMutation.isPending || updateMutation.isPending;
 
   const {
     register,
@@ -186,11 +273,13 @@ export function ToolsPage() {
     defaultValues: defaultFormValues(),
   });
 
-  const selectedProvider = watch("provider");
-  const apiEndpointRequired = providerRequiresApiEndpoint(
-    selectedProvider,
-    allProviders,
-  );
+  const pollingEnabled = watch("enabled");
+  const productSlug = watch("provider");
+  const isCustomProvider = productSlug === "custom";
+  const isCopilotProvider = productSlug === "copilot";
+  const showApiEndpoint = isCustomProvider && !isCopilotProvider && pollingEnabled;
+  const showOrganizationId = providerRequiresOrganizationId(productSlug);
+  const showUsagePolling = isCustomProvider;
 
   useEffect(() => {
     if (!slideOver.open) {
@@ -201,10 +290,16 @@ export function ToolsPage() {
 
     if (slideOver.tool) {
       reset({
-        name: slideOver.tool.name,
+        name: slideOver.tool.builtIn
+          ? (slideOver.tool.productLabel ?? slideOver.tool.name)
+          : slideOver.tool.name,
+        parentProvider:
+          slideOver.tool.parentSlug ?? slideOver.tool.pricing.parentSlug ?? "",
         provider: slideOver.tool.provider,
         description: slideOver.tool.description,
         apiEndpoint: slideOver.tool.apiEndpoint ?? "",
+        organizationId: slideOver.tool.pricing.organizationId ?? "",
+        ...integrationConfigToFormValues(slideOver.tool.integrationConfig),
       });
       return;
     }
@@ -219,9 +314,14 @@ export function ToolsPage() {
         header: "Tool",
         sortable: true,
         render: (row) => (
-          <Typography variant="body2" sx={{ fontWeight: 500 }}>
-            {row.name}
-          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+              {displayToolName(row)}
+            </Typography>
+            {row.builtIn && (
+              <Chip label="Built-in" size="small" variant="outlined" sx={{ height: 20 }} />
+            )}
+          </Box>
         ),
       },
       {
@@ -229,9 +329,7 @@ export function ToolsPage() {
         header: "Provider",
         sortable: true,
         render: (row) => (
-          <Typography variant="body2">
-            {resolveProviderLabel(row.provider, providerOptions)}
-          </Typography>
+          <Typography variant="body2">{row.parentLabel ?? "—"}</Typography>
         ),
       },
       {
@@ -255,39 +353,47 @@ export function ToolsPage() {
             >
               <IconPencil size={15} />
             </IconButton>
-            <IconButton
-              size="small"
-              aria-label={`Delete ${row.name}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                setDeleteTarget(row);
-              }}
-              sx={{ color: tokens.critical }}
-            >
-              <IconTrash size={15} />
-            </IconButton>
+            {!row.builtIn && (
+              <IconButton
+                size="small"
+                aria-label={`Delete ${row.name}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setDeleteTarget(row);
+                }}
+                sx={{ color: tokens.critical }}
+              >
+                <IconTrash size={15} />
+              </IconButton>
+            )}
           </Box>
         ),
       },
     ],
-    [providerOptions],
+    [providerParents],
   );
   const onSubmit = (data: FormValues) => {
     setSaveError(null);
 
-    if (
-      providerRequiresApiEndpoint(data.provider, allProviders) &&
-      !data.apiEndpoint?.trim()
-    ) {
-      setSaveError("API Endpoint URL is required for this provider.");
+    if (providerRequiresOrganizationId(data.provider) && !data.organizationId?.trim()) {
+      setSaveError("GitHub organization ID is required for Microsoft Copilot.");
       return;
     }
 
+    if (data.provider === "custom" && !data.parentProvider?.trim()) {
+      setSaveError("Select the vendor / platform company for this tool.");
+      return;
+    }
+
+    const integrationConfig =
+      data.provider === "custom" ? formValuesToIntegrationConfig(data) : null;
+
     const formBody = {
-      name: data.name,
-      provider: data.provider as ToolProvider,
+      name: editingBuiltIn ? slideOver.tool!.name : data.name,
+      provider: (editingBuiltIn ? data.provider : "custom") as ToolProvider,
       description: data.description,
       apiEndpoint: data.apiEndpoint?.trim() || null,
+      integrationConfig,
       pricing: normalizePricing({
         model: "per_token",
         inputCostPer1K: null,
@@ -298,6 +404,8 @@ export function ToolsPage() {
         planName: null,
         includedTokens: null,
         overageRate: null,
+        organizationId: data.organizationId?.trim() || null,
+        parentSlug: data.parentProvider?.trim() || null,
       }),
     };
 
@@ -336,7 +444,7 @@ export function ToolsPage() {
               AI Tools
             </Typography>
             <Typography variant="body2" sx={{ color: tokens.textMuted }}>
-              Manage your connected AI provider integrations
+              Built-in AI tools are provisioned automatically. Add custom integrations or connect credentials.
             </Typography>
           </Box>
           <Button
@@ -345,7 +453,7 @@ export function ToolsPage() {
             startIcon={<IconPlus size={15} />}
             onClick={() => setSlideOver({ open: true, tool: null })}
           >
-            Add Tool
+            Add Custom Tool
           </Button>
         </Box>
 
@@ -360,20 +468,22 @@ export function ToolsPage() {
           rows={toolsQuery.data ?? []}
           rowKey={(row) => row.id}
           loading={toolsQuery.isPending}
-          emptyTitle="No tools added"
-          emptyDescription="Register AI tools your organization uses. Connect API keys separately under Credentials."
+          emptyTitle="No tools available"
+          emptyDescription="Built-in tools appear after the backend seeds your organization catalogue."
         />
 
         <SlideOver
           open={slideOver.open}
           onClose={() => setSlideOver({ open: false, tool: null })}
-          title={isEditMode ? "Edit Tool" : "Add Tool"}
+          title={isEditMode ? "Edit Tool" : "Add Custom Tool"}
           subtitle={
             isEditMode
-              ? "Update tool configuration"
-              : "Register an AI provider tool"
+              ? editingBuiltIn
+                ? "Built-in tool — update optional settings"
+                : "Update tool configuration"
+              : "Register a custom HTTP integration"
           }
-          width={520}
+          width={560}
           footer={
             <>
               <Button
@@ -409,36 +519,59 @@ export function ToolsPage() {
               </Alert>
             )}
 
-            <TextField
-              {...register("name")}
-              fullWidth
-              label="Tool name"
-              size="small"
-              placeholder="Production OpenAI"
-              error={Boolean(errors.name)}
-              helperText={errors.name?.message}
-            />
+            {showParentProviderField && (
+              <Controller
+                name="parentProvider"
+                control={control}
+                render={({ field }) => (
+                  <FormControl fullWidth size="small" error={Boolean(errors.parentProvider)}>
+                    <InputLabel id="tool-parent-provider-label">Provider</InputLabel>
+                    <Select
+                      {...field}
+                      labelId="tool-parent-provider-label"
+                      label="Provider"
+                    >
+                      {providerParents.map((parent: ProviderParent) => (
+                        <MenuItem key={parent.slug} value={parent.slug}>
+                          {parent.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
+              />
+            )}
 
-            <Controller
-              name="provider"
-              control={control}
-              render={({ field }) => (
-                <FormControl fullWidth size="small" error={Boolean(errors.provider)}>
-                  <InputLabel id="tool-provider-label">Provider</InputLabel>
-                  <Select
-                    {...field}
-                    labelId="tool-provider-label"
-                    label="Provider"
-                  >
-                    {providerOptions.map((option) => (
-                      <MenuItem key={option.value} value={option.value}>
-                        {option.label}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              )}
-            />
+            {editingBuiltIn && slideOver.tool && (
+              <>
+                <TextField
+                  fullWidth
+                  label="Provider"
+                  size="small"
+                  value={slideOver.tool.parentLabel ?? ""}
+                  disabled
+                />
+                <TextField
+                  fullWidth
+                  label="Tool"
+                  size="small"
+                  value={slideOver.tool.productLabel ?? slideOver.tool.name}
+                  disabled
+                />
+              </>
+            )}
+
+            {!editingBuiltIn && (
+              <TextField
+                {...register("name")}
+                fullWidth
+                label="Tool name"
+                size="small"
+                placeholder="Internal LLM Gateway"
+                error={Boolean(errors.name)}
+                helperText={errors.name?.message}
+              />
+            )}
 
             <TextField
               {...register("description")}
@@ -452,20 +585,45 @@ export function ToolsPage() {
               helperText={errors.description?.message}
             />
 
-            <TextField
-              {...register("apiEndpoint")}
-              fullWidth
-              label="API Endpoint URL"
-              size="small"
-              placeholder="https://api.example.com/v1/chat/completions"
-              error={Boolean(errors.apiEndpoint)}
-              helperText={
-                errors.apiEndpoint?.message ??
-                (apiEndpointRequired
-                  ? "Required — GET endpoint used to validate the API key (Bearer auth)."
-                  : "Optional. Override the provider default base URL if needed.")
-              }
-            />
+            {showOrganizationId && (
+              <TextField
+                {...register("organizationId")}
+                fullWidth
+                label="GitHub organization ID"
+                size="small"
+                placeholder="my-company"
+                error={Boolean(errors.organizationId)}
+                helperText={
+                  errors.organizationId?.message ??
+                  "Your GitHub organization login — used in the Copilot API URL (e.g. api.github.com/orgs/my-company/...)."
+                }
+              />
+            )}
+
+            {showApiEndpoint && (
+              <TextField
+                {...register("apiEndpoint")}
+                fullWidth
+                label="API Endpoint URL"
+                size="small"
+                placeholder="https://api.example.com/v1/chat/completions"
+                error={Boolean(errors.apiEndpoint)}
+                helperText={
+                  errors.apiEndpoint?.message ??
+                  (isCustomProvider && pollingEnabled
+                    ? "Required when usage polling is enabled — HTTPS URL your usage API expects."
+                    : "HTTPS base URL for this provider's API.")
+                }
+              />
+            )}
+
+            {showUsagePolling && (
+              <ToolUsagePollingForm
+                control={control}
+                errors={errors}
+                enabled={pollingEnabled}
+              />
+            )}
 
           </Box>
         </SlideOver>
