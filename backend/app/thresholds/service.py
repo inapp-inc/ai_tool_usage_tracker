@@ -78,8 +78,17 @@ class ThresholdService:
         )
         await self._session.commit()
         await self._session.refresh(row)
+        await self._evaluate_active_threshold(row)
         team_name = await self._resolve_team_name(organization_id, row.team_id)
-        return self._to_threshold_response(row, team_name, (0, None))
+        stats = await self._events.stats_for_thresholds(organization_id, [row.id])
+        return self._to_threshold_response(row, team_name, stats.get(row.id, (0, None)))
+
+    async def _evaluate_active_threshold(self, row: Threshold) -> None:
+        """Run breach check immediately so alerts fire when rules are saved."""
+        from app.thresholds.evaluator import ThresholdEvaluator
+
+        await ThresholdEvaluator(self._session).evaluate_threshold(row)
+        await self._session.commit()
 
     async def update_threshold(
         self,
@@ -135,6 +144,7 @@ class ThresholdService:
 
         await self._session.commit()
         await self._session.refresh(row)
+        await self._evaluate_active_threshold(row)
         stats = await self._events.stats_for_thresholds(organization_id, [row.id])
         team_name = await self._resolve_team_name(organization_id, row.team_id)
         return self._to_threshold_response(row, team_name, stats.get(row.id, (0, None)))

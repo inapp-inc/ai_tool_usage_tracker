@@ -1,9 +1,7 @@
-import { IconBell, IconChevronDown, IconLogout } from "@tabler/icons-react";
+import { IconChevronDown, IconLogout } from "@tabler/icons-react";
 import {
   AppBar,
-  Badge,
   Box,
-  IconButton,
   Menu,
   MenuItem,
   Toolbar,
@@ -12,8 +10,8 @@ import {
 import { useState } from "react";
 import { useLocation } from "react-router-dom";
 
+import { NotificationBell } from "./NotificationBell";
 import { useAuthStore } from "@/stores/authStore";
-import { useNotificationStore } from "@/stores/notificationStore";
 import { tokens } from "@/theme/palette";
 
 const ROUTE_TITLES: Record<string, string> = {
@@ -48,7 +46,6 @@ export function TopBar({ height }: TopBarProps) {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const clearAuth = useAuthStore((s) => s.clearAuth);
-  const unreadCount = useNotificationStore((s) => s.unreadCount);
 
   const title = resolveTitle(location.pathname);
 
@@ -104,26 +101,7 @@ export function TopBar({ height }: TopBarProps) {
         <Box id="topbar-period-slot" />
 
         {/* Notification bell */}
-        <IconButton
-          size="small"
-          aria-label="Notifications"
-          sx={{
-            border: `0.5px solid ${tokens.border}`,
-            borderRadius: "6px",
-            width: 32,
-            height: 32,
-            color: "text.secondary",
-            "&:hover": { backgroundColor: "background.default" },
-          }}
-        >
-          <Badge
-            badgeContent={unreadCount > 0 ? unreadCount : undefined}
-            color="error"
-            max={99}
-          >
-            <IconBell size={16} />
-          </Badge>
-        </IconButton>
+        <NotificationBell />
 
         {/* User avatar + dropdown */}
         <Box

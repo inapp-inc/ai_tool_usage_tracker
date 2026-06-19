@@ -61,6 +61,12 @@ async def execute_usage_http(
     )
     url = apply_placeholders(str(usage.get("url") or ""), context).strip()
     if not url or "{" in url:
+        if "{organization_id}" in str(usage.get("url") or ""):
+            msg = (
+                "GitHub organization ID is missing. Set it on the Copilot tool "
+                "(Tools page) or when connecting credentials."
+            )
+            raise IntegrationConfigError(msg)
         msg = "Usage URL is empty or has unresolved placeholders."
         raise IntegrationConfigError(msg)
 

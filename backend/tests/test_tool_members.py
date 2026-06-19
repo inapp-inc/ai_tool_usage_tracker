@@ -10,7 +10,10 @@ from app.collector.adapters.member_parsing import (
     parse_generic_members,
     parse_openai_org_users,
 )
-from app.collector.adapters.usage_parsing import parse_cursor_usage_page
+from app.collector.adapters.usage_parsing import (
+    parse_cursor_daily_usage_page,
+    parse_cursor_usage_page,
+)
 
 
 def test_parse_cursor_members_skips_removed_and_dedupes() -> None:
@@ -87,9 +90,47 @@ def test_parse_cursor_usage_page() -> None:
     records, has_next = parse_cursor_usage_page(payload)
     assert has_next is False
     assert len(records) == 1
+    assert records[0].input_tokens == 126
+    assert records[0].output_tokens == 450
+    assert records[0].cache_write_tokens == 100
+    assert records[0].cache_read_tokens == 50
     assert records[0].total_tokens == 726
     assert records[0].estimated_cost == Decimal("0.2136")
+    assert records[0].user_email == "dev@acme.example"
     assert records[0].model == "claude-4.5-sonnet"
+
+
+def test_parse_cursor_daily_usage_page() -> None:
+    payload = {
+        "data": [
+            {
+                "userId": 12345,
+                "day": "2024-03-18",
+                "isActive": True,
+                "chatRequests": 10,
+                "composerRequests": 5,
+                "agentRequests": 2,
+                "email": "dev@acme.example",
+                "mostUsedModel": "gpt-5",
+            },
+            {
+                "userId": 999,
+                "day": "2024-03-18",
+                "isActive": False,
+                "chatRequests": 0,
+                "composerRequests": 0,
+                "agentRequests": 0,
+                "email": "inactive@acme.example",
+            },
+        ],
+        "pagination": {"hasNextPage": False},
+    }
+    records, has_next = parse_cursor_daily_usage_page(payload)
+    assert has_next is False
+    assert len(records) == 1
+    assert records[0].total_tokens == 17
+    assert records[0].user_email == "dev@acme.example"
+    assert records[0].model == "gpt-5"
 
 
 def test_parse_figma_members_nested_user() -> None:

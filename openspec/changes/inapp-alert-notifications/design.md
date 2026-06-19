@@ -2,25 +2,18 @@
 
 ## Backend Changes
 
-### 1. Threshold `notification_channel` field
+### 1. Threshold notification flags (existing columns)
 
-Add `inapp` to the allowed `notification_channel` enum on thresholds:
-
-```sql
--- Existing: email | slack | webhook
--- New values: inapp | inapp_and_email
-ALTER TABLE notifications.alerts
-  ADD COLUMN notification_channel VARCHAR(32) NOT NULL DEFAULT 'inapp';
-```
-
-OpenAPI `ThresholdCreateRequest` / `ThresholdUpdateRequest` schema:
+No new DB column. Frontend channel maps to `notify_in_app` and `notify_email` on `admin.thresholds`:
 
 ```yaml
-notification_channel:
-  type: string
-  enum: [inapp, email, inapp_and_email]
-  default: inapp
+# Effective mapping from UI channel
+in_app:            { notify_in_app: true,  notify_email: false }
+email:             { notify_in_app: false, notify_email: true }
+in_app_and_email:  { notify_in_app: true,  notify_email: true }
 ```
+
+Default on create: `notify_in_app=true`, `notify_email=false`. `webhook_url` is cleared on save.
 
 ### 2. Threshold evaluator — create notification record
 
@@ -82,15 +75,13 @@ Clicking an item: navigates to `deep_link`, marks notification read.
 
 ```ts
 const CHANNEL_OPTIONS = [
-  { value: "inapp",          label: "In-App Notification" },
-  { value: "email",          label: "Email" },
-  { value: "inapp_and_email", label: "In-App + Email" },
+  { value: "in_app",            label: "In-App Notification" },
+  { value: "email",             label: "Email" },
+  { value: "in_app_and_email",  label: "In-App + Email" },
 ];
 ```
 
-Default: `inapp`.
-
-Remove any previous free-text email address field when channel is `inapp`.
+Default: `in_app`. Webhook URL field removed.
 
 ---
 

@@ -26,7 +26,7 @@ class Upload(Base):
     )
     team_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("admin.teams.id", ondelete="SET NULL"),
+        ForeignKey("admin.teams.id", ondelete="CASCADE"),
         nullable=True,
     )
     tool_id: Mapped[uuid.UUID | None] = mapped_column(

@@ -10,6 +10,13 @@ from pydantic import BaseModel, Field
 TrendGranularityApi = Literal["daily", "weekly", "monthly"]
 
 
+class ActiveCountsWidget(BaseModel):
+    """Catalogue tool and active team counts (aligned with Tools / Teams admin lists)."""
+
+    active_tools: int
+    active_teams: int
+
+
 class TokenUsageWidget(BaseModel):
     input_tokens: int
     output_tokens: int

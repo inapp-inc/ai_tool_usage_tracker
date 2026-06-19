@@ -62,6 +62,10 @@ class Settings(BaseSettings):
         default=True,
         validation_alias="COLLECTOR_SCHEDULER_ENABLED",
     )
+    log_level: str = Field(
+        default="INFO",
+        validation_alias="LOG_LEVEL",
+    )
     frontend_port: int = Field(
         default=5173,
         validation_alias="FRONTEND_PORT",
@@ -73,6 +77,10 @@ class Settings(BaseSettings):
     local_storage_root: str = Field(
         default="./data/storage",
         validation_alias="LOCAL_STORAGE_ROOT",
+    )
+    cursor_pull_dump_enabled: bool = Field(
+        default=True,
+        validation_alias="CURSOR_PULL_DUMP_ENABLED",
     )
 
     def resolved_cors_origins(self) -> list[str]:

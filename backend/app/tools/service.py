@@ -1,11 +1,12 @@
 """Tool business logic — CRUD and catalogue management."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -15,7 +16,8 @@ from app.integration.resolve import resolve_tool_polling_context
 from app.collector.service import CollectorService
 from app.core.token_crypto import decrypt_token, encrypt_token, mask_token
 from app.models.admin import Provider, Tool
-from app.models.collector import CollectorConfig
+from app.models.collector import CollectorConfig, UsageEvent
+from app.tools.catalogue import catalogue_tool_id_from_connected
 from app.settings.builtin_catalog import BUILTIN_CATALOGUE_SLUGS
 from app.settings.parent_repository import ProviderParentRepository
 from app.settings.repository import ProviderRepository
@@ -41,6 +43,8 @@ from app.tools.schemas import (
 )
 
 SYNC_LOOKBACK_DAYS = 30
+
+logger = logging.getLogger(__name__)
 
 
 class ToolService:
@@ -352,7 +356,15 @@ class ToolService:
             tool,
         )
         until = datetime.now(UTC)
-        since = until - timedelta(days=SYNC_LOOKBACK_DAYS)
+        since = await self._usage_sync_since(tool, until)
+
+        logger.info(
+            "Tool sync started | tool_id=%s vendor=%s since=%s until=%s",
+            tool.id,
+            tool.vendor,
+            since.isoformat(),
+            until.isoformat(),
+        )
 
         try:
             snapshot = await fetch_provider_snapshot(
@@ -397,6 +409,16 @@ class ToolService:
             else:
                 tool.sync_status = snapshot.sync_status
 
+            logger.info(
+                "Tool sync finished | tool_id=%s vendor=%s tokens=%s cost=%s members=%s collector_run_error=%s",
+                tool.id,
+                tool.vendor,
+                tool.token_count,
+                tool.cost_total,
+                len(members),
+                run_error,
+            )
+
             if snapshot.input_cost_per_1k is not None or snapshot.output_cost_per_1k is not None:
                 config = dict(tool.pricing_config)
                 if snapshot.input_cost_per_1k is not None:
@@ -409,10 +431,45 @@ class ToolService:
             tool.sync_status = "error"
             tool.last_sync_error = str(exc)[:500]
             tool.last_sync_at = datetime.now(UTC)
+            logger.warning(
+                "Tool sync validation failed | tool_id=%s vendor=%s error=%s",
+                tool.id,
+                tool.vendor,
+                tool.last_sync_error,
+            )
         except Exception as exc:  # noqa: BLE001
             tool.sync_status = "error"
             tool.last_sync_error = str(exc)[:500]
             tool.last_sync_at = datetime.now(UTC)
+            logger.exception(
+                "Tool sync failed | tool_id=%s vendor=%s",
+                tool.id,
+                tool.vendor,
+            )
+
+    async def _usage_sync_since(self, tool: Tool, until: datetime) -> datetime:
+        """Pull only from last stored event (with overlap), capped by lookback window."""
+        lookback_start = until - timedelta(days=SYNC_LOOKBACK_DAYS)
+        tool_ids = {tool.id}
+        catalogue_id = catalogue_tool_id_from_connected(tool)
+        if catalogue_id is not None:
+            tool_ids.add(catalogue_id)
+
+        result = await self._session.execute(
+            select(func.max(UsageEvent.occurred_at)).where(
+                UsageEvent.provider == tool.vendor,
+                UsageEvent.tool_id.in_(tool_ids),
+            )
+        )
+        latest = result.scalar_one_or_none()
+        if latest is None:
+            return lookback_start
+
+        overlap = timedelta(hours=1)
+        incremental_since = latest - overlap
+        if incremental_since.tzinfo is None:
+            incremental_since = incremental_since.replace(tzinfo=UTC)
+        return max(incremental_since, lookback_start)
 
     async def _get_collector(self, tool_id: UUID) -> CollectorConfig | None:
         result = await self._session.execute(

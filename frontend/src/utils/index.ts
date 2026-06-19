@@ -6,3 +6,4 @@ export {
   formatRelativeTime,
   formatTokens,
 } from "./formatters";
+export { currentMonthUtcRange } from "./periods";

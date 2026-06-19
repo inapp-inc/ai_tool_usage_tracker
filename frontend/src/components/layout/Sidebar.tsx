@@ -1,5 +1,4 @@
 import {
-    IconActivity,
     IconBell,
     IconChevronLeft,
     IconChevronRight,
@@ -16,6 +15,7 @@ import {
   import { useCallback, useState } from "react";
   import { useLocation, useNavigate } from "react-router-dom";
   
+  import { publicAssetPath } from "@/lib/paths";
   import { useAuthStore } from "@/stores/authStore";
   import { Role } from "@/types";
   import { tokens } from "@/theme/palette";
@@ -115,6 +115,7 @@ import {
   ];
   
   const COLLAPSE_KEY = "sidebar_collapsed";
+  const INAPP_LOGO_SRC = publicAssetPath("inapp-logo.png");
   
   interface SidebarProps {
     width: number;
@@ -169,53 +170,75 @@ import {
           flexShrink: 0,
         }}
       >
-        {/* Logo */}
+        {/* InApp branding */}
         <Box
           sx={{
-            px: 2,
-            py: "20px",
-            borderBottom: "0.5px solid rgba(255,255,255,0.07)",
             display: "flex",
+            flexDirection: "column",
             alignItems: "center",
-            gap: 1.25,
-            minHeight: 72,
+            gap: 1,
+            py: 2,
+            px: 1.5,
+            borderBottom: "0.5px solid rgba(255,255,255,0.07)",
             flexShrink: 0,
           }}
         >
-          <Box
-            sx={{
-              width: 32,
-              height: 32,
-              borderRadius: "8px",
-              backgroundColor: tokens.primary,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-              color: "#fff",
-            }}
-          >
-            <IconActivity size={18} />
-          </Box>
-          {!collapsed && (
-            <Box sx={{ overflow: "hidden" }}>
-              <Typography
+          {collapsed ? (
+            <Tooltip title="AI Usage Tracker · Built by The Foundry" placement="right">
+              <Box
+                component="img"
+                src={INAPP_LOGO_SRC}
+                alt="InApp"
                 sx={{
-                  fontSize: "0.875rem",
-                  fontWeight: 500,
-                  color: "#fff",
-                  letterSpacing: "-0.2px",
-                  whiteSpace: "nowrap",
+                  height: 28,
+                  width: "auto",
+                  maxWidth: "100%",
+                  flexShrink: 0,
+                  objectFit: "contain",
                 }}
-              >
-                AI Tracker
-              </Typography>
-              <Typography
-                sx={{ fontSize: "0.6875rem", color: "#475569", whiteSpace: "nowrap" }}
-              >
-                Usage & cost monitoring
-              </Typography>
-            </Box>
+              />
+            </Tooltip>
+          ) : (
+            <>
+              <Box
+                component="img"
+                src={INAPP_LOGO_SRC}
+                alt="InApp"
+                sx={{
+                  height: 36,
+                  width: "auto",
+                  maxWidth: "100%",
+                  flexShrink: 0,
+                  objectFit: "contain",
+                }}
+              />
+              <Box sx={{ width: "100%", textAlign: "center", px: 0.5 }}>
+                <Typography
+                  sx={{
+                    fontSize: "0.8125rem",
+                    fontWeight: 700,
+                    lineHeight: 1.25,
+                    color: "#fff",
+                    letterSpacing: "-0.2px",
+                  }}
+                >
+                  AI Usage Tracker
+                </Typography>
+                <Typography
+                  sx={{
+                    mt: 0.5,
+                    fontSize: "0.5625rem",
+                    fontWeight: 600,
+                    lineHeight: 1.3,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                    color: "rgba(255,255,255,0.6)",
+                  }}
+                >
+                  Built by The Foundry
+                </Typography>
+              </Box>
+            </>
           )}
         </Box>
   

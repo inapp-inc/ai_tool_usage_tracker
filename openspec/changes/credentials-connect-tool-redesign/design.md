@@ -16,13 +16,22 @@
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| Tool | Yes | Select from active tools |
+| Tool | Yes | Select from active **catalogue** tools |
+| Team | Yes | Team that owns this connection; usage is attributed to this team |
 | Label / Name | No | Free text |
 | API Key | Yes | Masked input |
-| Team scope | No | Optional team assignment |
 | Description | No | Free text |
 
 Environment selector removed entirely.
+
+## Admin workflow (Teams → Credentials → Data)
+
+1. **Teams** — create a team and assign one or more catalogue tools (with optional pricing).
+2. **Credentials** — connect each tool: pick catalogue tool + team + API key.
+3. **Auto-sync** — on successful connect, the backend syncs **all connected credentials** for that team (30-day usage backfill + members).
+4. **Teams list** — shows tokens, cost, and last synced from ingested usage for assigned tools that have credentials.
+
+Manual refresh: **Teams** page refresh button calls `POST /teams/{id}/sync` (same logic as auto-sync).
 
 ## Backend Changes
 

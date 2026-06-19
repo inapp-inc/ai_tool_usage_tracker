@@ -88,11 +88,15 @@ export interface ApiTrendsResponse {
   data: ApiTrendPoint[];
 }
 
+export interface ApiActiveCountsWidget {
+  active_tools: number;
+  active_teams: number;
+}
+
 export function buildDashboardStats(
   tokens: ApiTokenUsageWidget,
   cost: ApiCostOverviewWidget,
-  tools: ApiUsageByToolItem[],
-  teams: ApiUsageByTeamItem[],
+  activeCounts: ApiActiveCountsWidget,
   deltas: {
     tokens_delta: number;
     cost_delta: number;
@@ -100,8 +104,6 @@ export function buildDashboardStats(
     teams_delta: number;
   },
 ): DashboardStats {
-  const activeTools = tools.filter((tool) => tool.total_tokens > 0).length;
-  const activeTeams = teams.filter((team) => team.total_tokens > 0).length;
   const inputTokens = tokens.input_tokens ?? 0;
   const outputTokens = tokens.output_tokens ?? 0;
   const totalTokens = Math.max(
@@ -112,8 +114,8 @@ export function buildDashboardStats(
   return {
     totalTokens,
     totalCost: Number(cost.actual_spend),
-    activeTools,
-    activeTeams,
+    activeTools: activeCounts.active_tools,
+    activeTeams: activeCounts.active_teams,
     tokensDelta: deltas.tokens_delta,
     costDelta: deltas.cost_delta,
     toolsDelta: deltas.tools_delta,

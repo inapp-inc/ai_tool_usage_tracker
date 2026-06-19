@@ -60,6 +60,59 @@ scripts\package-docker.bat
 
 Build images locally and save/load — only if server builds keep failing after adding swap.
 
+## `Temporary failure in name resolution` (API cannot reach Postgres)
+
+The API container failed DNS lookup for the database host in `DATABASE_URL`. This is a **connectivity/config** issue, not an application bug.
+
+### Check on the server
+
+```bash
+cd /var/www/ai-tool-tracker   # your DEPLOY_ROOT
+
+docker compose --profile prod ps
+docker compose --profile prod logs postgres --tail 50
+docker compose --profile prod logs api --tail 80
+
+docker compose --profile prod exec api printenv DATABASE_URL
+docker compose --profile prod exec api getent hosts postgres
+```
+
+Expected:
+
+- `postgres` container is **Up (healthy)**
+- `getent hosts postgres` returns an IP (Docker network DNS)
+- `DATABASE_URL` host is **`postgres:5432`**, not `localhost` or an external hostname
+
+### Common fixes
+
+1. **Start the full stack** (API alone cannot resolve `postgres`):
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d
+   ```
+
+2. **Wrong host in `.env`** — if you run the API in Docker, the DB host must be the Compose service name `postgres`. Do not use `localhost` or `127.0.0.1` inside the API container.
+
+3. **Sync `DATABASE_URL` after password changes**:
+
+   ```bash
+   ./scripts/deploy-docker.sh   # re-run on server with existing .env, or edit .env then:
+   docker compose --profile prod up -d --build api
+   ```
+
+4. **API not on the Docker network** — recreate containers:
+
+   ```bash
+   docker compose --profile prod down
+   docker compose --profile prod up -d
+   ```
+
+5. **Server DNS broken** (rare) — test: `docker compose exec api ping -c1 postgres`
+
+The API image entrypoint rebuilds `DATABASE_URL` from `POSTGRES_*` with a URL-encoded password so special characters do not corrupt the hostname.
+
+---
+
 ## `role "aitracker" does not exist`
 
 The postgres **data volume was created with a different username** (often `tokentracker` from older deploy packages). The API is connecting as `aitracker`, which was never created.

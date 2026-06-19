@@ -94,6 +94,8 @@ class UsageEventResponse(BaseModel):
     occurred_at: datetime
     input_tokens: int
     output_tokens: int
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
     total_tokens: int
     estimated_cost: Decimal
     vendor_event_id: str | None

@@ -42,7 +42,7 @@ class ThresholdCreateRequest(BaseModel):
     user_id: UUID | None = None
     limit_value: Decimal = Field(ge=0)
     severity: AlertSeverityApi
-    notify_email: bool = True
+    notify_email: bool = False
     notify_in_app: bool = True
     webhook_url: str | None = Field(default=None, max_length=512)
     email_recipients: list[str] = Field(default_factory=list)

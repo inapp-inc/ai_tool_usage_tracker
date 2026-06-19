@@ -28,17 +28,24 @@ async def resolve_tool_polling_context(
     pricing_config = dict(tool.pricing_config) if isinstance(tool.pricing_config, dict) else {}
     api_endpoint = tool.api_endpoint
     integration_config = integration_config_from_tool(tool)
+    catalogue: Tool | None = None
 
-    if not integration_config.get("usage"):
-        catalogue_id = catalogue_tool_id_from_connected(tool)
-        if catalogue_id is not None:
-            catalogue = await session.get(Tool, catalogue_id)
-            if catalogue is not None:
-                if not api_endpoint:
-                    api_endpoint = catalogue.api_endpoint
-                catalogue_config = integration_config_from_tool(catalogue)
-                if catalogue_config.get("usage"):
-                    integration_config = catalogue_config
+    catalogue_id = catalogue_tool_id_from_connected(tool)
+    if catalogue_id is not None:
+        catalogue = await session.get(Tool, catalogue_id)
+
+    if catalogue is not None:
+        catalogue_pricing = (
+            dict(catalogue.pricing_config) if isinstance(catalogue.pricing_config, dict) else {}
+        )
+        if not pricing_config.get("organization_id") and catalogue_pricing.get("organization_id"):
+            pricing_config["organization_id"] = catalogue_pricing["organization_id"]
+        if not api_endpoint:
+            api_endpoint = catalogue.api_endpoint
+        if not integration_config.get("usage"):
+            catalogue_config = integration_config_from_tool(catalogue)
+            if catalogue_config.get("usage"):
+                integration_config = catalogue_config
 
     if api_endpoint:
         pricing_config.setdefault("api_endpoint", api_endpoint)

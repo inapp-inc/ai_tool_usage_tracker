@@ -13,8 +13,9 @@ from app.dashboard.router import router as dashboard_router
 from app.members.router import router as members_router
 from app.teams.router import router as teams_router
 from app.reports.router import router as reports_router
-from app.thresholds.router import router as thresholds_router
+from app.notifications.router import router as notifications_router
 from app.settings.router import router as settings_router
+from app.thresholds.router import router as thresholds_router
 from app.tools.router import router as tools_router
 from app.uploads.router import router as uploads_router
 from app.usage.router import router as usage_router
@@ -33,6 +34,7 @@ router.include_router(credentials_router)
 router.include_router(settings_router)
 router.include_router(dashboard_router)
 router.include_router(thresholds_router)
+router.include_router(notifications_router)
 router.include_router(reports_router)
 router.include_router(uploads_router)
 router.include_router(usage_router)

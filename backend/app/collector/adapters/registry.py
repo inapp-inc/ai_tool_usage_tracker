@@ -12,6 +12,7 @@ from app.collector.adapters.base import (
     ProviderValidationError,
     UsageRecord,
 )
+from app.collector.adapters.copilot import CopilotUsageAdapter
 from app.collector.adapters.cursor import CursorUsageAdapter
 from app.collector.adapters.figma import FigmaUsageAdapter
 from app.collector.adapters.generic import GenericUsageAdapter
@@ -48,7 +49,7 @@ _ADAPTERS: dict[str, ProviderAdapter] = {
     "anthropic": AnthropicUsageAdapter(),
     "google": GoogleUsageAdapter(),
     "azure_openai": AzureOpenAIUsageAdapter(),
-    "copilot": GenericUsageAdapter("copilot"),
+    "copilot": CopilotUsageAdapter(),
     "bedrock": GenericUsageAdapter("bedrock"),
     "custom": GenericUsageAdapter("custom"),
     "cursor": CursorUsageAdapter(),
@@ -99,6 +100,7 @@ async def fetch_provider_usage(
     pricing_config: dict | None = None,
     api_endpoint: str | None = None,
     integration_config: dict | None = None,
+    cursor_pull_dumper: object | None = None,
 ) -> list[UsageRecord]:
     """Poll usage — config engine first when integration_config.usage is set (any provider)."""
     merged_config = _merge_adapter_config(
@@ -124,6 +126,9 @@ async def fetch_provider_usage(
             raise ProviderValidationError(str(exc)) from exc
 
     adapter = get_adapter(provider)
+    extra_kwargs: dict[str, object] = {}
+    if cursor_pull_dumper is not None:
+        extra_kwargs["cursor_pull_dumper"] = cursor_pull_dumper
     try:
         return await adapter.fetch_usage(
             api_token,
@@ -131,13 +136,14 @@ async def fetch_provider_usage(
             until=until,
             pricing_config=merged_config,
             api_endpoint=endpoint if isinstance(endpoint, str) else None,
+            **extra_kwargs,
         )
     except TypeError:
         return await adapter.fetch_usage(
             api_token,
             since=since,
             until=until,
-            pricing_config=merged_config,
+            **extra_kwargs,
         )
 
 

@@ -591,6 +591,8 @@ class UploadService:
                     occurred_at=occurred_at,
                     input_tokens=int(row.input_tokens),
                     output_tokens=int(row.output_tokens),
+                    cache_write_tokens=0,
+                    cache_read_tokens=0,
                     total_tokens=total_tokens,
                     estimated_cost=Decimal(str(mapped.get("estimated_cost") or 0)),
                     vendor_event_id=f"upload-{upload.id}-{row.row_number}",

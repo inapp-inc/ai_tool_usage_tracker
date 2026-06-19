@@ -400,7 +400,9 @@ export function TeamsPage() {
         header: "Total cost",
         sortable: true,
         render: (row) => (
-          <Typography variant="body2">{formatCost(row.totalCost)}</Typography>
+          <Tooltip title="Sum of recorded usage cost this calendar month (UTC)">
+            <Typography variant="body2">{formatCost(row.totalCost)}</Typography>
+          </Tooltip>
         ),
       },
       {

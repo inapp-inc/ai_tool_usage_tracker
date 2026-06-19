@@ -37,12 +37,19 @@ class UsageRecord:
     input_tokens: int
     output_tokens: int
     estimated_cost: Decimal
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
     user_email: str | None = None
     user_name: str | None = None
 
     @property
     def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_write_tokens
+            + self.cache_read_tokens
+        )
 
 
 @dataclass(frozen=True)

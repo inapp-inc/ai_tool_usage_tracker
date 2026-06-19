@@ -12,6 +12,7 @@ from app.collector.scheduler import CollectorScheduler
 from app.config import get_settings
 from app.connectivity import verify_connectivity
 from app.core.exceptions import register_exception_handlers
+from app.core.logging_config import configure_logging
 from app.db.session import dispose_engine, get_session_factory
 
 
@@ -19,6 +20,7 @@ from app.db.session import dispose_engine, get_session_factory
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Verify PostgreSQL, seed dev admin, start collector scheduler."""
     settings = get_settings()
+    configure_logging(settings.log_level)
     connectivity = await verify_connectivity(settings)
     if not connectivity.is_healthy:
         raise RuntimeError(

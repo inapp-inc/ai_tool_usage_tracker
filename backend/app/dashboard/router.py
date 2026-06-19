@@ -10,6 +10,7 @@ from app.auth.dependencies import get_current_user
 from app.core.rbac import require_team_admin_or_above
 from app.dashboard.schemas import (
     ActiveAlertsResponse,
+    ActiveCountsWidget,
     CostOverviewWidget,
     DailyBreakdownResponse,
     MyUsageResponse,
@@ -76,6 +77,17 @@ async def get_dashboard_cost(
         team_id=team_id,
         tool_id=tool_id,
     )
+
+
+@router.get("/active-counts", response_model=ActiveCountsWidget)
+async def get_dashboard_active_counts(
+    team_id: UUID | None = None,
+    current_user: User = Depends(require_team_admin_or_above),
+    session: AsyncSession = Depends(get_session),
+    service: DashboardService = Depends(get_dashboard_service),
+) -> ActiveCountsWidget:
+    scope = await resolve_dashboard_scope(session, current_user, team_id=team_id)
+    return await service.get_active_counts(scope, team_id=team_id)
 
 
 @router.get("/usage-by-tool", response_model=UsageByToolResponse)

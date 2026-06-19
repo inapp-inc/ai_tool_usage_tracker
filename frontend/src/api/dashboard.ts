@@ -7,6 +7,7 @@ import {
   mapTopUsers,
   mapTrendPoints,
   type ApiActiveAlertSummary,
+  type ApiActiveCountsWidget,
   type ApiCostOverviewWidget,
   type ApiTokenUsageWidget,
   type ApiTopConsumersResponse,
@@ -88,39 +89,21 @@ async function fetchPeriodDeltas(
   const prevTo = new Date(new Date(from).getTime() - 1).toISOString();
   const prevFrom = new Date(new Date(from).getTime() - prevDurationMs).toISOString();
 
-  const [
-    currentTokens,
-    prevTokens,
-    currentCost,
-    prevCost,
-    currentTools,
-    prevTools,
-    currentTeams,
-    prevTeams,
-  ] = await Promise.all([
+  const [currentTokens, prevTokens, currentCost, prevCost] = await Promise.all([
     apiRequest<ApiTokenUsageWidget>(`/dashboard/tokens?${dashboardQuery(from, to, normalized)}`),
     apiRequest<ApiTokenUsageWidget>(`/dashboard/tokens?${dashboardQuery(prevFrom, prevTo, normalized)}`),
     apiRequest<ApiCostOverviewWidget>(`/dashboard/cost?${dashboardQuery(from, to, normalized)}`),
     apiRequest<ApiCostOverviewWidget>(`/dashboard/cost?${dashboardQuery(prevFrom, prevTo, normalized)}`),
-    apiRequest<ApiUsageByToolItem[]>(`/dashboard/usage-by-tool?${dashboardQuery(from, to, normalized)}`),
-    apiRequest<ApiUsageByToolItem[]>(`/dashboard/usage-by-tool?${dashboardQuery(prevFrom, prevTo, normalized)}`),
-    apiRequest<ApiUsageByTeamItem[]>(`/dashboard/usage-by-team?${dashboardQuery(from, to, normalized)}`),
-    apiRequest<ApiUsageByTeamItem[]>(`/dashboard/usage-by-team?${dashboardQuery(prevFrom, prevTo, normalized)}`),
   ]);
 
   const pct = (current: number, previous: number) =>
     previous === 0 ? (current > 0 ? 100 : 0) : ((current - previous) / previous) * 100;
 
-  const activeTools = (rows: ApiUsageByToolItem[]) =>
-    rows.filter((row) => row.total_tokens > 0).length;
-  const activeTeams = (rows: ApiUsageByTeamItem[]) =>
-    rows.filter((row) => row.total_tokens > 0).length;
-
   return {
     tokens_delta: Math.round(pct(currentTokens.total_tokens, prevTokens.total_tokens) * 10) / 10,
     cost_delta: Math.round(pct(Number(currentCost.actual_spend), Number(prevCost.actual_spend)) * 10) / 10,
-    tools_delta: Math.round(pct(activeTools(currentTools), activeTools(prevTools)) * 10) / 10,
-    teams_delta: Math.round(pct(activeTeams(currentTeams), activeTeams(prevTeams)) * 10) / 10,
+    tools_delta: 0,
+    teams_delta: 0,
   };
 }
 
@@ -131,15 +114,17 @@ export async function fetchDashboardStats(
 ): Promise<DashboardStats> {
   const normalized = normalizeFilters(filters);
   const query = dashboardQuery(from, to, normalized);
-  const [tokens, cost, tools, teams, deltas] = await Promise.all([
+  const countsQuery = normalized?.teamId
+    ? `team_id=${encodeURIComponent(normalized.teamId)}`
+    : "";
+  const [tokens, cost, activeCounts, deltas] = await Promise.all([
     apiRequest<ApiTokenUsageWidget>(`/dashboard/tokens?${query}`),
     apiRequest<ApiCostOverviewWidget>(`/dashboard/cost?${query}`),
-    apiRequest<ApiUsageByToolItem[]>(`/dashboard/usage-by-tool?${query}`),
-    apiRequest<ApiUsageByTeamItem[]>(`/dashboard/usage-by-team?${query}`),
+    apiRequest<ApiActiveCountsWidget>(`/dashboard/active-counts?${countsQuery}`),
     fetchPeriodDeltas(from, to, filters),
   ]);
 
-  return buildDashboardStats(tokens, cost, tools, teams, deltas);
+  return buildDashboardStats(tokens, cost, activeCounts, deltas);
 }
 
 export async function fetchTokenTimeseries(

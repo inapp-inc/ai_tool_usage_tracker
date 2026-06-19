@@ -1,26 +1,22 @@
 # Proposal: In-App Alert Notifications
 
-**Status:** 📋 Proposed
+**Status:** 🚧 In progress
 
 ## Why
 
-When a usage threshold is breached, the platform currently supports email as a notification channel. Email introduces external dependencies (SMTP configuration) and is not always the preferred channel. Administrators want threshold alert notifications to appear directly in the application header — a notification bell that increments and surfaces recent alerts — without requiring any email setup.
-
-In the Alerts configuration form, the Notification Channel dropdown should include "In-App" as a first-class option. When selected, alert notifications are delivered only to the in-app notification centre (no email sent).
+When a usage threshold is breached, administrators want alert notifications in the application header — a notification bell with unread count and recent items — without requiring webhook or email setup.
 
 ## What Changes (this slice)
 
-### 1. Notification channel: "In-App" option in Alerts dropdown
+### 1. Notification channel: In-App (no webhook)
 
-The Notification Channel field on the threshold/alert create form gains an `inapp` value. Email is no longer the mandatory or default channel.
+The Alerts form **removes Webhook**. Channel options map to existing threshold flags:
 
-Updated channel options:
-
-| Value | Label | Behaviour |
-|-------|-------|-----------|
-| `inapp` | In-App Notification | Creates a notification record; shown in header bell |
-| `email` | Email | Sends email (existing behaviour) |
-| `inapp_and_email` | In-App + Email | Both |
+| UI value | `notify_in_app` | `notify_email` | Behaviour |
+|----------|-----------------|----------------|-----------|
+| `in_app` | true | false | In-app notification only (default) |
+| `email` | false | true | Email only (future SMTP) |
+| `in_app_and_email` | true | true | Both |
 
 ### 2. Header notification bell
 
@@ -45,6 +41,7 @@ The frontend polls `GET /api/v1/notifications/unread-count` every 60 seconds to 
 
 ## Out of Scope
 
+- Webhook notifications (removed from Alerts UI)
 - WebSocket / push delivery (polling is sufficient for MVP)
 - Full notifications inbox page (header popover only for this slice)
 - Email delivery changes (existing email channel unchanged)

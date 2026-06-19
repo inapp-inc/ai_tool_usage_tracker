@@ -10,6 +10,13 @@ export function appPath(route: string): string {
   return base ? `${base}${normalized}` : normalized;
 }
 
+/** Resolve a file under Vite `public/` (respects BASE_URL in production). */
+export function publicAssetPath(filename: string): string {
+  const base = import.meta.env.BASE_URL;
+  const normalized = filename.startsWith("/") ? filename.slice(1) : filename;
+  return `${base}${normalized}`;
+}
+
 /** Resolve API base URL from env or derive from Vite `base` (e.g. `/aitool/api/v1`). */
 export function resolveApiBase(): string {
   const configured = import.meta.env.VITE_API_BASE_URL?.trim();

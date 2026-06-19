@@ -138,4 +138,4 @@ def test_usage_tool_ids_for_filter_expands_catalogue() -> None:
 
     ids = usage_tool_ids_for_filter([catalogue, connected], catalogue.id)
 
-    assert ids == [connected.id]
+    assert set(ids) == {catalogue.id, connected.id}

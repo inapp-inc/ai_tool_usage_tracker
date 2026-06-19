@@ -2,29 +2,32 @@
 
 ## 1. Backend
 
-- [ ] 1.1 Add `notification_channel` column to `notifications.alerts` (migration); enum: `inapp | email | inapp_and_email`; default `inapp`
-- [ ] 1.2 Update `ThresholdCreateRequest` / `ThresholdUpdateRequest` schemas — add `notification_channel` enum field
-- [ ] 1.3 Remove email-address field from threshold create request (channel `inapp` requires no email)
-- [ ] 1.4 Update threshold evaluator: when channel includes `inapp`, create `Notification` records for all scoped recipients
-- [ ] 1.5 Implement recipient resolution: `team` scope → team members; `org` scope → all users; `user` scope → single user
-- [ ] 1.6 Implement `POST /api/v1/notifications/read-all` endpoint
-- [ ] 1.7 Update OpenAPI spec: `notification_channel` on threshold schemas, `/notifications/read-all` path
+- [x] 1.1 Migration `024_in_app_notifications` — create `notifications.notifications` table
+- [x] 1.2 Use existing `notify_in_app` / `notify_email` flags on `admin.thresholds` (default in-app only)
+- [x] 1.3 Threshold evaluator creates `ThresholdEvent` + in-app rows when breach detected
+- [x] 1.4 Recipient resolution: org → admins; team → team admins + super admins; user → target user
+- [x] 1.5 `GET /api/v1/notifications`, `GET /unread-count`, `POST /{id}/read`, `POST /read-all`
+- [x] 1.6 Evaluator runs after successful collector sync (usage ingest)
+- [ ] 1.7 Email delivery (unchanged / future)
 
 ## 2. Frontend
 
-- [ ] 2.1 Create `NotificationBell.tsx` component in app header
-- [ ] 2.2 Badge: fetch `GET /notifications/unread-count` on mount; poll every 60 s
-- [ ] 2.3 Popover: fetch `GET /notifications?unread_only=true&limit=5` on open
-- [ ] 2.4 Notification item: display title, body snippet, relative timestamp; click → navigate to `deep_link` + mark read
-- [ ] 2.5 "Mark all read" button → `POST /notifications/read-all`; refresh badge
-- [ ] 2.6 Update Alerts/Threshold form: replace email channel dropdown with `CHANNEL_OPTIONS` (`inapp`, `email`, `inapp_and_email`)
-- [ ] 2.7 Default channel to `inapp`; hide email address field when channel is `inapp`
-- [ ] 2.8 Create `frontend/src/api/notifications.ts` — `fetchUnreadCount`, `fetchNotifications`, `markRead`, `markAllRead`
+- [x] 2.1 `NotificationBell.tsx` in app header with unread badge
+- [x] 2.2 Poll `GET /notifications/unread-count` every 60 s
+- [x] 2.3 Popover lists 5 recent unread on open
+- [x] 2.4 Click item → navigate to alert history + mark read
+- [x] 2.5 "Mark all read" → `POST /notifications/read-all`
+- [x] 2.6 Alerts form channel: In-App / Email / In-App + Email (webhook removed)
+- [x] 2.7 Default channel `in_app`; hide email field when in-app only
+- [x] 2.8 `frontend/src/api/notifications.ts`
 
 ## 3. Tests
 
-- [ ] 3.1 Backend: threshold breach with `inapp` channel creates notification records for scoped users
-- [ ] 3.2 Backend: `read-all` endpoint marks all unread as read; returns correct count
-- [ ] 3.3 Backend: unread-count decreases after mark-all-read
-- [ ] 3.4 Frontend: bell badge shows unread count; disappears after mark-all-read
-- [ ] 3.5 Frontend: channel dropdown defaults to "In-App Notification"; email field hidden
+- [x] 3.1 Backend: breach creates notification records for scoped users
+- [x] 3.2 Backend: read-all marks unread and returns count
+- [ ] 3.3 Frontend component tests (optional)
+
+## Notes
+
+- Webhook channel removed from Alerts UI; `webhook_url` column retained for backward compatibility but always cleared on save.
+- Full notifications inbox page remains out of scope (header popover only).

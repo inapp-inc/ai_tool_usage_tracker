@@ -66,12 +66,17 @@ def test_compose_defines_storage_volumes() -> None:
 
 
 def test_api_uses_compose_service_hostnames() -> None:
-    """API DATABASE_URL and REDIS_URL use internal service hostnames."""
+    """API receives POSTGRES_* vars; entrypoint builds DATABASE_URL with postgres host."""
     compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
     environment = compose["services"]["api"]["environment"]
 
-    assert "@postgres:5432/" in environment["DATABASE_URL"]
-    assert environment["REDIS_URL"] == "redis://redis:6379/0"
+    assert environment["POSTGRES_USER"] == "${POSTGRES_USER:-aitracker}"
+    assert environment["POSTGRES_PASSWORD"] == "${POSTGRES_PASSWORD}"
+    assert environment["POSTGRES_DB"] == "${POSTGRES_DB:-aitracker}"
+
+    entrypoint = REPO_ROOT / "backend" / "docker-entrypoint.sh"
+    assert entrypoint.is_file()
+    assert "@postgres:5432/" in entrypoint.read_text(encoding="utf-8")
 
 
 def test_services_use_internal_network() -> None:

@@ -9,6 +9,10 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.admin import Team
 from app.models.auth import User
+from app.teams.deletion import (
+    delete_connected_credentials_for_team,
+    remove_team_from_report_jobs,
+)
 from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.metrics import TeamMetrics, TeamMetricsLoader
 from app.teams.repository import TeamRepository
@@ -257,6 +261,16 @@ class TeamService:
 
     async def delete_team(self, user: User, team_id: UUID) -> None:
         team = await self._require_team(user.organization_id, team_id)
+        await delete_connected_credentials_for_team(
+            self._session,
+            organization_id=user.organization_id,
+            team=team,
+        )
+        await remove_team_from_report_jobs(
+            self._session,
+            organization_id=user.organization_id,
+            team_id=team.id,
+        )
         await self._teams.delete(team)
         await self._session.commit()
 

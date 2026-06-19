@@ -20,19 +20,21 @@ import { createPortal } from "react-dom";
 
 import type { DateRange } from "@/types";
 import { tokens } from "@/theme/palette";
+import { currentMonthUtcRange } from "@/utils/periods";
 
 interface PeriodSelectorProps {
   value: DateRange;
   onChange: (range: DateRange) => void;
 }
 
-type PresetKey = "today" | "7d" | "30d" | "90d" | "custom";
+type PresetKey = "today" | "7d" | "30d" | "90d" | "month" | "custom";
 
 const PRESETS: Array<{ key: PresetKey; label: string }> = [
   { key: "today", label: "Today" },
   { key: "7d", label: "7 days" },
   { key: "30d", label: "30 days" },
   { key: "90d", label: "90 days" },
+  { key: "month", label: "This month" },
   { key: "custom", label: "Custom" },
 ];
 
@@ -56,6 +58,8 @@ function computePresetRange(preset: Exclude<PresetKey, "custom">): DateRange {
       return toDateRange(subDays(today, 29), end);
     case "90d":
       return toDateRange(subDays(today, 89), end);
+    case "month":
+      return currentMonthUtcRange();
   }
 }
 
@@ -72,7 +76,7 @@ function toInputDate(iso: string): string {
 
 export function PeriodSelector({ value, onChange }: PeriodSelectorProps) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-  const [selectedPreset, setSelectedPreset] = useState<PresetKey>("30d");
+  const [selectedPreset, setSelectedPreset] = useState<PresetKey>("month");
   const [customFrom, setCustomFrom] = useState(() => toInputDate(value.from));
   const [customTo, setCustomTo] = useState(() => toInputDate(value.to));
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);

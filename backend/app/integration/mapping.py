@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from app.integration.numbers import parse_compact_int
+
 _TEMPLATE = re.compile(r"\{([a-zA-Z0-9_.]+)\}")
 
 
@@ -76,16 +78,7 @@ def parse_occurred_at(value: Any) -> datetime:
 
 
 def parse_int(value: Any, default: int = 0) -> int:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    try:
-        return int(str(value).strip())
-    except ValueError:
-        return default
+    return parse_compact_int(value, default=default)
 
 
 def parse_decimal(value: Any, default: Decimal = Decimal("0")) -> Decimal:

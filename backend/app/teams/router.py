@@ -1,5 +1,6 @@
 """Teams REST API — OpenAPI /teams/*."""
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -30,6 +31,8 @@ from app.teams.service import TeamService
 from app.teams.team_tool_service import TeamToolService
 
 router = APIRouter(prefix="/teams", tags=["Teams"])
+
+logger = logging.getLogger(__name__)
 
 WRITE_ROLES = frozenset({"super_admin"})
 TEAM_TOOL_WRITE_ROLES = frozenset({"super_admin", "team_admin"})
@@ -115,7 +118,19 @@ async def sync_team_tools(
     current_user: User = Depends(require_team_tool_writer),
     service: TeamToolService = Depends(get_team_tool_service),
 ) -> TeamSyncResponse:
-    return await service.sync_team_tools(current_user, team_id)
+    result = await service.sync_team_tools(current_user, team_id)
+    logger.info(
+        "Team sync API | team_id=%s synced=%s skipped=%s failed=%s results=%s",
+        team_id,
+        result.synced_count,
+        result.skipped_count,
+        result.failed_count,
+        [
+            {"tool": row.tool_name, "status": row.status, "message": row.message}
+            for row in result.results
+        ],
+    )
+    return result
 
 
 @router.get("", response_model=TeamListResponse)

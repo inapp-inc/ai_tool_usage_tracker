@@ -231,6 +231,9 @@ export function CredentialsPage() {
       setSaveError(null);
       await queryClient.invalidateQueries({ queryKey: ["credentials"] });
       await queryClient.invalidateQueries({ queryKey: ["tools"] });
+      await queryClient.invalidateQueries({ queryKey: ["teams"] });
+      await queryClient.invalidateQueries({ queryKey: ["team-tool-usage"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       closeSlideOver();
     },
     onError: (error) => {
@@ -320,6 +323,9 @@ export function CredentialsPage() {
     await queryClient.invalidateQueries({ queryKey: ["tools"] });
     await queryClient.invalidateQueries({ queryKey: ["tool-options"] });
     await queryClient.invalidateQueries({ queryKey: ["catalogue-tool-options"] });
+    await queryClient.invalidateQueries({ queryKey: ["teams"] });
+    await queryClient.invalidateQueries({ queryKey: ["team-tool-usage"] });
+    await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     closeSlideOver();
   };
 

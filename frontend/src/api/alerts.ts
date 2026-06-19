@@ -11,7 +11,7 @@ import {
 export type AlertSeverity = "critical" | "warning" | "info";
 export type ThresholdType = "token_count" | "cost_usd" | "budget_percent";
 export type ThresholdScope = "organization" | "team" | "user";
-export type AlertChannel = "email" | "webhook" | "both";
+export type AlertChannel = "in_app" | "email" | "in_app_and_email";
 
 export interface AlertRule {
   id: string;
@@ -23,7 +23,6 @@ export interface AlertRule {
   teamId: string | null;
   teamName: string | null;
   channel: AlertChannel;
-  webhookUrl: string | null;
   emailRecipients: string[];
   status: "active" | "inactive";
   triggerCount: number;
@@ -51,7 +50,6 @@ export interface CreateAlertRuleRequest {
   scope: ThresholdScope;
   teamId: string | null;
   channel: AlertChannel;
-  webhookUrl: string | null;
   emailRecipients: string[];
 }
 

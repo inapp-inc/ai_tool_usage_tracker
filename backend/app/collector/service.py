@@ -1,5 +1,6 @@
 """Collector business logic — CRUD, pull execution, usage persistence."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -10,7 +11,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collector.adapters.base import ProviderValidationError
+from app.collector.adapters.cursor_dump import create_cursor_pull_dumper
 from app.collector.adapters.registry import fetch_provider_usage, validate_provider_api_key
+from app.config import get_settings
 from app.integration.resolve import resolve_tool_polling_context
 from app.collector.schemas import (
     CollectorCreateRequest,
@@ -24,6 +27,9 @@ from app.core.token_crypto import decrypt_token, encrypt_token, mask_token
 from app.models.admin import Team, Tool
 from app.models.collector import CollectorConfig, CollectorRun, UsageEvent
 from app.tools.catalogue import catalogue_tool_id_from_connected, team_id_from_connected
+
+
+logger = logging.getLogger(__name__)
 
 
 def _to_collector_response(config: CollectorConfig) -> CollectorResponse:
@@ -157,18 +163,71 @@ class CollectorService:
         await self._session.flush()
 
         try:
-            records = await self._pull_usage(config, since=since, until=until)
-            ingested = await self._persist_records(config, records)
+            until = until or datetime.now(UTC)
+            since = since or (until - timedelta(minutes=config.pull_interval_minutes))
+            pull_dumper = None
+            if config.provider == "cursor":
+                settings = get_settings()
+                pull_dumper = create_cursor_pull_dumper(
+                    enabled=settings.cursor_pull_dump_enabled,
+                    storage_root=settings.local_storage_root,
+                    tool_id=config.tool_id,
+                    since=since,
+                    until=until,
+                )
+
+            records = await self._pull_usage(
+                config,
+                since=since,
+                until=until,
+                cursor_pull_dumper=pull_dumper,
+            )
+            ingested, skipped_duplicates = await self._persist_records(config, records)
+
+            if pull_dumper is not None:
+                pull_dumper.add_parsed_records(records)
+                pull_dumper.write_parsed_records()
+                pull_dumper.write_summary(
+                    pulled=len(records),
+                    ingested=ingested,
+                    skipped_duplicates=skipped_duplicates,
+                    since=since,
+                    until=until,
+                )
+
             run.status = "completed"
             run.records_ingested = ingested
             run.completed_at = datetime.now(UTC)
             config.last_success_at = run.completed_at
             config.last_error = None
+            logger.info(
+                "Collector run completed | collector_id=%s provider=%s tool_id=%s pulled=%s ingested=%s skipped_duplicates=%s since=%s until=%s",
+                config.id,
+                config.provider,
+                config.tool_id,
+                len(records),
+                ingested,
+                skipped_duplicates,
+                since,
+                until,
+            )
+            org_id = await self._organization_id_for_collector(config)
+            if org_id is not None:
+                from app.thresholds.evaluator import ThresholdEvaluator
+
+                await ThresholdEvaluator(self._session).evaluate_organization(org_id)
         except Exception as exc:  # noqa: BLE001 — store sanitized message on run row
             run.status = "failed"
             run.error_message = str(exc)[:500]
             run.completed_at = datetime.now(UTC)
             config.last_error = run.error_message
+            logger.error(
+                "Collector run failed | collector_id=%s provider=%s tool_id=%s error=%s",
+                config.id,
+                config.provider,
+                config.tool_id,
+                run.error_message,
+            )
 
         await self._session.commit()
         await self._session.refresh(run)
@@ -180,6 +239,7 @@ class CollectorService:
         *,
         since: datetime | None = None,
         until: datetime | None = None,
+        cursor_pull_dumper=None,
     ):
         token = decrypt_token(config.api_token_ciphertext)
         until = until or datetime.now(UTC)
@@ -202,9 +262,10 @@ class CollectorService:
             pricing_config=pricing_config,
             api_endpoint=api_endpoint,
             integration_config=integration_config,
+            cursor_pull_dumper=cursor_pull_dumper,
         )
 
-    async def _persist_records(self, config: CollectorConfig, records) -> int:
+    async def _persist_records(self, config: CollectorConfig, records) -> tuple[int, int]:
         organization_id = None
         team_id = None
         tool_id = config.tool_id
@@ -213,9 +274,28 @@ class CollectorService:
             if tool is not None:
                 organization_id = tool.organization_id
                 team_id = await self._resolve_team_id_for_tool(tool)
+                catalogue_id = catalogue_tool_id_from_connected(tool)
+                if catalogue_id is not None:
+                    tool_id = catalogue_id
+
+        vendor_ids = [record.vendor_event_id for record in records if record.vendor_event_id]
+        existing_ids: set[str] = set()
+        if vendor_ids:
+            result = await self._session.execute(
+                select(UsageEvent.vendor_event_id).where(
+                    UsageEvent.provider == config.provider,
+                    UsageEvent.vendor_event_id.in_(vendor_ids),
+                )
+            )
+            existing_ids = {row for row in result.scalars().all() if row}
 
         ingested = 0
+        skipped_duplicates = 0
         for record in records:
+            if record.vendor_event_id and record.vendor_event_id in existing_ids:
+                skipped_duplicates += 1
+                continue
+
             stmt = (
                 insert(UsageEvent)
                 .values(
@@ -228,7 +308,9 @@ class CollectorService:
                     occurred_at=record.occurred_at,
                     input_tokens=record.input_tokens,
                     output_tokens=record.output_tokens,
-                    total_tokens=record.input_tokens + record.output_tokens,
+                    cache_write_tokens=record.cache_write_tokens,
+                    cache_read_tokens=record.cache_read_tokens,
+                    total_tokens=record.total_tokens,
                     estimated_cost=record.estimated_cost,
                     vendor_event_id=record.vendor_event_id,
                     user_email=getattr(record, "user_email", None),
@@ -242,7 +324,17 @@ class CollectorService:
             result = await self._session.execute(stmt)
             if result.rowcount:
                 ingested += 1
-        return ingested
+                if record.vendor_event_id:
+                    existing_ids.add(record.vendor_event_id)
+            elif record.vendor_event_id:
+                skipped_duplicates += 1
+        return ingested, skipped_duplicates
+
+    async def _organization_id_for_collector(self, config: CollectorConfig) -> UUID | None:
+        if config.tool_id is None:
+            return None
+        tool = await self._session.get(Tool, config.tool_id)
+        return tool.organization_id if tool is not None else None
 
     async def _resolve_team_id_for_tool(self, tool: Tool) -> UUID | None:
         team_id = team_id_from_connected(tool)

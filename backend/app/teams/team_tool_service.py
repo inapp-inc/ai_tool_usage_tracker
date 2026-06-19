@@ -1,5 +1,6 @@
 """Team–tool assignment business logic."""
 
+import logging
 from decimal import Decimal
 from uuid import UUID
 
@@ -27,6 +28,8 @@ from app.tools.repository import ToolRepository
 from app.tools.service import ToolService
 
 WRITE_ROLES = frozenset({"super_admin", "team_admin"})
+
+logger = logging.getLogger(__name__)
 
 
 class TeamToolService:
@@ -108,16 +111,38 @@ class TeamToolService:
         team_id: UUID,
     ) -> TeamSyncResponse:
         """Pull usage/members from all connected credentials assigned to this team."""
-        team = await self._require_team_access(user, team_id, write=True)
+        await self._require_team_access(user, team_id, write=True)
+        return await self.sync_team_tools_for_organization(user.organization_id, team_id)
+
+    async def sync_team_tools_for_organization(
+        self,
+        organization_id: UUID,
+        team_id: UUID,
+    ) -> TeamSyncResponse:
+        """Sync all connected credentials for a team (API and background jobs)."""
+        team = await self._teams.get_by_id(team_id, organization_id)
+        if team is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Team not found.",
+            )
+
         tool_service = ToolService(self._session)
-        org_tools = await self._tools.list_by_organization(user.organization_id, active=None)
+        org_tools = await self._tools.list_by_organization(organization_id, active=None)
         id_to_catalogue = connected_to_catalogue_map(org_tools)
         raw_tool_ids = set(await self._collect_team_tool_ids(team))
         catalogue_tool_ids = {id_to_catalogue.get(tool_id, tool_id) for tool_id in raw_tool_ids}
         connected_tools = await self._tools.list_connected_for_team(
-            user.organization_id,
+            organization_id,
             team_id=team.id,
             catalogue_tool_ids=catalogue_tool_ids,
+        )
+        logger.info(
+            "Team sync started | org=%s team_id=%s assigned_tools=%s connected_credentials=%s",
+            organization_id,
+            team_id,
+            len(catalogue_tool_ids),
+            len(connected_tools),
         )
         results: list[TeamToolSyncResult] = []
 
@@ -135,7 +160,7 @@ class TeamToolService:
                 connected.pricing_config = config
                 flag_modified(connected, "pricing_config")
             catalogue_tool = (
-                await self._tools.get_by_id(catalogue_id, user.organization_id)
+                await self._tools.get_by_id(catalogue_id, organization_id)
                 if catalogue_id is not None
                 else None
             )
@@ -153,7 +178,7 @@ class TeamToolService:
                 continue
 
             try:
-                await tool_service.sync_tool(user.organization_id, connected.id)
+                await tool_service.sync_tool(organization_id, connected.id)
                 results.append(
                     TeamToolSyncResult(
                         tool_id=catalogue_id or connected.id,
@@ -162,8 +187,22 @@ class TeamToolService:
                         message="Usage data collected.",
                     )
                 )
+                logger.info(
+                    "Team sync tool ok | team_id=%s connected_id=%s vendor=%s name=%s",
+                    team_id,
+                    connected.id,
+                    connected.vendor,
+                    display_name,
+                )
             except HTTPException as exc:
                 detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+                logger.warning(
+                    "Team sync tool failed | team_id=%s connected_id=%s vendor=%s detail=%s",
+                    team_id,
+                    connected.id,
+                    connected.vendor,
+                    detail,
+                )
                 results.append(
                     TeamToolSyncResult(
                         tool_id=catalogue_id or connected.id,
@@ -173,6 +212,12 @@ class TeamToolService:
                     )
                 )
             except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Team sync tool error | team_id=%s connected_id=%s vendor=%s",
+                    team_id,
+                    connected.id,
+                    connected.vendor,
+                )
                 results.append(
                     TeamToolSyncResult(
                         tool_id=catalogue_id or connected.id,
@@ -192,7 +237,7 @@ class TeamToolService:
         for tool_id in sorted(catalogue_tool_ids, key=str):
             if tool_id in connected_catalogue_ids:
                 continue
-            catalogue_tool = await self._tools.get_by_id(tool_id, user.organization_id)
+            catalogue_tool = await self._tools.get_by_id(tool_id, organization_id)
             if catalogue_tool is None or not catalogue_tool.catalogue_only:
                 continue
             results.append(
@@ -207,6 +252,15 @@ class TeamToolService:
         synced_count = sum(1 for row in results if row.status == "synced")
         skipped_count = sum(1 for row in results if row.status == "skipped")
         failed_count = sum(1 for row in results if row.status == "failed")
+
+        logger.info(
+            "Team sync finished | org=%s team_id=%s synced=%s skipped=%s failed=%s",
+            organization_id,
+            team_id,
+            synced_count,
+            skipped_count,
+            failed_count,
+        )
 
         return TeamSyncResponse(
             team_id=team.id,

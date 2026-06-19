@@ -15,6 +15,7 @@ from app.dashboard.scope import DashboardScope
 from app.dashboard.schemas import (
     ActiveAlertSummary,
     ActiveAlertsResponse,
+    ActiveCountsWidget,
     CostOverviewWidget,
     DailyBreakdownResponse,
     DailyBreakdownTeam,
@@ -37,8 +38,11 @@ from app.models.collector import CollectorConfig, UsageEvent
 from app.models.notifications import Threshold, ThresholdEvent
 from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.repository import TeamRepository
+from app.teams.team_tool_repository import TeamToolRepository
 from app.tools.catalogue import usage_tool_ids_for_filter
 from app.tools.repository import ToolRepository
+from app.usage.aggregates import sum_tokens_and_cost_by_team
+from app.usage.tokens import usage_event_token_total, usage_event_token_total_sql
 from app.users.repository import UserAdminRepository
 
 
@@ -48,12 +52,23 @@ def _pct_delta(current: float, previous: float) -> float:
     return round(((current - previous) / previous) * 100.0, 1)
 
 
-def effective_token_total(input_tokens: int, output_tokens: int) -> int:
-    """Combined token count from input + output (source of truth for dashboards)."""
-    return input_tokens + output_tokens
+def effective_token_total(
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    cache_write_tokens: int = 0,
+    cache_read_tokens: int = 0,
+) -> int:
+    """Combined token count including cache read/write."""
+    return usage_event_token_total(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_write_tokens=cache_write_tokens,
+        cache_read_tokens=cache_read_tokens,
+    )
 
 
-_TOKEN_TOTAL_EXPR = UsageEvent.input_tokens + UsageEvent.output_tokens
+_TOKEN_TOTAL_EXPR = usage_event_token_total_sql()
 
 
 def _sum_tokens():
@@ -86,39 +101,64 @@ class DashboardService:
         self._memberships = TeamMembershipRepository(session)
         self._users = UserAdminRepository(session)
         self._tools = ToolRepository(session)
+        self._team_tools = TeamToolRepository(session)
+
+    async def get_active_counts(
+        self,
+        scope: DashboardScope,
+        *,
+        team_id: UUID | None = None,
+    ) -> ActiveCountsWidget:
+        """Inventory counts aligned with Tools and Teams admin modules."""
+        teams = await self._teams.list_by_organization(scope.organization_id, active=None)
+        if scope.allowed_team_ids is not None:
+            allowed = set(scope.allowed_team_ids)
+            teams = [team for team in teams if team.id in allowed]
+
+        if team_id is None:
+            catalogue_tools = await self._tools.list_by_organization(
+                scope.organization_id,
+                active=None,
+                catalogue_only=True,
+            )
+            return ActiveCountsWidget(
+                active_tools=len(catalogue_tools),
+                active_teams=len([team for team in teams if team.active]),
+            )
+
+        teams = [team for team in teams if team.id == team_id]
+        if not teams:
+            return ActiveCountsWidget(active_tools=0, active_teams=0)
+
+        team = teams[0]
+        catalogue_ids = (await self._catalogue_ids_by_team([team])).get(team.id, set())
+        return ActiveCountsWidget(
+            active_tools=len(catalogue_ids),
+            active_teams=1 if team.active else 0,
+        )
+
+    async def _catalogue_ids_by_team(self, teams: list[Team]) -> dict[UUID, set[UUID]]:
+        catalogue_by_team: dict[UUID, set[UUID]] = {}
+        for team in teams:
+            ids: set[UUID] = set()
+            raw_tool_ids = team.tool_ids if isinstance(team.tool_ids, list) else []
+            for raw in raw_tool_ids:
+                try:
+                    ids.add(UUID(str(raw)))
+                except ValueError:
+                    continue
+            for assignment in await self._team_tools.list_by_team(team.id):
+                ids.add(assignment.tool_id)
+            catalogue_by_team[team.id] = ids
+        return catalogue_by_team
 
     async def _org_team_ids(self, organization_id: UUID) -> list[UUID]:
         rows = await self._teams.list_by_organization(organization_id)
         return [row.id for row in rows]
 
     def _org_usage_predicate(self, organization_id: UUID, org_team_ids: list[UUID]):
-        org_tools = select(Tool.id).where(Tool.organization_id == organization_id)
-        org_collectors = (
-            select(CollectorConfig.id)
-            .join(Tool, CollectorConfig.tool_id == Tool.id)
-            .where(Tool.organization_id == organization_id)
-        )
-        clauses = [UsageEvent.organization_id == organization_id]
-        if org_team_ids:
-            clauses.append(
-                and_(
-                    UsageEvent.organization_id.is_(None),
-                    UsageEvent.team_id.in_(org_team_ids),
-                )
-            )
-        clauses.append(
-            and_(
-                UsageEvent.organization_id.is_(None),
-                UsageEvent.tool_id.in_(org_tools),
-            )
-        )
-        clauses.append(
-            and_(
-                UsageEvent.organization_id.is_(None),
-                UsageEvent.collector_id.in_(org_collectors),
-            )
-        )
-        return or_(*clauses)
+        """Usage rows attributed to this organization."""
+        return UsageEvent.organization_id == organization_id
 
     def _scope_filters(
         self,
@@ -187,17 +227,26 @@ class DashboardService:
             select(
                 func.coalesce(func.sum(UsageEvent.input_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.output_tokens), 0),
+                func.coalesce(func.sum(UsageEvent.cache_write_tokens), 0),
+                func.coalesce(func.sum(UsageEvent.cache_read_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
             ).where(*filters)
         )
         row = result.one()
         input_tokens = int(row[0])
         output_tokens = int(row[1])
+        cache_write_tokens = int(row[2])
+        cache_read_tokens = int(row[3])
         return TokenCostTotals(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            total_tokens=effective_token_total(input_tokens, output_tokens),
-            estimated_cost=Decimal(str(row[2])),
+            total_tokens=effective_token_total(
+                input_tokens,
+                output_tokens,
+                cache_write_tokens=cache_write_tokens,
+                cache_read_tokens=cache_read_tokens,
+            ),
+            estimated_cost=Decimal(str(row[4])),
         )
 
     async def _last_updated_at(self, scope: DashboardScope) -> datetime:
@@ -338,27 +387,35 @@ class DashboardService:
     ) -> UsageByTeamResponse:
         org_team_ids = await self._org_team_ids(scope.organization_id)
         usage_tool_ids = await self._usage_tool_ids(scope.organization_id, tool_id)
-        filters = self._scope_filters(
-            scope,
-            org_team_ids,
-            from_dt=from_dt,
-            to_dt=to_dt,
-            tool_id=tool_id,
-            usage_tool_ids=usage_tool_ids,
+        usage_map = await sum_tokens_and_cost_by_team(
+            self._session,
+            scope.organization_id,
+            org_team_ids if scope.allowed_team_ids is None else scope.allowed_team_ids,
+            from_dt,
+            to_dt,
         )
-        usage_result = await self._session.execute(
-            select(
-                UsageEvent.team_id,
-                _sum_tokens(),
-                func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+        if tool_id is not None or usage_tool_ids:
+            filters = self._scope_filters(
+                scope,
+                org_team_ids,
+                from_dt=from_dt,
+                to_dt=to_dt,
+                tool_id=tool_id,
+                usage_tool_ids=usage_tool_ids,
             )
-            .where(*filters, UsageEvent.team_id.is_not(None))
-            .group_by(UsageEvent.team_id)
-        )
-        usage_map = {
-            team_id: (int(tokens), Decimal(str(cost)))
-            for team_id, tokens, cost in usage_result.all()
-        }
+            usage_result = await self._session.execute(
+                select(
+                    UsageEvent.team_id,
+                    _sum_tokens(),
+                    func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+                )
+                .where(*filters, UsageEvent.team_id.is_not(None))
+                .group_by(UsageEvent.team_id)
+            )
+            usage_map = {
+                team_id: (int(tokens), Decimal(str(cost)))
+                for team_id, tokens, cost in usage_result.all()
+            }
 
         if scope.allowed_team_ids is not None:
             team_rows = [
@@ -590,8 +647,8 @@ class DashboardService:
     ) -> Decimal:
         now = datetime.now(UTC)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        team_id = threshold.team_id
-        tool_id = threshold.tool_id
+        team_id = threshold.team_id if threshold.scope in ("team", "user", "tool") else None
+        tool_id = threshold.tool_id if threshold.scope == "tool" else None
         totals = await self._aggregate_totals(
             scope,
             month_start,
@@ -607,6 +664,29 @@ class DashboardService:
                 return Decimal("0")
             return (totals.estimated_cost / allowance) * Decimal("100")
         return Decimal(totals.total_tokens)
+
+    async def get_threshold_current_value(
+        self,
+        organization_id: UUID,
+        threshold: Threshold,
+    ) -> Decimal:
+        """Current usage value for threshold evaluation (org-wide scope)."""
+        scope = DashboardScope(
+            organization_id=organization_id,
+            allowed_team_ids=None,
+            user_id=None,
+            user_email=None,
+        )
+        if threshold.scope == "user" and threshold.user_id is not None:
+            user = await self._users.get_by_id(threshold.user_id, organization_id)
+            if user is not None:
+                scope = DashboardScope(
+                    organization_id=organization_id,
+                    allowed_team_ids=None,
+                    user_id=user.id,
+                    user_email=user.email,
+                )
+        return await self._current_value_for_threshold(threshold, scope)
 
     async def get_my_usage(
         self,

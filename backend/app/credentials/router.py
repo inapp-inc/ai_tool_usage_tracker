@@ -1,5 +1,6 @@
 """Credentials REST API — tool-backed API keys."""
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -22,9 +23,11 @@ from app.credentials.schemas import (
 from app.credentials.service import CredentialService
 from app.db.session import get_session
 from app.models.auth import User
-from app.tools.background import run_tool_sync_background
+from app.tools.background import run_team_sync_background
 
 router = APIRouter(prefix="/credentials", tags=["Credentials"])
+
+logger = logging.getLogger(__name__)
 
 ADMIN_ROLES = frozenset({"super_admin"})
 
@@ -75,10 +78,19 @@ async def create_credential(
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> CredentialCreateResponseBody:
     created = await service.create_credential(current_user.organization_id, body)
-    background_tasks.add_task(
-        run_tool_sync_background,
+    logger.info(
+        "Credential connected | org=%s team_id=%s catalogue_tool_id=%s credential_id=%s vendor=%s label=%s — scheduling team sync",
         current_user.organization_id,
+        body.team_id,
+        body.tool_id,
         created.credential.id,
+        created.credential.vendor,
+        created.credential.label,
+    )
+    background_tasks.add_task(
+        run_team_sync_background,
+        current_user.organization_id,
+        body.team_id,
     )
     await _reload_scheduler(request)
     await record_audit_event(
@@ -122,11 +134,13 @@ async def update_credential(
         body,
     )
     if body.secret_value:
-        background_tasks.add_task(
-            run_tool_sync_background,
-            current_user.organization_id,
-            updated.id,
-        )
+        team_id = body.team_id or updated.team_id
+        if team_id is not None:
+            background_tasks.add_task(
+                run_team_sync_background,
+                current_user.organization_id,
+                team_id,
+            )
     await _reload_scheduler(request)
     await record_audit_event(
         recorder,

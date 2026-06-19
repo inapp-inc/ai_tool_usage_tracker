@@ -4,8 +4,9 @@ from app.dashboard.service import _pct_delta, _previous_period, effective_token_
 from datetime import UTC, datetime
 
 
-def test_effective_token_total_sums_input_and_output() -> None:
+def test_effective_token_total_sums_all_token_columns() -> None:
     assert effective_token_total(1_250_000, 980_000) == 2_230_000
+    assert effective_token_total(100, 200, cache_write_tokens=50, cache_read_tokens=150) == 500
     assert effective_token_total(0, 0) == 0
 
 

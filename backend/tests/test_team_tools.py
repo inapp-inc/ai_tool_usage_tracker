@@ -154,6 +154,7 @@ async def test_sync_team_tools_skips_tools_without_credentials() -> None:
     session = AsyncMock()
     service = TeamToolService(session)
     service._require_team_access = AsyncMock(return_value=team)
+    service._teams.get_by_id = AsyncMock(return_value=team)
     service._collect_team_tool_ids = AsyncMock(return_value=[catalogue_tool_id])
     service._tools.list_by_organization = AsyncMock(return_value=[catalogue_tool])
     service._tools.list_connected_for_team = AsyncMock(return_value=[])
@@ -164,6 +165,48 @@ async def test_sync_team_tools_skips_tools_without_credentials() -> None:
     assert result.synced_count == 0
     assert result.skipped_count == 1
     assert result.results[0].status == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_sync_team_tools_for_organization_without_user() -> None:
+    org_id = uuid4()
+    team_id = uuid4()
+    catalogue_tool_id = uuid4()
+
+    team = MagicMock()
+    team.id = team_id
+    team.tool_ids = [str(catalogue_tool_id)]
+
+    connected = MagicMock()
+    connected.id = uuid4()
+    connected.name = "Cursor Prod"
+    connected.credential_label = "Prod"
+    connected.catalogue_only = False
+    connected.pricing_config = {
+        "catalogue_tool_id": str(catalogue_tool_id),
+        "team_id": str(team_id),
+    }
+    connected.api_token_ciphertext = "encrypted"
+
+    catalogue_tool = MagicMock()
+    catalogue_tool.id = catalogue_tool_id
+    catalogue_tool.name = "Cursor"
+    catalogue_tool.catalogue_only = True
+
+    session = AsyncMock()
+    service = TeamToolService(session)
+    service._teams.get_by_id = AsyncMock(return_value=team)
+    service._collect_team_tool_ids = AsyncMock(return_value=[catalogue_tool_id])
+    service._tools.list_by_organization = AsyncMock(return_value=[catalogue_tool, connected])
+    service._tools.list_connected_for_team = AsyncMock(return_value=[connected])
+    service._tools.get_by_id = AsyncMock(return_value=catalogue_tool)
+
+    with patch.object(ToolService, "_decrypt_api_key", return_value="sk-test"):
+        with patch.object(ToolService, "sync_tool", new=AsyncMock()) as sync_tool:
+            result = await service.sync_team_tools_for_organization(org_id, team_id)
+
+    assert result.synced_count == 1
+    sync_tool.assert_awaited_once_with(org_id, connected.id)
 
 
 @pytest.mark.asyncio
@@ -204,6 +247,7 @@ async def test_sync_team_tools_syncs_all_connected_credentials() -> None:
     session = AsyncMock()
     service = TeamToolService(session)
     service._require_team_access = AsyncMock(return_value=team)
+    service._teams.get_by_id = AsyncMock(return_value=team)
     service._collect_team_tool_ids = AsyncMock(return_value=[catalogue_tool_id])
     service._tools.list_by_organization = AsyncMock(return_value=[catalogue_tool, connected_a, connected_b])
     service._tools.list_connected_for_team = AsyncMock(return_value=[connected_a, connected_b])

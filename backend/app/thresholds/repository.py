@@ -118,3 +118,37 @@ class ThresholdEventRepository:
             threshold_id: (int(count), last_triggered)
             for threshold_id, count, last_triggered in result.all()
         }
+
+    async def has_unacknowledged(
+        self,
+        threshold_id: UUID,
+        organization_id: UUID,
+    ) -> bool:
+        result = await self._session.execute(
+            select(ThresholdEvent.id).where(
+                ThresholdEvent.threshold_id == threshold_id,
+                ThresholdEvent.organization_id == organization_id,
+                ThresholdEvent.acknowledged_at.is_(None),
+            ).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def create(
+        self,
+        *,
+        organization_id: UUID,
+        threshold_id: UUID,
+        severity: str,
+        message: str,
+        team_id: UUID | None = None,
+    ) -> ThresholdEvent:
+        row = ThresholdEvent(
+            organization_id=organization_id,
+            threshold_id=threshold_id,
+            severity=severity,
+            message=message,
+            team_id=team_id,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row

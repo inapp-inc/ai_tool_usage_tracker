@@ -39,7 +39,6 @@ import {
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { endOfDay, startOfDay, subDays } from "date-fns";
 import {
   useCallback,
   useEffect,
@@ -88,6 +87,7 @@ import {
   type SubscriptionCadence,
   type SubscriptionChannel,
 } from "@/api/reports";
+import { fetchCredentials } from "@/api/credentials";
 import { fetchTeams, type Team } from "@/api/teams";
 import {
   ALL_TEAMS,
@@ -119,6 +119,7 @@ import {
   formatRelativeTime,
   formatTokens,
 } from "@/utils/formatters";
+import { currentMonthUtcRange } from "@/utils/periods";
 
 type ChartMode = "tokens" | "cost";
 
@@ -261,12 +262,8 @@ function SubscriptionChannelIcons({ channel }: { channel: SubscriptionChannel })
 }
 
 function createDefaultFilters(): InsightsFilters {
-  const today = new Date();
   return {
-    period: {
-      from: startOfDay(subDays(today, 30)).toISOString(),
-      to: endOfDay(today).toISOString(),
-    },
+    period: currentMonthUtcRange(),
     teamId: ALL_TEAMS,
     toolId: ALL_TOOLS,
   };
@@ -542,6 +539,11 @@ export function InsightsPage() {
     queryFn: fetchToolOptions,
   });
 
+  const credentialsQuery = useQuery({
+    queryKey: ["credentials"],
+    queryFn: fetchCredentials,
+  });
+
   const drilldownQuery = useQuery({
     queryKey: ["insights", "drilldown", drilldown.team?.teamId, from, to, toolId],
     queryFn: () =>
@@ -693,6 +695,34 @@ export function InsightsPage() {
 
   const teams = teamsQuery.data ?? EMPTY_TEAMS;
   const toolOptions = toolOptionsQuery.data ?? [];
+  const credentials = credentialsQuery.data ?? [];
+
+  const filteredToolOptions = useMemo(() => {
+    if (teamId === ALL_TEAMS) {
+      return toolOptions;
+    }
+    const selectedTeam = teams.find((team) => team.id === teamId);
+    const assignedToolIds = new Set(selectedTeam?.toolIds ?? []);
+    for (const credential of credentials) {
+      if (credential.teamId === teamId && credential.catalogueToolId) {
+        assignedToolIds.add(credential.catalogueToolId);
+      }
+    }
+    return toolOptions.filter((tool) => assignedToolIds.has(tool.id));
+  }, [credentials, teamId, teams, toolOptions]);
+
+  useEffect(() => {
+    if (teamId === ALL_TEAMS) {
+      return;
+    }
+    setFilters((prev) => {
+      if (prev.toolId === ALL_TOOLS) {
+        return prev;
+      }
+      const stillValid = filteredToolOptions.some((tool) => tool.id === prev.toolId);
+      return stillValid ? prev : { ...prev, toolId: ALL_TOOLS };
+    });
+  }, [filteredToolOptions, teamId]);
 
   const sortedTeamRows = useMemo(() => {
     let rows = teamsUsageQuery.data ?? [];
@@ -1069,7 +1099,11 @@ export function InsightsPage() {
             label="Team"
             value={filters.teamId}
             onChange={(event) =>
-              setFilters((prev) => ({ ...prev, teamId: event.target.value }))
+              setFilters((prev) => ({
+                ...prev,
+                teamId: event.target.value,
+                toolId: ALL_TOOLS,
+              }))
             }
           >
             <MenuItem value={ALL_TEAMS}>All teams</MenuItem>
@@ -1092,7 +1126,7 @@ export function InsightsPage() {
             }
           >
             <MenuItem value={ALL_TOOLS}>All tools</MenuItem>
-            {toolOptions.map((tool) => (
+            {filteredToolOptions.map((tool) => (
               <MenuItem key={tool.id} value={tool.id}>
                 {tool.name}
               </MenuItem>

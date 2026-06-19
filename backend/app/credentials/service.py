@@ -153,6 +153,8 @@ class CredentialService:
         pricing_config["catalogue_tool_name"] = catalogue_tool.name
         pricing_config["team_id"] = str(team.id)
         pricing_config.setdefault("provider_slug", catalogue_tool.vendor)
+        if body.organization_id and vendor_requires_organization_id(catalogue_tool.vendor):
+            pricing_config["organization_id"] = validate_organization_id(body.organization_id)
 
         tool = await self._tools.create(
             organization_id=organization_id,
@@ -182,6 +184,15 @@ class CredentialService:
         await self._sync_collector_token(tool)
         await self._session.commit()
         await self._session.refresh(tool)
+
+        logger.info(
+            "Credential persisted | credential_id=%s vendor=%s team_id=%s catalogue_tool_id=%s label=%s",
+            tool.id,
+            tool.vendor,
+            team.id,
+            catalogue_tool.id,
+            body.label.strip(),
+        )
 
         collector = await self._get_collector(tool.id)
         team_map = {tool.id: team}

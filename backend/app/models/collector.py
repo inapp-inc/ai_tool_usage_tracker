@@ -125,7 +125,7 @@ class UsageEvent(Base):
     )
     team_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("admin.teams.id", ondelete="SET NULL"),
+        ForeignKey("admin.teams.id", ondelete="CASCADE"),
         nullable=True,
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -150,6 +150,8 @@ class UsageEvent(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    cache_write_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     total_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     estimated_cost: Mapped[Decimal] = mapped_column(
         Numeric(18, 6),

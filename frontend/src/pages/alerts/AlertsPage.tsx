@@ -1,10 +1,10 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
+  IconBell,
   IconMail,
   IconPencil,
   IconPlus,
   IconTrash,
-  IconWebhook,
 } from "@tabler/icons-react";
 import {
   Alert,
@@ -90,9 +90,9 @@ const SCOPE_OPTIONS: Array<{ value: ThresholdScope; label: string }> = [
 ];
 
 const CHANNEL_OPTIONS: Array<{ value: AlertChannel; label: string }> = [
+  { value: "in_app", label: "In-App Notification" },
   { value: "email", label: "Email" },
-  { value: "webhook", label: "Webhook" },
-  { value: "both", label: "Both" },
+  { value: "in_app_and_email", label: "In-App + Email" },
 ];
 
 const schema = z
@@ -103,10 +103,7 @@ const schema = z
     thresholdValue: z.coerce.number().positive("Must be greater than 0"),
     scope: z.enum(["organization", "team", "user"]),
     teamId: z.string().nullable(),
-    channel: z.enum(["email", "webhook", "both"]),
-    webhookUrl: z
-      .union([z.string().url("Enter a valid URL"), z.literal("")])
-      .nullable(),
+    channel: z.enum(["in_app", "email", "in_app_and_email"]),
     emailRecipients: z.string(),
   })
   .superRefine((data, ctx) => {
@@ -118,17 +115,7 @@ const schema = z
       });
     }
     if (
-      (data.channel === "webhook" || data.channel === "both") &&
-      !data.webhookUrl
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Webhook URL is required",
-        path: ["webhookUrl"],
-      });
-    }
-    if (
-      (data.channel === "email" || data.channel === "both") &&
+      (data.channel === "email" || data.channel === "in_app_and_email") &&
       !data.emailRecipients.trim()
     ) {
       ctx.addIssue({
@@ -177,9 +164,11 @@ function SeverityChip({ severity }: { severity: AlertSeverity }) {
 function ChannelIcons({ channel }: { channel: AlertChannel }) {
   return (
     <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}>
-      {(channel === "email" || channel === "both") && <IconMail size={14} />}
-      {(channel === "webhook" || channel === "both") && (
-        <IconWebhook size={14} />
+      {(channel === "in_app" || channel === "in_app_and_email") && (
+        <IconBell size={14} />
+      )}
+      {(channel === "email" || channel === "in_app_and_email") && (
+        <IconMail size={14} />
       )}
     </Box>
   );
@@ -224,8 +213,7 @@ function toFormValues(rule: AlertRule | null): FormValues {
       thresholdValue: 1,
       scope: "organization",
       teamId: null,
-      channel: "email",
-      webhookUrl: "",
+      channel: "in_app",
       emailRecipients: "",
     };
   }
@@ -238,7 +226,6 @@ function toFormValues(rule: AlertRule | null): FormValues {
     scope: rule.scope,
     teamId: rule.teamId,
     channel: rule.channel,
-    webhookUrl: rule.webhookUrl ?? "",
     emailRecipients: rule.emailRecipients.join(", "),
   };
 }
@@ -252,8 +239,6 @@ function toRequestBody(data: FormValues) {
     scope: data.scope,
     teamId: data.scope === "organization" ? null : data.teamId,
     channel: data.channel,
-    webhookUrl:
-      data.webhookUrl && data.webhookUrl !== "" ? data.webhookUrl : null,
     emailRecipients: parseEmailRecipients(data.emailRecipients),
   };
 }
@@ -292,7 +277,8 @@ export function AlertsPage() {
   const createMutation = useMutation({
     mutationFn: createAlertRule,
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["alerts", "rules"] });
+      await queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      await queryClient.invalidateQueries({ queryKey: ["notifications"] });
       setSlideOver({ open: false, rule: null });
     },
   });
@@ -306,7 +292,8 @@ export function AlertsPage() {
       body: Parameters<typeof updateAlertRule>[1];
     }) => updateAlertRule(id, body),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["alerts", "rules"] });
+      await queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      await queryClient.invalidateQueries({ queryKey: ["notifications"] });
       setSlideOver({ open: false, rule: null });
     },
   });
@@ -368,10 +355,8 @@ export function AlertsPage() {
   const watchedThresholdValue = watch("thresholdValue");
   const thresholdFieldMeta = getThresholdFieldMeta(watchedThresholdType);
 
-  const showWebhookField =
-    watchedChannel === "webhook" || watchedChannel === "both";
   const showEmailField =
-    watchedChannel === "email" || watchedChannel === "both";
+    watchedChannel === "email" || watchedChannel === "in_app_and_email";
   const teamSelectDisabled = watchedScope === "organization";
 
   useEffect(() => {
@@ -898,19 +883,6 @@ export function AlertsPage() {
                 </FormControl>
               )}
             />
-
-            <Collapse in={showWebhookField}>
-              <TextField
-                {...register("webhookUrl")}
-                label="Webhook URL"
-                placeholder="https://..."
-                size="small"
-                fullWidth
-                error={Boolean(errors.webhookUrl)}
-                helperText={errors.webhookUrl?.message}
-                sx={{ mb: 2 }}
-              />
-            </Collapse>
 
             <Collapse in={showEmailField}>
               <TextField

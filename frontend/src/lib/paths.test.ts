@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { appPath, resolveApiBase } from "./paths";
+import { appPath, publicAssetPath, resolveApiBase } from "./paths";
 
 describe("paths (development — base /)", () => {
   beforeEach(() => {
@@ -34,5 +34,9 @@ describe("paths (production — base /aitool/)", () => {
   it("resolveApiBase uses explicit VITE_API_BASE_URL when set", () => {
     vi.stubEnv("VITE_API_BASE_URL", "/aitool/api/v1");
     expect(resolveApiBase()).toBe("/aitool/api/v1");
+  });
+
+  it("publicAssetPath prefixes static assets with base", () => {
+    expect(publicAssetPath("inapp-logo.png")).toBe("/aitool/inapp-logo.png");
   });
 });

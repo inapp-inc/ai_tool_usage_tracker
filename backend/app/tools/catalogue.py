@@ -100,15 +100,20 @@ def find_connected_for_team(
 
 
 def usage_tool_ids_for_filter(tools: list[Tool], tool_id: UUID) -> list[UUID]:
-    """Expand a catalogue tool id to connected tool ids used in usage events."""
+    """Expand a catalogue or connected tool id to all ids used in usage_events."""
+    ids: set[UUID] = {tool_id}
     tool = next((row for row in tools if row.id == tool_id), None)
     if tool is None:
         return [tool_id]
     if not tool.catalogue_only:
-        return [tool_id]
+        catalogue_id = catalogue_tool_id_from_connected(tool)
+        if catalogue_id is not None:
+            ids.add(catalogue_id)
+        return sorted(ids)
     connected_ids = [
         row.id
         for row in tools
         if not row.catalogue_only and catalogue_tool_id_from_connected(row) == tool_id
     ]
-    return connected_ids or [tool_id]
+    ids.update(connected_ids)
+    return sorted(ids)

@@ -53,3 +53,28 @@ async def test_fetch_provider_usage_uses_engine_for_any_vendor(
     assert len(records) == 1
     mock_engine.assert_awaited_once()
     assert mock_engine.await_args.kwargs["integration_config"] == config
+
+
+@pytest.mark.asyncio
+async def test_fetch_provider_usage_cursor_adapter_ignores_extra_kwargs() -> None:
+    since = datetime(2026, 6, 1, tzinfo=UTC)
+    until = datetime(2026, 6, 2, tzinfo=UTC)
+
+    with patch(
+        "app.collector.adapters.cursor.CursorUsageAdapter.fetch_usage",
+        new_callable=AsyncMock,
+        return_value=[],
+    ) as mock_fetch:
+        await fetch_provider_usage(
+            "cursor",
+            "secret",
+            since=since,
+            until=until,
+            pricing_config={"team_id": "abc"},
+            api_endpoint="https://api.cursor.com/v1/me",
+        )
+
+    mock_fetch.assert_awaited_once()
+    call_kwargs = mock_fetch.await_args.kwargs
+    assert call_kwargs["since"] == since
+    assert call_kwargs["until"] == until

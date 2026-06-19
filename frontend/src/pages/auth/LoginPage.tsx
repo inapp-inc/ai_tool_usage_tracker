@@ -106,10 +106,10 @@ export function LoginPage() {
         </Box>
         <Box>
           <Typography variant="body1" sx={{ fontWeight: 600, color: "text.primary" }}>
-            AI Tracker
+            AI Tool Tracker
           </Typography>
           <Typography variant="caption" sx={{ color: tokens.textMuted }}>
-            Usage & cost monitoring
+            Built by Inapp Foundry
           </Typography>
         </Box>
       </Box>

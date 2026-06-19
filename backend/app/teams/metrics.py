@@ -1,7 +1,7 @@
 """Aggregate usage and sync metrics for team list display."""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -15,6 +15,8 @@ from app.teams.pricing_resolution import resolve_team_tool_pricing
 from app.teams.team_tool_repository import TeamToolRepository
 from app.tools.catalogue import connected_to_catalogue_map, find_connected_for_catalogue
 from app.tools.repository import ToolRepository
+from app.usage.periods import current_month_window
+from app.usage.aggregates import sum_org_cost, sum_tokens_and_cost_by_team
 
 
 @dataclass(frozen=True)
@@ -23,12 +25,6 @@ class TeamMetrics:
     pricing_total: Decimal = Decimal("0")
     total_cost: Decimal = Decimal("0")
     last_synced_at: datetime | None = None
-
-
-def current_month_window() -> tuple[datetime, datetime]:
-    now = datetime.now(UTC)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    return month_start, now
 
 
 class TeamMetricsLoader:
@@ -63,7 +59,8 @@ class TeamMetricsLoader:
         all_tool_ids = sorted({tool_id for ids in team_tool_ids.values() for tool_id in ids})
         tools_by_id = await self._load_tools(organization_id, all_tool_ids)
 
-        usage_by_team = await self._usage_totals_by_team(
+        usage_by_team = await sum_tokens_and_cost_by_team(
+            self._session,
             organization_id,
             team_ids,
             from_dt,
@@ -146,33 +143,6 @@ class TeamMetricsLoader:
             for row in rows:
                 mapping[(team_id, row.tool_id)] = row
         return mapping
-
-    async def _usage_totals_by_team(
-        self,
-        organization_id: UUID,
-        team_ids: list[UUID],
-        from_dt: datetime,
-        to_dt: datetime,
-    ) -> dict[UUID, tuple[int, Decimal]]:
-        result = await self._session.execute(
-            select(
-                UsageEvent.team_id,
-                func.coalesce(func.sum(UsageEvent.total_tokens), 0),
-                func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
-            )
-            .where(
-                UsageEvent.organization_id == organization_id,
-                UsageEvent.team_id.in_(team_ids),
-                UsageEvent.occurred_at >= from_dt,
-                UsageEvent.occurred_at <= to_dt,
-            )
-            .group_by(UsageEvent.team_id)
-        )
-        return {
-            team_id: (int(tokens), Decimal(str(cost)))
-            for team_id, tokens, cost in result.all()
-            if team_id is not None
-        }
 
     async def _usage_by_team_and_tool(
         self,

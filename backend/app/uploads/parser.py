@@ -12,6 +12,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, TypedDict
 from uuid import UUID
 
+from app.integration.numbers import parse_compact_int
+
 
 @dataclass
 class ToolLookup:
@@ -144,10 +146,7 @@ def suggest_column_mapping(headers: list[str]) -> ColumnMapping:
 def _parse_int(value: Any) -> int | None:
     if value is None:
         return None
-    try:
-        parsed = int(float(str(value).strip().replace(",", "")))
-    except (TypeError, ValueError):
-        return None
+    parsed = parse_compact_int(value, default=-1)
     return parsed if parsed >= 0 else None
 
 

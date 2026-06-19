@@ -57,28 +57,26 @@ const THRESHOLD_TYPE_FROM_API: Record<string, ThresholdType> = {
 };
 
 function channelFromApi(threshold: ApiThreshold): AlertChannel {
-  const hasEmail = threshold.notify_email;
-  const hasWebhook = Boolean(threshold.webhook_url?.trim());
-  if (hasEmail && hasWebhook) {
-    return "both";
+  if (threshold.notify_email && threshold.notify_in_app) {
+    return "in_app_and_email";
   }
-  if (hasWebhook) {
-    return "webhook";
+  if (threshold.notify_email) {
+    return "email";
   }
-  return "email";
+  return "in_app";
 }
 
 function channelToApi(channel: AlertChannel): {
   notify_email: boolean;
-  webhook_url: string | null;
+  notify_in_app: boolean;
 } {
   switch (channel) {
+    case "in_app":
+      return { notify_email: false, notify_in_app: true };
     case "email":
-      return { notify_email: true, webhook_url: null };
-    case "webhook":
-      return { notify_email: false, webhook_url: null };
-    case "both":
-      return { notify_email: true, webhook_url: null };
+      return { notify_email: true, notify_in_app: false };
+    case "in_app_and_email":
+      return { notify_email: true, notify_in_app: true };
   }
 }
 
@@ -110,7 +108,6 @@ export function mapApiThreshold(api: ApiThreshold): AlertRule {
     teamId: api.team_id ?? null,
     teamName: api.team_name ?? null,
     channel: channelFromApi(api),
-    webhookUrl: api.webhook_url ?? null,
     emailRecipients: api.email_recipients ?? [],
     status: api.active ? "active" : "inactive",
     triggerCount: api.trigger_count ?? 0,
@@ -144,11 +141,8 @@ export function toThresholdCreateBody(body: CreateAlertRuleRequest): Record<stri
     limit_value: body.thresholdValue,
     severity: body.severity,
     notify_email: channel.notify_email,
-    notify_in_app: true,
-    webhook_url:
-      body.channel === "webhook" || body.channel === "both"
-        ? body.webhookUrl
-        : null,
+    notify_in_app: channel.notify_in_app,
+    webhook_url: null,
     email_recipients: body.emailRecipients,
     active: true,
   };
@@ -183,12 +177,8 @@ export function toThresholdUpdateBody(
   if (body.channel !== undefined) {
     const channel = channelToApi(body.channel);
     payload.notify_email = channel.notify_email;
-    payload.webhook_url =
-      body.channel === "webhook" || body.channel === "both"
-        ? (body.webhookUrl ?? null)
-        : null;
-  } else if (body.webhookUrl !== undefined) {
-    payload.webhook_url = body.webhookUrl;
+    payload.notify_in_app = channel.notify_in_app;
+    payload.webhook_url = null;
   }
   if (body.emailRecipients !== undefined) {
     payload.email_recipients = body.emailRecipients;

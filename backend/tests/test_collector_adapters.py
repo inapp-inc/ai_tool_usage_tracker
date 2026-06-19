@@ -64,6 +64,13 @@ def test_cursor_adapter_is_registered() -> None:
     assert isinstance(adapter, CursorUsageAdapter)
 
 
+def test_copilot_adapter_is_registered() -> None:
+    from app.collector.adapters.copilot import CopilotUsageAdapter
+
+    adapter = get_adapter("copilot")
+    assert isinstance(adapter, CopilotUsageAdapter)
+
+
 def test_figma_adapter_is_registered() -> None:
     adapter = get_adapter("figma")
     assert isinstance(adapter, FigmaUsageAdapter)
@@ -74,3 +81,24 @@ async def test_figma_adapter_rejects_short_token() -> None:
     adapter = FigmaUsageAdapter()
     with pytest.raises(ProviderValidationError):
         await adapter.validate_api_key("short")
+
+
+@pytest.mark.asyncio
+async def test_figma_fetch_usage_creates_seat_records() -> None:
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock, patch
+
+    adapter = FigmaUsageAdapter()
+    since = datetime(2026, 6, 1, tzinfo=UTC)
+    until = datetime(2026, 6, 2, tzinfo=UTC)
+    members = [
+        __import__("app.collector.adapters.base", fromlist=["ProviderMember"]).ProviderMember(
+            email="designer@example.com",
+            name="Designer",
+        )
+    ]
+    with patch.object(adapter, "fetch_members", new=AsyncMock(return_value=members)):
+        records = await adapter.fetch_usage("token", since=since, until=until)
+    assert len(records) == 1
+    assert records[0].user_email == "designer@example.com"
+    assert records[0].total_tokens == 1
