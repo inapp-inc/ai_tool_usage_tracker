@@ -137,6 +137,56 @@ class AuthService:
         )
 
 
+_SYSTEM_ROLE_NAMES = [
+    "super_admin",
+    "team_admin",
+    "finance_viewer",
+    "auditor",
+    "team_member",
+]
+
+
+async def _ensure_system_roles(session: AsyncSession, organization_id: UUID) -> None:
+    """Idempotently create system roles + permissions for an org.
+
+    Safe to call multiple times — skips any role that already exists.
+    """
+    from app.core.role_seed_data import system_role_permissions
+    from app.models.roles import Role, RolePermission
+    from sqlalchemy import select
+
+    existing = await session.execute(
+        select(Role.name).where(Role.organization_id == organization_id)
+    )
+    existing_names = {row[0] for row in existing}
+
+    for role_name in _SYSTEM_ROLE_NAMES:
+        if role_name in existing_names:
+            continue
+
+        role = Role(
+            organization_id=organization_id,
+            name=role_name,
+            is_system=True,
+        )
+        session.add(role)
+        await session.flush()
+
+        perms = system_role_permissions(role_name)
+        for resource, (can_read, can_write, team_scoped) in perms.items():
+            session.add(
+                RolePermission(
+                    role_id=role.id,
+                    resource=resource,
+                    can_read=can_read,
+                    can_write=can_write,
+                    team_scoped=team_scoped,
+                )
+            )
+
+    await session.flush()
+
+
 async def seed_super_admin_if_empty(
     session: AsyncSession, settings: Settings | None = None
 ) -> bool:
@@ -153,6 +203,10 @@ async def seed_super_admin_if_empty(
         from app.tools.builtin_seed import sync_org_builtin_catalogue_tools
 
         await sync_org_builtin_catalogue_tools(session, org.id)
+
+    # Ensure system roles exist for this org before creating the super admin.
+    # This is a no-op if roles were already seeded (e.g. by a previous startup).
+    await _ensure_system_roles(session, org.id)
 
     await user_repo.create(
         organization_id=org.id,
@@ -197,6 +251,15 @@ async def seed_dev_admin(session: AsyncSession, settings: Settings | None = None
     created = await seed_super_admin_if_empty(session, cfg)
     if created:
         return
+
+    # Org already exists — still ensure system roles are present (handles the case
+    # where 027_roles_add_tables migration ran against an existing database that
+    # already had users, so seed_super_admin_if_empty was a no-op).
+    org_repo = OrganizationRepository(session)
+    org = await org_repo.get_first()
+    if org is not None:
+        await _ensure_system_roles(session, org.id)
+        await session.commit()
 
     if cfg.sync_super_admin_credentials:
         await sync_super_admin_credentials(session, cfg)

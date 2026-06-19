@@ -36,6 +36,11 @@ export interface InviteMemberRequest {
   teamIds: string[];
 }
 
+export interface InviteMemberResult {
+  member: Member;
+  temporaryPassword: string | null;
+}
+
 export interface UpdateMemberRequest {
   name?: string;
   platformRole?: Role;
@@ -62,12 +67,15 @@ export async function fetchMembersByTeam(teamId: string): Promise<Member[]> {
   return rows.map((row) => mapApiTeamMember(row, teamInfo));
 }
 
-export async function inviteMember(body: InviteMemberRequest): Promise<Member> {
+export async function inviteMember(body: InviteMemberRequest): Promise<InviteMemberResult> {
   const created = await apiRequest<ApiUser>("/users", {
     method: "POST",
     body: JSON.stringify(toUserCreateBody(body)),
   });
-  return mapApiUser(created);
+  return {
+    member: mapApiUser(created),
+    temporaryPassword: created.temporary_password ?? null,
+  };
 }
 
 export async function updateMember(

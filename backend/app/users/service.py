@@ -17,6 +17,7 @@ from app.users.repository import UserAdminRepository
 from app.users.schemas import (
     PaginationMeta,
     UserCreateRequest,
+    UserCreateResponse,
     UserListResponse,
     UserResponse,
     UserTeamSummary,
@@ -70,7 +71,7 @@ class UserService:
         self,
         organization_id: UUID,
         body: UserCreateRequest,
-    ) -> UserResponse:
+    ) -> UserCreateResponse:
         existing = await self._users.get_by_email(organization_id, body.email)
         if existing is not None:
             raise HTTPException(
@@ -86,6 +87,9 @@ class UserService:
             role_name=body.role,
         )
 
+        # Only generate a temporary password if the caller didn't supply one.
+        # Store the plaintext only long enough to return it in the response.
+        is_generated = body.password is None
         password = body.password or secrets.token_urlsafe(16)
         user = await self._auth_users.create(
             organization_id=organization_id,
@@ -105,7 +109,11 @@ class UserService:
 
         await self._session.commit()
         await self._session.refresh(user)
-        return await self.get_user(organization_id, user.id)
+        base = await self.get_user(organization_id, user.id)
+        return UserCreateResponse(
+            **base.model_dump(),
+            temporary_password=password if is_generated else None,
+        )
 
     async def update_user(
         self,

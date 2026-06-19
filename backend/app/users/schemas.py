@@ -33,6 +33,12 @@ class UserResponse(BaseModel):
     teams: list[UserTeamSummary] = Field(default_factory=list)
 
 
+class UserCreateResponse(UserResponse):
+    """Returned only from POST /users — includes the one-time temporary password."""
+
+    temporary_password: str | None = None
+
+
 class UserCreateRequest(BaseModel):
     email: EmailStr
     display_name: str | None = Field(default=None, max_length=200)

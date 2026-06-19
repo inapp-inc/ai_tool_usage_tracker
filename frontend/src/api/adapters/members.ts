@@ -22,6 +22,8 @@ export interface ApiUser {
   last_login_at?: string | null;
   created_at: string;
   teams?: ApiUserTeam[];
+  /** Only present on POST /users when the password was auto-generated. */
+  temporary_password?: string | null;
 }
 
 export interface ApiTeamMember {
@@ -205,13 +207,11 @@ export function toUserUpdateBody(body: UpdateMemberRequest): Record<string, unkn
   } else if (body.platformRole !== undefined) {
     payload.role = ROLE_TO_API[body.platformRole];
   }
-  if (body.status !== undefined) {
-    payload.active = body.status === "active";
-  }
   if (body.teamIds !== undefined) {
     payload.team_ids = body.teamIds;
   }
+  if (body.status !== undefined) {
+    payload.active = body.status === "active";
+  }
   return payload;
 }
-
-export { ROLE_FROM_API, ROLE_TO_API };

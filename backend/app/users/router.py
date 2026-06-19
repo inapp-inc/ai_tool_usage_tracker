@@ -13,7 +13,7 @@ from app.core.permissions import get_scoped_team_ids_for, require_permission
 from app.db.session import get_session
 from app.models.auth import User
 from app.teams.membership_repository import TeamMembershipRepository
-from app.users.schemas import UserCreateRequest, UserListResponse, UserResponse, UserUpdateRequest
+from app.users.schemas import UserCreateRequest, UserCreateResponse, UserListResponse, UserResponse, UserUpdateRequest
 from app.users.service import UserService
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -57,14 +57,14 @@ async def list_users(
     )
 
 
-@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=UserCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     body: UserCreateRequest,
     request: Request,
     current_user: User = Depends(require_user_write),
     service: UserService = Depends(get_user_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
-) -> UserResponse:
+) -> UserCreateResponse:
     if current_user.role_name == "team_admin" and body.role == "super_admin":
         raise HTTPException(status_code=403, detail="team_admin cannot assign super_admin role.")
     created = await service.create_user(current_user.organization_id, body)

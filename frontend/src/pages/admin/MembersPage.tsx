@@ -12,6 +12,10 @@ import {
   Checkbox,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   IconButton,
   InputAdornment,
@@ -20,6 +24,7 @@ import {
   MenuItem,
   Select,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -34,6 +39,7 @@ import {
   inviteMember,
   removeMember,
   updateMember,
+  type InviteMemberResult,
   type Member,
 } from "@/api/members";
 import { fetchRoles } from "@/api/roles";
@@ -117,6 +123,8 @@ export function MembersPage() {
     member: null,
   });
   const [removeTarget, setRemoveTarget] = useState<Member | null>(null);
+  const [inviteResult, setInviteResult] = useState<InviteMemberResult | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const teamFilter = searchParams.get("team") ?? "";
   const invitedFilter = searchParams.get("filter") === "invited";
@@ -152,9 +160,13 @@ export function MembersPage() {
 
   const createMutation = useMutation({
     mutationFn: inviteMember,
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["members"] });
       setSlideOver({ open: false, member: null });
+      if (result.temporaryPassword) {
+        setInviteResult(result);
+        setCopied(false);
+      }
     },
   });
 
@@ -631,25 +643,24 @@ export function MembersPage() {
                   <InputLabel id="member-teams-label">Teams</InputLabel>
                   <Select
                     {...field}
-                    multiple
                     labelId="member-teams-label"
                     label="Teams"
+                    multiple
                     renderValue={(selected) =>
-                      teams
-                        .filter((team) => selected.includes(team.id))
-                        .map((team) => team.name)
+                      (selected as string[])
+                        .map((id) => teams.find((t) => t.id === id)?.name ?? id)
                         .join(", ")
                     }
                   >
                     {teams.map((team) => (
                       <MenuItem key={team.id} value={team.id}>
-                        <Checkbox checked={field.value.includes(team.id)} />
+                        <Checkbox checked={(field.value as string[]).includes(team.id)} />
                         <ListItemText primary={team.name} />
                       </MenuItem>
                     ))}
                   </Select>
-                  {errors.teamIds?.message && (
-                    <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
+                  {errors.teamIds && (
+                    <Typography variant="caption" sx={{ color: "error.main", mt: 0.5 }}>
                       {errors.teamIds.message}
                     </Typography>
                   )}
@@ -662,7 +673,7 @@ export function MembersPage() {
         <ConfirmDialog
           open={removeTarget !== null}
           title="Remove member?"
-          description={`${removeTarget?.name ?? ""} will lose access immediately. Their usage history is preserved.`}
+          description={`${removeTarget?.name ?? "This member"} will lose access to the platform.`}
           dangerous
           confirmLabel="Remove"
           loading={removeMutation.isPending}
@@ -673,6 +684,67 @@ export function MembersPage() {
             }
           }}
         />
+
+        {/* One-time credentials dialog shown after a successful invite */}
+        <Dialog
+          open={inviteResult !== null}
+          onClose={() => setInviteResult(null)}
+          maxWidth="xs"
+          fullWidth
+        >
+          <DialogTitle>Member invited</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              <strong>{inviteResult?.member.name}</strong> ({inviteResult?.member.email}) has been
+              added. Share these credentials with them — the password won't be shown again.
+            </Typography>
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                p: 1.5,
+                borderRadius: 1,
+                backgroundColor: tokens.bgDefault,
+                border: `1px solid ${tokens.border}`,
+              }}
+            >
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography variant="caption" sx={{ color: tokens.textMuted, display: "block" }}>
+                  Email
+                </Typography>
+                <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>
+                  {inviteResult?.member.email}
+                </Typography>
+                <Typography variant="caption" sx={{ color: tokens.textMuted, display: "block", mt: 1 }}>
+                  Temporary password
+                </Typography>
+                <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>
+                  {inviteResult?.temporaryPassword}
+                </Typography>
+              </Box>
+              <Tooltip title={copied ? "Copied!" : "Copy credentials"}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(
+                      `Email: ${inviteResult?.member.email}\nPassword: ${inviteResult?.temporaryPassword}`,
+                    );
+                    setCopied(true);
+                  }}
+                >
+                  {copied ? "Copied" : "Copy"}
+                </Button>
+              </Tooltip>
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button variant="contained" onClick={() => setInviteResult(null)}>
+              Done
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Box>
     </RoleGuard>
   );
