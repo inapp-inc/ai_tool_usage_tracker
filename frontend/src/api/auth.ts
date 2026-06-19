@@ -1,6 +1,7 @@
 import { apiFetch, setAccessToken } from "./client";
 import type { User } from "@/types";
 import { Role } from "@/types";
+import { useAuthStore } from "@/stores/authStore";
 
 export interface LoginRequest {
   email: string;
@@ -24,6 +25,8 @@ interface UserProfileResponse {
   email: string;
   display_name?: string;
   role: string;
+  role_id?: string | null;
+  role_name?: string | null;
   organization_id: string;
   team_ids?: string[];
 }
@@ -83,6 +86,8 @@ function mapUserProfile(profile: UserProfileResponse): User {
     email: profile.email,
     name: profile.display_name ?? profile.email,
     platformRole,
+    roleId: profile.role_id ?? null,
+    roleName: profile.role_name ?? profile.role,
     teamMemberships: (profile.team_ids ?? []).map((teamId) => ({
       teamId,
       teamName: teamId,
@@ -129,6 +134,9 @@ export async function login(body: LoginRequest): Promise<LoginResponse> {
   }
 
   const user = await fetchCurrentUser();
+  if (user.roleId) {
+    await useAuthStore.getState().loadPermissions(user.roleId);
+  }
   return { user, accessToken: tokens.access_token };
 }
 
@@ -177,6 +185,9 @@ export async function restoreAuthSession(): Promise<{
 
   const tokens = await refreshToken();
   const user = await fetchCurrentUser();
+  if (user.roleId) {
+    await useAuthStore.getState().loadPermissions(user.roleId);
+  }
   return { user, accessToken: tokens.access_token };
 }
 

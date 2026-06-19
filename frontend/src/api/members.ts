@@ -31,13 +31,15 @@ export interface Member {
 export interface InviteMemberRequest {
   name: string;
   email: string;
-  platformRole: Role;
+  platformRole?: Role;
+  roleId?: string;
   teamIds: string[];
 }
 
 export interface UpdateMemberRequest {
   name?: string;
   platformRole?: Role;
+  roleId?: string;
   teamIds?: string[];
   status?: "active" | "inactive";
 }

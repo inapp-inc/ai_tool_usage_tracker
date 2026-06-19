@@ -4,11 +4,13 @@ import secrets
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.repositories import UserRepository
 from app.core.security import hash_password
 from app.models.auth import User
+from app.models.roles import Role
 from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.repository import TeamRepository
 from app.users.repository import UserAdminRepository
@@ -78,13 +80,20 @@ class UserService:
 
         await self._validate_team_ids(organization_id, body.team_ids)
 
+        role_name, role_id = await self._resolve_role(
+            organization_id,
+            role_id=body.role_id,
+            role_name=body.role,
+        )
+
         password = body.password or secrets.token_urlsafe(16)
         user = await self._auth_users.create(
             organization_id=organization_id,
             email=body.email,
             password_hash=hash_password(password),
             display_name=body.display_name.strip() if body.display_name else None,
-            role=body.role,
+            role=role_name,
+            role_id=role_id,
         )
 
         for team_id in body.team_ids:
@@ -110,8 +119,18 @@ class UserService:
         if "display_name" in updates:
             user.display_name = body.display_name.strip() if body.display_name else None
 
-        if "role" in updates and body.role is not None:
-            user.role = body.role
+        if "role_id" in updates and body.role_id is not None:
+            role_name, role_id = await self._resolve_role(
+                organization_id,
+                role_id=body.role_id,
+            )
+            user.role_id = role_id
+        elif "role" in updates and body.role is not None:
+            role_name, role_id = await self._resolve_role(
+                organization_id,
+                role_name=body.role,
+            )
+            user.role_id = role_id
 
         if "active" in updates and body.active is not None:
             user.active = body.active
@@ -155,6 +174,48 @@ class UserService:
                     detail=f"Team not found: {team_id}",
                 )
 
+    async def _resolve_role(
+        self,
+        organization_id: UUID,
+        *,
+        role_id: UUID | None = None,
+        role_name: str | None = None,
+    ) -> tuple[str, UUID]:
+        if role_id is not None:
+            result = await self._session.execute(
+                select(Role).where(
+                    Role.id == role_id,
+                    Role.organization_id == organization_id,
+                )
+            )
+            role = result.scalar_one_or_none()
+            if role is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Role not found.",
+                )
+            return role.name, role.id
+
+        if role_name is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="role_id or role is required.",
+            )
+
+        result = await self._session.execute(
+            select(Role).where(
+                Role.organization_id == organization_id,
+                Role.name == role_name,
+            )
+        )
+        role = result.scalar_one_or_none()
+        if role is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Role not found: {role_name}",
+            )
+        return role.name, role.id
+
     @staticmethod
     def _to_response(
         user: User,
@@ -173,7 +234,9 @@ class UserService:
             organization_id=user.organization_id,
             email=user.email,
             display_name=user.display_name,
-            role=user.role,  # type: ignore[arg-type]
+            role=user.role_name,  # type: ignore[arg-type]
+            role_id=user.role_id,
+            role_name=user.role_name,
             active=user.active,
             last_login_at=user.last_login_at,
             created_at=user.created_at,

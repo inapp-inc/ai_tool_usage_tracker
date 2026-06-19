@@ -25,6 +25,8 @@ class UserResponse(BaseModel):
     email: EmailStr
     display_name: str | None = None
     role: Role
+    role_id: UUID | None = None
+    role_name: str | None = None
     active: bool
     last_login_at: datetime | None = None
     created_at: datetime
@@ -35,6 +37,7 @@ class UserCreateRequest(BaseModel):
     email: EmailStr
     display_name: str | None = Field(default=None, max_length=200)
     role: Role = "team_member"
+    role_id: UUID | None = None
     password: str | None = Field(default=None, min_length=8, max_length=128)
     team_ids: list[UUID] = Field(default_factory=list)
 
@@ -42,6 +45,7 @@ class UserCreateRequest(BaseModel):
 class UserUpdateRequest(BaseModel):
     display_name: str | None = Field(default=None, max_length=200)
     role: Role | None = None
+    role_id: UUID | None = None
     active: bool | None = None
     team_ids: list[UUID] | None = None
 

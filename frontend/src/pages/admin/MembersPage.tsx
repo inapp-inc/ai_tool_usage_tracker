@@ -36,6 +36,7 @@ import {
   updateMember,
   type Member,
 } from "@/api/members";
+import { fetchRoles } from "@/api/roles";
 import { fetchTeams } from "@/api/teams";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
@@ -44,13 +45,14 @@ import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
 import { Role } from "@/types";
+import { useAuthStore } from "@/stores/authStore";
 import { tokens } from "@/theme/palette";
 import { formatRelativeTime } from "@/utils/formatters";
 
 const schema = z.object({
   name: z.string().min(1, "Name is required").max(100),
   email: z.string().email("Enter a valid email"),
-  platformRole: z.nativeEnum(Role),
+  roleId: z.string().min(1, "Role is required"),
   teamIds: z.array(z.string()).min(1, "Assign at least one team"),
 });
 
@@ -72,10 +74,8 @@ const ROLE_CHIP_COLORS: Record<
   [Role.Auditor]: { background: "#FFF7ED", color: "#C2410C" },
 };
 
-const ROLE_OPTIONS = Object.values(Role);
-
-function formatRoleLabel(role: Role): string {
-  return role
+function formatRoleLabel(role: Role | string): string {
+  return String(role)
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
@@ -108,6 +108,8 @@ function RoleChip({ role }: { role: Role }) {
 
 export function MembersPage() {
   const queryClient = useQueryClient();
+  const currentUser = useAuthStore((s) => s.user);
+  const isSuperAdmin = currentUser?.platformRole === Role.SuperAdmin;
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState("");
   const [slideOver, setSlideOver] = useState<SlideOverState>({
@@ -123,6 +125,12 @@ export function MembersPage() {
   const teamsQuery = useQuery({
     queryKey: ["teams"],
     queryFn: fetchTeams,
+  });
+
+  const rolesQuery = useQuery({
+    queryKey: ["roles"],
+    queryFn: fetchRoles,
+    enabled: isSuperAdmin,
   });
 
   const membersQuery = useQuery({
@@ -186,27 +194,36 @@ export function MembersPage() {
     defaultValues: {
       name: "",
       email: "",
-      platformRole: Role.TeamMember,
+      roleId: "",
       teamIds: [],
     },
   });
+
+  const availableRoles = rolesQuery.data ?? [];
+  const teamAdminRoleOptions = useMemo(
+    () => [Role.TeamMember, Role.TeamAdmin],
+    [],
+  );
 
   useEffect(() => {
     if (!slideOver.open) {
       reset({
         name: "",
         email: "",
-        platformRole: Role.TeamMember,
+        roleId: availableRoles.find((r) => r.name === "team_member")?.id ?? "",
         teamIds: teamFilter ? [teamFilter] : [],
       });
       return;
     }
 
     if (slideOver.member) {
+      const matchedRoleId = availableRoles.find(
+        (r) => r.name === slideOver.member!.platformRole,
+      )?.id;
       reset({
         name: slideOver.member.name,
         email: slideOver.member.email,
-        platformRole: slideOver.member.platformRole,
+        roleId: matchedRoleId ?? slideOver.member.platformRole,
         teamIds: slideOver.member.teams.map((team) => team.id),
       });
       return;
@@ -215,10 +232,11 @@ export function MembersPage() {
     reset({
       name: "",
       email: "",
-      platformRole: Role.TeamMember,
+      roleId:
+        availableRoles.find((r) => r.name === "team_member")?.id ?? Role.TeamMember,
       teamIds: teamFilter ? [teamFilter] : [],
     });
-  }, [reset, slideOver, teamFilter]);
+  }, [reset, slideOver, teamFilter, availableRoles]);
 
   const filteredMembers = useMemo(() => {
     const members = membersQuery.data ?? [];
@@ -384,29 +402,38 @@ export function MembersPage() {
   };
 
   const onSubmit = (data: FormValues) => {
-    if (slideOver.member) {
+    const isRoleUuid = /^[0-9a-f-]{36}$/i.test(data.roleId);
+    const updateBody = isRoleUuid
+      ? { name: data.name, roleId: data.roleId, teamIds: data.teamIds }
+      : {
+          name: data.name,
+          platformRole: data.roleId as Role,
+          teamIds: data.teamIds,
+        };
+
+    if (isEditMode && slideOver.member) {
       updateMutation.mutate({
         id: slideOver.member.id,
-        body: {
-          name: data.name,
-          platformRole: data.platformRole,
-          teamIds: data.teamIds,
-        },
+        body: updateBody,
       });
       return;
     }
 
-    createMutation.mutate({
-      name: data.name,
-      email: data.email,
-      platformRole: data.platformRole,
-      teamIds: data.teamIds,
-    });
+    const createBody = isRoleUuid
+      ? { name: data.name, email: data.email, roleId: data.roleId, teamIds: data.teamIds }
+      : {
+          name: data.name,
+          email: data.email,
+          platformRole: data.roleId as Role,
+          teamIds: data.teamIds,
+        };
+
+    createMutation.mutate(createBody);
   };
 
   return (
     <RoleGuard
-      roles={[Role.SuperAdmin]}
+      resource="members"
       fallback={
         <EmptyState
           title="Access denied"
@@ -556,22 +583,42 @@ export function MembersPage() {
             />
 
             <Controller
-              name="platformRole"
+              name="roleId"
               control={control}
               render={({ field }) => (
                 <FormControl fullWidth size="small">
                   <InputLabel id="member-role-label">Platform role</InputLabel>
-                  <Select
-                    {...field}
-                    labelId="member-role-label"
-                    label="Platform role"
-                  >
-                    {ROLE_OPTIONS.map((role) => (
-                      <MenuItem key={role} value={role}>
-                        {formatRoleLabel(role)}
-                      </MenuItem>
-                    ))}
-                  </Select>
+                  {isSuperAdmin ? (
+                    <Select
+                      {...field}
+                      labelId="member-role-label"
+                      label="Platform role"
+                      disabled={availableRoles.length === 0}
+                    >
+                      {availableRoles.map((role) => (
+                        <MenuItem key={role.id} value={role.id}>
+                          {formatRoleLabel(role.name)}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  ) : (
+                    <Select
+                      value={field.value}
+                      labelId="member-role-label"
+                      label="Platform role"
+                      onChange={(event) => {
+                        const roleName = event.target.value;
+                        const matched = availableRoles.find((r) => r.name === roleName);
+                        field.onChange(matched?.id ?? roleName);
+                      }}
+                    >
+                      {teamAdminRoleOptions.map((role) => (
+                        <MenuItem key={role} value={role}>
+                          {formatRoleLabel(role)}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  )}
                 </FormControl>
               )}
             />

@@ -13,7 +13,15 @@ export interface User {
   email: string;
   name: string;
   platformRole: Role;
+  roleId?: string | null;
+  roleName?: string | null;
   teamMemberships: TeamMembership[];
+}
+
+export interface PermissionEntry {
+  can_read: boolean;
+  can_write: boolean;
+  team_scoped: boolean;
 }
 
 export interface TeamMembership {

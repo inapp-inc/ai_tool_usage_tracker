@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.router import get_audit_recorder, record_audit_event
 from app.audit.recorder import AuditRecorder
 from app.auth.dependencies import get_current_user
-from app.core.rbac import require_team_admin_or_above
+from app.core.permissions import require_permission
 from app.db.session import get_session
 from app.models.auth import User
 from app.tools.schemas import ToolCreateRequest, ToolListResponse, ToolMembersListResponse, ToolResponse, ToolUpdateRequest
@@ -16,20 +16,9 @@ from app.tools.service import ToolService
 
 router = APIRouter(prefix="/tools", tags=["Tools"])
 
-WRITE_ROLES = frozenset({"super_admin"})
-
 
 def get_tool_service(session: AsyncSession = Depends(get_session)) -> ToolService:
     return ToolService(session)
-
-
-def require_super_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role not in WRITE_ROLES:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions.",
-        )
-    return current_user
 
 
 async def _reload_scheduler(request: Request) -> None:
@@ -42,7 +31,7 @@ async def _reload_scheduler(request: Request) -> None:
 async def list_tools(
     active: bool | None = Query(default=None),
     catalogue_only: bool | None = Query(default=None),
-    current_user: User = Depends(require_team_admin_or_above),
+    current_user: User = Depends(require_permission("tools", "read")),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolListResponse:
     return await service.list_tools(
@@ -56,7 +45,7 @@ async def list_tools(
 async def create_tool(
     body: ToolCreateRequest,
     request: Request,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_permission("tools", "write")),
     service: ToolService = Depends(get_tool_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> ToolResponse:
@@ -77,7 +66,7 @@ async def create_tool(
 @router.get("/{tool_id}/members", response_model=ToolMembersListResponse)
 async def list_tool_members(
     tool_id: UUID,
-    current_user: User = Depends(require_team_admin_or_above),
+    current_user: User = Depends(require_permission("tools", "read")),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolMembersListResponse:
     return await service.list_tool_members(current_user.organization_id, tool_id)
@@ -86,7 +75,7 @@ async def list_tool_members(
 @router.get("/{tool_id}", response_model=ToolResponse)
 async def get_tool(
     tool_id: UUID,
-    current_user: User = Depends(require_team_admin_or_above),
+    current_user: User = Depends(require_permission("tools", "read")),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolResponse:
     return await service.get_tool(current_user.organization_id, tool_id)
@@ -97,7 +86,7 @@ async def update_tool(
     tool_id: UUID,
     body: ToolUpdateRequest,
     request: Request,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_permission("tools", "write")),
     service: ToolService = Depends(get_tool_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> ToolResponse:
@@ -119,7 +108,7 @@ async def update_tool(
 async def delete_tool(
     tool_id: UUID,
     request: Request,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_permission("tools", "write")),
     service: ToolService = Depends(get_tool_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> None:
@@ -140,7 +129,7 @@ async def delete_tool(
 @router.post("/{tool_id}/sync", response_model=ToolResponse)
 async def sync_tool(
     tool_id: UUID,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_permission("tools", "write")),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolResponse:
     return await service.sync_tool(current_user.organization_id, tool_id)

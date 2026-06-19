@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.router import get_audit_recorder, record_audit_event
 from app.audit.recorder import AuditRecorder
 from app.auth.dependencies import get_current_user
-from app.core.rbac import get_managed_team_ids
+from app.core.permissions import get_scoped_team_ids_for, require_permission
 from app.db.session import get_session
 from app.models.auth import User
 from app.uploads.schemas import (
@@ -21,7 +21,7 @@ from app.uploads.schemas import (
     UploadPreviewResponse,
     UploadResponse,
 )
-from app.uploads.service import ADMIN_ROLES, UploadService
+from app.uploads.service import UploadService
 
 router = APIRouter(prefix="/uploads", tags=["Uploads"])
 
@@ -30,24 +30,15 @@ def get_upload_service(session: AsyncSession = Depends(get_session)) -> UploadSe
     return UploadService(session)
 
 
-def require_upload_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role not in ADMIN_ROLES:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions.",
-        )
-    return current_user
-
-
 @router.get("", response_model=UploadListResponse)
 async def list_uploads(
-    current_user: User = Depends(require_upload_admin),
-    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
+    current_user: User = Depends(require_permission("uploads", "read")),
+    managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("uploads")),
     service: UploadService = Depends(get_upload_service),
 ) -> UploadListResponse:
     return await service.list_uploads(
         current_user.organization_id,
-        team_ids=managed_team_ids if current_user.role == "team_admin" else None,
+        team_ids=managed_team_ids if managed_team_ids else None,
     )
 
 
@@ -55,7 +46,7 @@ async def list_uploads(
 async def create_upload(
     file: UploadFile = File(...),
     team_id: UUID | None = Form(default=None),
-    current_user: User = Depends(require_upload_admin),
+    current_user: User = Depends(require_permission("uploads", "write")),
     service: UploadService = Depends(get_upload_service),
 ) -> UploadCreateResponse:
     return await service.create_upload(current_user, file=file, team_id=team_id)
@@ -64,11 +55,11 @@ async def create_upload(
 @router.get("/{upload_id}/mapping", response_model=UploadMappingResponse)
 async def get_upload_mapping(
     upload_id: UUID,
-    current_user: User = Depends(require_upload_admin),
-    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
+    current_user: User = Depends(require_permission("uploads", "write")),
+    managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("uploads")),
     service: UploadService = Depends(get_upload_service),
 ) -> UploadMappingResponse:
-    if current_user.role == "team_admin" and managed_team_ids:
+    if managed_team_ids:
         await service.assert_upload_scope(current_user.organization_id, upload_id, managed_team_ids)
     return await service.get_mapping(current_user.organization_id, upload_id)
 
@@ -77,11 +68,11 @@ async def get_upload_mapping(
 async def apply_upload_mapping(
     upload_id: UUID,
     body: UploadColumnMappingRequest,
-    current_user: User = Depends(require_upload_admin),
-    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
+    current_user: User = Depends(require_permission("uploads", "write")),
+    managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("uploads")),
     service: UploadService = Depends(get_upload_service),
 ) -> UploadResponse:
-    if current_user.role == "team_admin" and managed_team_ids:
+    if managed_team_ids:
         await service.assert_upload_scope(current_user.organization_id, upload_id, managed_team_ids)
     return await service.apply_mapping(current_user.organization_id, upload_id, body)
 
@@ -89,11 +80,11 @@ async def apply_upload_mapping(
 @router.get("/{upload_id}/preview", response_model=UploadPreviewResponse)
 async def get_upload_preview(
     upload_id: UUID,
-    current_user: User = Depends(require_upload_admin),
-    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
+    current_user: User = Depends(require_permission("uploads", "write")),
+    managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("uploads")),
     service: UploadService = Depends(get_upload_service),
 ) -> UploadPreviewResponse:
-    if current_user.role == "team_admin" and managed_team_ids:
+    if managed_team_ids:
         await service.assert_upload_scope(current_user.organization_id, upload_id, managed_team_ids)
     return await service.get_preview(current_user.organization_id, upload_id)
 
@@ -104,13 +95,13 @@ async def commit_upload(
     request: Request,
     body: UploadCommitRequest | None = None,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    current_user: User = Depends(require_upload_admin),
-    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
+    current_user: User = Depends(require_permission("uploads", "write")),
+    managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("uploads")),
     service: UploadService = Depends(get_upload_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> UploadResponse:
     _ = idempotency_key
-    if current_user.role == "team_admin" and managed_team_ids:
+    if managed_team_ids:
         await service.assert_upload_scope(current_user.organization_id, upload_id, managed_team_ids)
     payload = body or UploadCommitRequest()
     result = await service.commit_upload(current_user.organization_id, upload_id, payload)
@@ -130,12 +121,12 @@ async def commit_upload(
 async def delete_upload(
     upload_id: UUID,
     request: Request,
-    current_user: User = Depends(require_upload_admin),
-    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
+    current_user: User = Depends(require_permission("uploads", "write")),
+    managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("uploads")),
     service: UploadService = Depends(get_upload_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> None:
-    if current_user.role == "team_admin" and managed_team_ids:
+    if managed_team_ids:
         await service.assert_upload_scope(current_user.organization_id, upload_id, managed_team_ids)
     uploads = await service.list_uploads(current_user.organization_id)
     target = next((row for row in uploads.data if row.id == upload_id), None)

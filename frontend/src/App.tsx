@@ -5,7 +5,6 @@ import { useAuth } from "@/auth/AuthContext";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageSkeleton } from "@/components/feedback/PageSkeleton";
-import { Role } from "@/types";
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 const LoginPage = lazy(() =>
@@ -61,7 +60,6 @@ const AuditLogPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import("@/pages/admin/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 );
-
 // ─── Guard ───────────────────────────────────────────────────────────────────
 function ProtectedRoute({ children }: { children: ReactElement }) {
   const { isAuthenticated } = useAuth();
@@ -92,12 +90,16 @@ export function AppRoutes() {
         <Route path="/reports" element={<Navigate to="/insights" replace />} />
         <Route path="/reports/new" element={<Navigate to="/insights" replace />} />
 
-        <Route path="/my-usage" element={<MyUsagePage />} />
+        <Route path="/my-usage" element={
+          <RoleGuard resource="my_usage" fallback={<Navigate to="/insights" replace />}>
+            <MyUsagePage />
+          </RoleGuard>
+        } />
 
         <Route
           path="/alerts"
           element={
-            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+            <RoleGuard resource="alerts" fallback={<Navigate to="/insights" replace />}>
               <AlertsPage />
             </RoleGuard>
           }
@@ -105,7 +107,7 @@ export function AppRoutes() {
         <Route
           path="/alerts/history"
           element={
-            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+            <RoleGuard resource="alerts" fallback={<Navigate to="/insights" replace />}>
               <AlertsPage />
             </RoleGuard>
           }
@@ -113,7 +115,7 @@ export function AppRoutes() {
         <Route
           path="/uploads"
           element={
-            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+            <RoleGuard resource="uploads" fallback={<Navigate to="/insights" replace />}>
               <UploadsPage />
             </RoleGuard>
           }
@@ -121,7 +123,7 @@ export function AppRoutes() {
         <Route
           path="/uploads/:uploadId/map"
           element={
-            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+            <RoleGuard resource="uploads" fallback={<Navigate to="/insights" replace />}>
               <UploadMappingPage />
             </RoleGuard>
           }
@@ -129,7 +131,7 @@ export function AppRoutes() {
         <Route
           path="/uploads/:uploadId/preview"
           element={
-            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+            <RoleGuard resource="uploads" fallback={<Navigate to="/insights" replace />}>
               <UploadPreviewPage />
             </RoleGuard>
           }
@@ -138,7 +140,7 @@ export function AppRoutes() {
         <Route
           path="/admin/tools"
           element={
-            <RoleGuard roles={[Role.SuperAdmin]} fallback={<Navigate to="/insights" replace />}>
+            <RoleGuard resource="tools" fallback={<Navigate to="/insights" replace />}>
               <ToolsPage />
             </RoleGuard>
           }
@@ -146,7 +148,7 @@ export function AppRoutes() {
         <Route
           path="/admin/teams"
           element={
-            <RoleGuard roles={[Role.SuperAdmin]} fallback={<Navigate to="/insights" replace />}>
+            <RoleGuard resource="teams" fallback={<Navigate to="/insights" replace />}>
               <TeamsPage />
             </RoleGuard>
           }
@@ -154,7 +156,7 @@ export function AppRoutes() {
         <Route
           path="/admin/credentials"
           element={
-            <RoleGuard roles={[Role.SuperAdmin]} fallback={<Navigate to="/insights" replace />}>
+            <RoleGuard resource="credentials" fallback={<Navigate to="/insights" replace />}>
               <CredentialsPage />
             </RoleGuard>
           }
@@ -162,7 +164,7 @@ export function AppRoutes() {
         <Route
           path="/admin/members"
           element={
-            <RoleGuard roles={[Role.SuperAdmin, Role.TeamAdmin]} fallback={<Navigate to="/insights" replace />}>
+            <RoleGuard resource="members" fallback={<Navigate to="/insights" replace />}>
               <MembersPage />
             </RoleGuard>
           }
@@ -170,12 +172,23 @@ export function AppRoutes() {
         <Route
           path="/admin/audit-log"
           element={
-            <RoleGuard roles={[Role.SuperAdmin, Role.Auditor]} fallback={<Navigate to="/insights" replace />}>
+            <RoleGuard resource="audit_logs" fallback={<Navigate to="/insights" replace />}>
               <AuditLogPage />
             </RoleGuard>
           }
         />
-        <Route path="/admin/settings" element={<SettingsPage />} />
+        <Route
+          path="/admin/settings"
+          element={
+            <RoleGuard resource="settings" fallback={<Navigate to="/insights" replace />}>
+              <SettingsPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/settings/roles"
+          element={<Navigate to="/admin/settings" replace />}
+        />
       </Route>
 
       {/* Fallback */}

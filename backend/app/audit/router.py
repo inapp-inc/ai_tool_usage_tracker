@@ -11,7 +11,7 @@ from app.audit.context import get_client_ip, get_correlation_id
 from app.audit.recorder import AuditRecorder
 from app.audit.schemas import AuditLogExportRequest, AuditLogListResponse
 from app.audit.service import AuditLogService
-from app.core.rbac import require_auditor_access
+from app.core.permissions import require_permission
 from app.db.session import get_session
 from app.models.auth import User
 
@@ -44,7 +44,7 @@ async def list_audit_logs(
     q: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     cursor: str | None = None,
-    current_user: User = Depends(require_auditor_access),
+    current_user: User = Depends(require_permission("audit_logs", "read")),
     service: AuditLogService = Depends(get_audit_service),
 ) -> AuditLogListResponse:
     parsed_from = _parse_optional_datetime(from_dt)
@@ -67,7 +67,7 @@ async def list_audit_logs(
 @router.post("/export")
 async def export_audit_logs(
     body: AuditLogExportRequest,
-    current_user: User = Depends(require_auditor_access),
+    current_user: User = Depends(require_permission("audit_logs", "read")),
     service: AuditLogService = Depends(get_audit_service),
 ) -> Response:
     return await service.export_csv(current_user, body)

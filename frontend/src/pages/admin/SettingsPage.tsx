@@ -9,6 +9,8 @@ import {
   FormControlLabel,
   IconButton,
   Switch,
+  Tab,
+  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
@@ -31,6 +33,7 @@ import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
+import { RolesPage } from "@/pages/settings/RolesPage";
 import { useToast } from "@/hooks/useToast";
 import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
@@ -81,7 +84,7 @@ function getApiErrorMessage(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
-export function SettingsPage() {
+function ProvidersContent() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const [slideOver, setSlideOver] = useState<SlideOverState>({
@@ -260,6 +263,168 @@ export function SettingsPage() {
   };
 
   return (
+    <>
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          mb: 3,
+        }}
+      >
+        <Typography variant="body2" sx={{ color: tokens.textMuted }}>
+          Manage AI provider lookup keys used when adding tools
+        </Typography>
+        <Button
+          variant="contained"
+          size="small"
+          startIcon={<IconPlus size={15} />}
+          onClick={() => setSlideOver({ open: true, provider: null })}
+        >
+          Add Provider
+        </Button>
+      </Box>
+
+      {providersQuery.isError && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          Could not load providers from the server. Showing built-in fallback list.
+        </Alert>
+      )}
+
+      <Alert severity="info" sx={{ mb: 2 }}>
+        Custom providers use the generic HTTP adapter. When adding a tool for a custom provider,
+        set the API Endpoint URL to a GET endpoint that accepts Bearer auth (returns non-401 when
+        the key is valid).
+      </Alert>
+
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.slug}
+        loading={providersQuery.isPending}
+        emptyTitle="No providers"
+        emptyDescription="Add a provider to use it in the Tools catalogue."
+      />
+
+      <SlideOver
+        open={slideOver.open}
+        onClose={() => setSlideOver({ open: false, provider: null })}
+        title={isEditMode ? "Edit Provider" : "Add Provider"}
+        subtitle={
+          isEditMode
+            ? "Update display name and availability"
+            : "Create a provider slug for dynamic tool registration"
+        }
+        width={480}
+        footer={
+          <>
+            <Button
+              variant="text"
+              onClick={() => setSlideOver({ open: false, provider: null })}
+              disabled={savePending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleSubmit(onSubmit)}
+              disabled={savePending}
+              startIcon={
+                savePending ? <CircularProgress size={14} color="inherit" /> : undefined
+              }
+            >
+              {isEditMode ? "Save" : "Add Provider"}
+            </Button>
+          </>
+        }
+      >
+        <Box component="form" onSubmit={handleSubmit(onSubmit)}>
+          {saveError && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSaveError(null)}>
+              {saveError}
+            </Alert>
+          )}
+
+          {!isEditMode && (
+            <TextField
+              {...register("slug" as keyof CreateFormValues)}
+              fullWidth
+              label="Slug"
+              size="small"
+              placeholder="my_internal_llm"
+              error={Boolean((errors as Partial<Record<keyof CreateFormValues, { message?: string }>>).slug)}
+              helperText={
+                (errors as Partial<Record<keyof CreateFormValues, { message?: string }>>).slug
+                  ?.message ?? "Lowercase identifier used in tools and credentials"
+              }
+              sx={{ mb: 2 }}
+            />
+          )}
+
+          <TextField
+            {...register("label")}
+            fullWidth
+            label="Display name"
+            size="small"
+            error={Boolean(errors.label)}
+            helperText={errors.label?.message}
+            sx={{ mb: 2 }}
+          />
+
+          <TextField
+            {...register("description")}
+            fullWidth
+            label="Description"
+            size="small"
+            multiline
+            rows={2}
+            error={Boolean(errors.description)}
+            helperText={errors.description?.message}
+            sx={{ mb: 2 }}
+          />
+
+          {isEditMode && (
+            <Controller
+              name="active"
+              control={control}
+              render={({ field }) => (
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={field.value}
+                      onChange={(_, checked) => field.onChange(checked)}
+                    />
+                  }
+                  label="Active (shown in tool provider dropdowns)"
+                />
+              )}
+            />
+          )}
+        </Box>
+      </SlideOver>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete provider?"
+        description={`Tools using "${deleteTarget?.slug ?? ""}" will fail validation until reassigned.`}
+        dangerous
+        confirmLabel="Delete"
+        loading={deleteMutation.isPending}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) {
+            deleteMutation.mutate(deleteTarget.slug);
+          }
+        }}
+      />
+    </>
+  );
+}
+
+export function SettingsPage() {
+  const [tab, setTab] = useState(0);
+
+  return (
     <RoleGuard
       roles={[Role.SuperAdmin]}
       fallback={
@@ -270,164 +435,19 @@ export function SettingsPage() {
       }
     >
       <Box>
-        <Box
-          sx={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            mb: 3,
-          }}
+        <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+          Settings
+        </Typography>
+        <Tabs
+          value={tab}
+          onChange={(_, v: number) => setTab(v)}
+          sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
         >
-          <Box>
-            <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              Settings
-            </Typography>
-            <Typography variant="body2" sx={{ color: tokens.textMuted }}>
-              Manage AI provider lookup keys used when adding tools
-            </Typography>
-          </Box>
-          <Button
-            variant="contained"
-            size="small"
-            startIcon={<IconPlus size={15} />}
-            onClick={() => setSlideOver({ open: true, provider: null })}
-          >
-            Add Provider
-          </Button>
-        </Box>
-
-        {providersQuery.isError && (
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            Could not load providers from the server. Showing built-in fallback list.
-          </Alert>
-        )}
-
-        <Alert severity="info" sx={{ mb: 2 }}>
-          Custom providers use the generic HTTP adapter. When adding a tool for a custom provider,
-          set the API Endpoint URL to a GET endpoint that accepts Bearer auth (returns non-401 when
-          the key is valid).
-        </Alert>
-
-        <DataTable
-          columns={columns}
-          rows={rows}
-          rowKey={(row) => row.slug}
-          loading={providersQuery.isPending}
-          emptyTitle="No providers"
-          emptyDescription="Add a provider to use it in the Tools catalogue."
-        />
-
-        <SlideOver
-          open={slideOver.open}
-          onClose={() => setSlideOver({ open: false, provider: null })}
-          title={isEditMode ? "Edit Provider" : "Add Provider"}
-          subtitle={
-            isEditMode
-              ? "Update display name and availability"
-              : "Create a provider slug for dynamic tool registration"
-          }
-          width={480}
-          footer={
-            <>
-              <Button
-                variant="text"
-                onClick={() => setSlideOver({ open: false, provider: null })}
-                disabled={savePending}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="contained"
-                onClick={handleSubmit(onSubmit)}
-                disabled={savePending}
-                startIcon={
-                  savePending ? <CircularProgress size={14} color="inherit" /> : undefined
-                }
-              >
-                {isEditMode ? "Save" : "Add Provider"}
-              </Button>
-            </>
-          }
-        >
-          <Box component="form" onSubmit={handleSubmit(onSubmit)}>
-            {saveError && (
-              <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSaveError(null)}>
-                {saveError}
-              </Alert>
-            )}
-
-            {!isEditMode && (
-              <TextField
-                {...register("slug" as keyof CreateFormValues)}
-                fullWidth
-                label="Slug"
-                size="small"
-                placeholder="my_internal_llm"
-                error={Boolean((errors as Partial<Record<keyof CreateFormValues, { message?: string }>>).slug)}
-                helperText={
-                  (errors as Partial<Record<keyof CreateFormValues, { message?: string }>>).slug
-                    ?.message ?? "Lowercase identifier used in tools and credentials"
-                }
-                sx={{ mb: 2 }}
-              />
-            )}
-
-            <TextField
-              {...register("label")}
-              fullWidth
-              label="Display name"
-              size="small"
-              error={Boolean(errors.label)}
-              helperText={errors.label?.message}
-              sx={{ mb: 2 }}
-            />
-
-            <TextField
-              {...register("description")}
-              fullWidth
-              label="Description"
-              size="small"
-              multiline
-              rows={2}
-              error={Boolean(errors.description)}
-              helperText={errors.description?.message}
-              sx={{ mb: 2 }}
-            />
-
-            {isEditMode && (
-              <Controller
-                name="active"
-                control={control}
-                render={({ field }) => (
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={field.value}
-                        onChange={(_, checked) => field.onChange(checked)}
-                      />
-                    }
-                    label="Active (shown in tool provider dropdowns)"
-                  />
-                )}
-              />
-            )}
-          </Box>
-        </SlideOver>
-
-        <ConfirmDialog
-          open={deleteTarget !== null}
-          title="Delete provider?"
-          description={`Tools using "${deleteTarget?.slug ?? ""}" will fail validation until reassigned.`}
-          dangerous
-          confirmLabel="Delete"
-          loading={deleteMutation.isPending}
-          onClose={() => setDeleteTarget(null)}
-          onConfirm={() => {
-            if (deleteTarget) {
-              deleteMutation.mutate(deleteTarget.slug);
-            }
-          }}
-        />
+          <Tab label="Providers" />
+          <Tab label="Roles & Permissions" />
+        </Tabs>
+        {tab === 0 && <ProvidersContent />}
+        {tab === 1 && <RolesPage />}
       </Box>
     </RoleGuard>
   );

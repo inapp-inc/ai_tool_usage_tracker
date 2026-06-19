@@ -5,9 +5,11 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_refresh_token
 from app.models.auth import Organization, RefreshToken, User
+from app.models.roles import Role
 
 
 class UserRepository:
@@ -17,12 +19,19 @@ class UserRepository:
     async def get_by_email(self, email: str) -> User | None:
         normalized = email.strip().lower()
         result = await self._session.execute(
-            select(User).where(User.email == normalized)
+            select(User)
+            .options(selectinload(User.role_ref))
+            .where(User.email == normalized)
         )
         return result.scalar_one_or_none()
 
     async def get_by_id(self, user_id: UUID) -> User | None:
-        return await self._session.get(User, user_id)
+        result = await self._session.execute(
+            select(User)
+            .options(selectinload(User.role_ref))
+            .where(User.id == user_id)
+        )
+        return result.scalar_one_or_none()
 
     async def count(self) -> int:
         result = await self._session.execute(select(func.count()).select_from(User))
@@ -30,7 +39,11 @@ class UserRepository:
 
     async def get_super_admin(self) -> User | None:
         result = await self._session.execute(
-            select(User).where(User.role == "super_admin").limit(1)
+            select(User)
+            .join(Role, User.role_id == Role.id)
+            .options(selectinload(User.role_ref))
+            .where(Role.name == "super_admin")
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
@@ -42,13 +55,26 @@ class UserRepository:
         password_hash: str,
         display_name: str | None,
         role: str,
+        role_id: UUID | None = None,
     ) -> User:
+        resolved_role_id = role_id
+        if resolved_role_id is None:
+            role_row = await self._session.execute(
+                select(Role.id).where(
+                    Role.organization_id == organization_id,
+                    Role.name == role,
+                )
+            )
+            resolved_role_id = role_row.scalar_one_or_none()
+        if resolved_role_id is None:
+            raise ValueError(f"No role_id found for role '{role}' in organization {organization_id}")
+
         user = User(
             organization_id=organization_id,
             email=email.strip().lower(),
             password_hash=password_hash,
             display_name=display_name,
-            role=role,
+            role_id=resolved_role_id,
             active=True,
         )
         self._session.add(user)

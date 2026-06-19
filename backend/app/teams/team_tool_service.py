@@ -307,10 +307,10 @@ class TeamToolService:
                 detail="Team not found.",
             )
 
-        if user.role == "super_admin":
+        if user.role_name == "super_admin":
             return team
 
-        if user.role == "team_admin":
+        if user.role_name == "team_admin":
             allowed = await self._memberships.active_team_ids_for_user(user.id)
             if team_id not in allowed:
                 raise HTTPException(

@@ -31,7 +31,7 @@ async def resolve_recipient_user_ids(
             for row in await memberships.list_active_for_team(threshold.team_id)
         }
         scoped = [user for user in admins if user.id in member_user_ids]
-        super_admins = [user for user in admins if user.role == "super_admin"]
+        super_admins = [user for user in admins if user.role_name == "super_admin"]
         recipient_ids = {user.id for user in super_admins + scoped}
         return list(recipient_ids)
 

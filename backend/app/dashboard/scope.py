@@ -50,7 +50,7 @@ async def resolve_dashboard_scope(
             user_email=None,
         )
 
-    if user.role == "team_admin":
+    if user.role_name == "team_admin":
         team_ids = await memberships.active_team_ids_for_user(user.id)
         if not team_ids:
             raise HTTPException(

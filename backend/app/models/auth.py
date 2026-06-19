@@ -2,12 +2,16 @@
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.models.roles import Role
 
 USER_ROLES = (
     "super_admin",
@@ -47,10 +51,6 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = (
         UniqueConstraint("organization_id", "email", name="uq_users_org_email"),
-        CheckConstraint(
-            "role IN ('super_admin','team_admin','finance_viewer','team_member','auditor')",
-            name="chk_user_role",
-        ),
         {"schema": "auth"},
     )
 
@@ -63,7 +63,11 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(200))
-    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    role_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("auth.roles.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -74,7 +78,20 @@ class User(Base):
     )
 
     organization: Mapped["Organization"] = relationship(back_populates="users")
+    role_ref: Mapped["Role | None"] = relationship("Role", foreign_keys=[role_id])
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(back_populates="user")
+
+    @property
+    def role_name(self) -> str:
+        """Resolved role name from joined Role row."""
+        if self.role_ref is not None:
+            return self.role_ref.name
+        return "team_member"
+
+    @property
+    def role(self) -> str:
+        """Backward-compatible alias for role_name (JWT / audit)."""
+        return self.role_name
 
 
 class RefreshToken(Base):

@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import get_settings
 from app.core.security import hash_password
 from app.models.auth import Organization, User
+from app.models.roles import Role
 from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.repository import TeamRepository
 
@@ -72,13 +73,24 @@ async def seed(session: AsyncSession) -> None:
         user = existing.scalar_one_or_none()
 
         if user is None:
+            role_result = await session.execute(
+                select(Role.id).where(
+                    Role.organization_id == org.id,
+                    Role.name == spec["role"],
+                )
+            )
+            role_id = role_result.scalar_one_or_none()
+            if role_id is None:
+                print(f"  ERROR: role not found: {spec['role']}")
+                continue
+
             user = User(
                 id=uuid.uuid4(),
                 organization_id=org.id,
                 email=spec["email"],
                 display_name=spec["display_name"],
                 password_hash=hash_password(DEV_PASSWORD),
-                role=spec["role"],
+                role_id=role_id,
                 active=True,
             )
             session.add(user)

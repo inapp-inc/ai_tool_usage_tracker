@@ -184,6 +184,162 @@ paths:
         '401':
           $ref: './components/responses.yaml#/Unauthorized'
 
+  /roles:
+    get:
+      tags: [Roles]
+      summary: List roles
+      description: |
+        Returns all roles for the organisation. Requires `settings` write permission (super_admin).
+      operationId: listRoles
+      responses:
+        '200':
+          description: Role list
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/RoleListResponse'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+    post:
+      tags: [Roles]
+      summary: Create custom role
+      operationId: createRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/CreateRoleRequest'
+      responses:
+        '201':
+          description: Created role
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/RoleResponse'
+        '409':
+          $ref: './components/responses.yaml#/Conflict'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+
+  /roles/{role_id}:
+    patch:
+      tags: [Roles]
+      summary: Update role
+      operationId: updateRole
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/UpdateRoleRequest'
+      responses:
+        '200':
+          description: Updated role
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/RoleResponse'
+        '409':
+          $ref: './components/responses.yaml#/Conflict'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+    delete:
+      tags: [Roles]
+      summary: Delete custom role
+      operationId: deleteRole
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Role deleted
+        '409':
+          $ref: './components/responses.yaml#/Conflict'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+
+  /roles/{role_id}/permissions:
+    get:
+      tags: [Roles]
+      summary: Get role permission matrix
+      operationId: getRolePermissions
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Permission matrix
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/PermissionMatrixResponse'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+    put:
+      tags: [Roles]
+      summary: Replace role permission matrix
+      operationId: replaceRolePermissions
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components/schemas.yaml#/ReplacePermissionsRequest'
+      responses:
+        '200':
+          description: Updated matrix
+          content:
+            application/json:
+              schema:
+                $ref: './components/schemas.yaml#/PermissionMatrixResponse'
+        '422':
+          $ref: './components/responses.yaml#/UnprocessableEntity'
+        '404':
+          $ref: './components/responses.yaml#/NotFound'
+        '403':
+          $ref: './components/responses.yaml#/Forbidden'
+        '401':
+          $ref: './components/responses.yaml#/Unauthorized'
+
   /tools:
     get:
       tags: [Tools]

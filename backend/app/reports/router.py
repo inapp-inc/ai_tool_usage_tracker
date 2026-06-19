@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.router import get_audit_recorder, record_audit_event
 from app.audit.recorder import AuditRecorder
 from app.auth.dependencies import get_current_user
-from app.core.rbac import require_finance_viewer_access
+from app.core.permissions import require_permission
 from app.db.session import get_session
 from app.models.auth import User
 from app.reports.schemas import (
@@ -29,18 +29,9 @@ def get_report_service(session: AsyncSession = Depends(get_session)) -> ReportSe
     return ReportService(session)
 
 
-def require_super_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != "super_admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions.",
-        )
-    return current_user
-
-
 @router.get("", response_model=ReportListResponse)
 async def list_reports(
-    current_user: User = Depends(require_finance_viewer_access),
+    current_user: User = Depends(require_permission("reports", "read")),
     service: ReportService = Depends(get_report_service),
 ) -> ReportListResponse:
     return await service.list_reports(current_user)
@@ -50,7 +41,7 @@ async def list_reports(
 async def generate_report(
     body: ReportGenerateRequest,
     request: Request,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_permission("reports", "write")),
     service: ReportService = Depends(get_report_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> ReportJobResponse:
@@ -71,7 +62,7 @@ async def generate_report(
 async def delete_report(
     report_id: UUID,
     request: Request,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_permission("reports", "write")),
     service: ReportService = Depends(get_report_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> None:
@@ -92,7 +83,7 @@ async def delete_report(
 @router.get("/jobs/{job_id}/download")
 async def download_report_job(
     job_id: UUID,
-    current_user: User = Depends(require_finance_viewer_access),
+    current_user: User = Depends(require_permission("reports", "read")),
     service: ReportService = Depends(get_report_service),
 ) -> Response:
     return await service.download_report(current_user, job_id)
@@ -101,7 +92,7 @@ async def download_report_job(
 @router.get("/{report_id}/subscriptions", response_model=SubscriptionListResponse)
 async def list_report_subscriptions(
     report_id: UUID,
-    current_user: User = Depends(require_finance_viewer_access),
+    current_user: User = Depends(require_permission("reports", "read")),
     service: ReportService = Depends(get_report_service),
 ) -> SubscriptionListResponse:
     return await service.list_subscriptions(current_user, report_id)
@@ -111,7 +102,7 @@ async def list_report_subscriptions(
 async def create_report_subscription(
     report_id: UUID,
     body: SubscriptionCreateRequest,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_permission("reports", "write")),
     service: ReportService = Depends(get_report_service),
 ) -> SubscriptionResponse:
     return await service.create_subscription(current_user, report_id, body)
@@ -121,7 +112,7 @@ async def create_report_subscription(
 async def delete_report_subscription(
     report_id: UUID,
     subscription_id: UUID,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_permission("reports", "write")),
     service: ReportService = Depends(get_report_service),
 ) -> None:
     await service.delete_subscription(current_user, report_id, subscription_id)

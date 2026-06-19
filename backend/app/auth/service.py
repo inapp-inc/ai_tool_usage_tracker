@@ -105,7 +105,9 @@ class AuthService:
             id=user.id,
             email=user.email,
             display_name=user.display_name,
-            role=user.role,  # type: ignore[arg-type]
+            role=user.role_name,  # type: ignore[arg-type]
+            role_id=user.role_id,
+            role_name=user.role_name,
             organization_id=user.organization_id,
             team_ids=team_ids,
         )
@@ -172,7 +174,7 @@ async def sync_super_admin_credentials(
     user = await user_repo.get_by_email(cfg.super_admin_email)
     if user is None:
         user = await user_repo.get_super_admin()
-    if user is None or user.role != "super_admin":
+    if user is None or user.role_name != "super_admin":
         return False
 
     await user_repo.update_credentials(

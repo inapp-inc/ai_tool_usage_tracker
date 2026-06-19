@@ -16,6 +16,8 @@ export interface ApiUser {
   email: string;
   display_name?: string | null;
   role: string;
+  role_id?: string | null;
+  role_name?: string | null;
   active: boolean;
   last_login_at?: string | null;
   created_at: string;
@@ -179,18 +181,18 @@ export function mapApiTeamMember(
   };
 }
 
-export function toUserCreateBody(body: InviteMemberRequest): {
-  email: string;
-  display_name: string;
-  role: string;
-  team_ids: string[];
-} {
-  return {
+export function toUserCreateBody(body: InviteMemberRequest): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
     email: body.email,
     display_name: body.name,
-    role: ROLE_TO_API[body.platformRole],
     team_ids: body.teamIds,
   };
+  if (body.roleId) {
+    payload.role_id = body.roleId;
+  } else if (body.platformRole) {
+    payload.role = ROLE_TO_API[body.platformRole];
+  }
+  return payload;
 }
 
 export function toUserUpdateBody(body: UpdateMemberRequest): Record<string, unknown> {
@@ -198,7 +200,9 @@ export function toUserUpdateBody(body: UpdateMemberRequest): Record<string, unkn
   if (body.name !== undefined) {
     payload.display_name = body.name;
   }
-  if (body.platformRole !== undefined) {
+  if (body.roleId !== undefined) {
+    payload.role_id = body.roleId;
+  } else if (body.platformRole !== undefined) {
     payload.role = ROLE_TO_API[body.platformRole];
   }
   if (body.status !== undefined) {

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.router import get_audit_recorder, record_audit_event
 from app.audit.recorder import AuditRecorder
 from app.auth.dependencies import get_current_user
-from app.core.rbac import get_managed_team_ids, require_team_admin_or_above
+from app.core.permissions import get_scoped_team_ids_for, require_permission
 from app.db.session import get_session
 from app.models.auth import User
 from app.teams.membership_repository import TeamMembershipRepository
@@ -23,7 +23,11 @@ def get_user_service(session: AsyncSession = Depends(get_session)) -> UserServic
     return UserService(session)
 
 
-def require_user_admin(current_user: User = Depends(require_team_admin_or_above)) -> User:
+def require_user_admin(current_user: User = Depends(require_permission("members", "read"))) -> User:
+    return current_user
+
+
+def require_user_write(current_user: User = Depends(require_permission("members", "write"))) -> User:
     return current_user
 
 
@@ -44,12 +48,12 @@ async def _assert_in_managed_teams(
 @router.get("", response_model=UserListResponse)
 async def list_users(
     current_user: User = Depends(require_user_admin),
-    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
+    managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("members")),
     service: UserService = Depends(get_user_service),
 ) -> UserListResponse:
     return await service.list_users(
         current_user.organization_id,
-        team_ids=managed_team_ids if current_user.role == "team_admin" else None,
+        team_ids=managed_team_ids if managed_team_ids else None,
     )
 
 
@@ -57,11 +61,11 @@ async def list_users(
 async def create_user(
     body: UserCreateRequest,
     request: Request,
-    current_user: User = Depends(require_user_admin),
+    current_user: User = Depends(require_user_write),
     service: UserService = Depends(get_user_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> UserResponse:
-    if current_user.role == "team_admin" and body.role == "super_admin":
+    if current_user.role_name == "team_admin" and body.role == "super_admin":
         raise HTTPException(status_code=403, detail="team_admin cannot assign super_admin role.")
     created = await service.create_user(current_user.organization_id, body)
     await record_audit_event(
@@ -81,11 +85,11 @@ async def create_user(
 async def get_user(
     user_id: UUID,
     current_user: User = Depends(require_user_admin),
-    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
+    managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("members")),
     session: AsyncSession = Depends(get_session),
     service: UserService = Depends(get_user_service),
 ) -> UserResponse:
-    if current_user.role == "team_admin":
+    if managed_team_ids:
         await _assert_in_managed_teams(session, user_id, managed_team_ids)
     return await service.get_user(current_user.organization_id, user_id)
 
@@ -95,18 +99,18 @@ async def update_user(
     user_id: UUID,
     body: UserUpdateRequest,
     request: Request,
-    current_user: User = Depends(require_user_admin),
-    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
+    current_user: User = Depends(require_user_write),
+    managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("members")),
     session: AsyncSession = Depends(get_session),
     service: UserService = Depends(get_user_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> UserResponse:
-    if current_user.role == "team_admin" and body.role == "super_admin":
+    if current_user.role_name == "team_admin" and body.role == "super_admin":
         raise HTTPException(status_code=403, detail="team_admin cannot assign super_admin role.")
-    if current_user.role == "team_admin":
+    if managed_team_ids:
         await _assert_in_managed_teams(session, user_id, managed_team_ids)
     updated = await service.update_user(current_user.organization_id, user_id, body)
-    action = "user.role_change" if body.role is not None else "user.update"
+    action = "user.role_change" if body.role is not None or body.role_id is not None else "user.update"
     await record_audit_event(
         recorder,
         actor=current_user,
@@ -123,13 +127,13 @@ async def update_user(
 async def deactivate_user(
     user_id: UUID,
     request: Request,
-    current_user: User = Depends(require_user_admin),
-    managed_team_ids: list[uuid.UUID] = Depends(get_managed_team_ids),
+    current_user: User = Depends(require_user_write),
+    managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("members")),
     session: AsyncSession = Depends(get_session),
     service: UserService = Depends(get_user_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> None:
-    if current_user.role == "team_admin":
+    if managed_team_ids:
         await _assert_in_managed_teams(session, user_id, managed_team_ids)
     user = await service.get_user(current_user.organization_id, user_id)
     await service.deactivate_user(current_user.organization_id, user_id)

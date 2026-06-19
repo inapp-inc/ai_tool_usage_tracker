@@ -38,5 +38,7 @@ class UserProfile(BaseModel):
     email: EmailStr
     display_name: str | None = None
     role: Role
+    role_id: UUID | None = None
+    role_name: str | None = None
     organization_id: UUID
     team_ids: list[UUID] = Field(default_factory=list)

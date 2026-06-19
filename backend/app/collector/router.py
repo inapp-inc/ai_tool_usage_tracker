@@ -15,20 +15,11 @@ from app.collector.schemas import (
     CollectorUpdateRequest,
 )
 from app.collector.service import CollectorService
-from app.core.rbac import require_team_admin_or_above
+from app.core.permissions import require_permission
 from app.db.session import get_session
 from app.models.auth import User
 
 router = APIRouter(prefix="/collectors", tags=["Collectors"])
-
-
-def require_super_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != "super_admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions.",
-        )
-    return current_user
 
 
 def get_collector_service(
@@ -45,7 +36,7 @@ async def _reload_scheduler(request: Request) -> None:
 
 @router.get("", response_model=CollectorListResponse)
 async def list_collectors(
-    _: User = Depends(require_team_admin_or_above),
+    _: User = Depends(require_permission("collectors", "read")),
     service: CollectorService = Depends(get_collector_service),
 ) -> CollectorListResponse:
     return CollectorListResponse(data=await service.list_collectors())
@@ -55,7 +46,7 @@ async def list_collectors(
 async def create_collector(
     body: CollectorCreateRequest,
     request: Request,
-    _: User = Depends(require_super_admin),
+    _: User = Depends(require_permission("collectors", "write")),
     service: CollectorService = Depends(get_collector_service),
 ) -> CollectorResponse:
     created = await service.create_collector(body)
@@ -66,7 +57,7 @@ async def create_collector(
 @router.get("/{collector_id}", response_model=CollectorResponse)
 async def get_collector(
     collector_id: UUID,
-    _: User = Depends(require_team_admin_or_above),
+    _: User = Depends(require_permission("collectors", "read")),
     service: CollectorService = Depends(get_collector_service),
 ) -> CollectorResponse:
     collector = await service.get_collector(collector_id)
@@ -80,7 +71,7 @@ async def update_collector(
     collector_id: UUID,
     body: CollectorUpdateRequest,
     request: Request,
-    _: User = Depends(require_super_admin),
+    _: User = Depends(require_permission("collectors", "write")),
     service: CollectorService = Depends(get_collector_service),
 ) -> CollectorResponse:
     updated = await service.update_collector(collector_id, body)
@@ -94,7 +85,7 @@ async def update_collector(
 async def delete_collector(
     collector_id: UUID,
     request: Request,
-    _: User = Depends(require_super_admin),
+    _: User = Depends(require_permission("collectors", "write")),
     service: CollectorService = Depends(get_collector_service),
 ) -> None:
     deleted = await service.delete_collector(collector_id)
@@ -110,7 +101,7 @@ async def delete_collector(
 )
 async def run_collector_now(
     collector_id: UUID,
-    _: User = Depends(require_super_admin),
+    _: User = Depends(require_permission("collectors", "write")),
     service: CollectorService = Depends(get_collector_service),
 ) -> CollectorRunResponse:
     run = await service.run_collector(collector_id)
@@ -122,7 +113,7 @@ async def run_collector_now(
 @router.get("/{collector_id}/runs", response_model=CollectorRunListResponse)
 async def list_collector_runs(
     collector_id: UUID,
-    _: User = Depends(require_team_admin_or_above),
+    _: User = Depends(require_permission("collectors", "read")),
     service: CollectorService = Depends(get_collector_service),
 ) -> CollectorRunListResponse:
     if await service.get_collector(collector_id) is None:

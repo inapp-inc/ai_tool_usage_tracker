@@ -10,6 +10,7 @@ from app.audit.router import get_audit_recorder, record_audit_event
 from app.audit.recorder import AuditRecorder
 
 from app.auth.dependencies import get_current_user
+from app.core.permissions import require_permission
 from app.credentials.schemas import (
     CredentialCreateRequest,
     CredentialCreateResponseBody,
@@ -29,20 +30,9 @@ router = APIRouter(prefix="/credentials", tags=["Credentials"])
 
 logger = logging.getLogger(__name__)
 
-ADMIN_ROLES = frozenset({"super_admin"})
-
 
 def get_credential_service(session: AsyncSession = Depends(get_session)) -> CredentialService:
     return CredentialService(session)
-
-
-def require_credential_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role not in ADMIN_ROLES:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions.",
-        )
-    return current_user
 
 
 async def _reload_scheduler(request: Request) -> None:
@@ -54,7 +44,7 @@ async def _reload_scheduler(request: Request) -> None:
 @router.post("/validate", response_model=CredentialValidateResponse)
 async def validate_credential(
     body: CredentialValidateRequest,
-    current_user: User = Depends(require_credential_admin),
+    current_user: User = Depends(require_permission("credentials", "write")),
     service: CredentialService = Depends(get_credential_service),
 ) -> CredentialValidateResponse:
     return await service.validate_credential(current_user.organization_id, body)
@@ -62,7 +52,7 @@ async def validate_credential(
 
 @router.get("", response_model=CredentialListResponse)
 async def list_credentials(
-    current_user: User = Depends(require_credential_admin),
+    current_user: User = Depends(require_permission("credentials", "read")),
     service: CredentialService = Depends(get_credential_service),
 ) -> CredentialListResponse:
     return await service.list_credentials(current_user.organization_id)
@@ -73,7 +63,7 @@ async def create_credential(
     body: CredentialCreateRequest,
     request: Request,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(require_credential_admin),
+    current_user: User = Depends(require_permission("credentials", "write")),
     service: CredentialService = Depends(get_credential_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> CredentialCreateResponseBody:
@@ -108,7 +98,7 @@ async def create_credential(
 @router.get("/{credential_id}/secret", response_model=CredentialSecretResponse)
 async def reveal_credential_secret(
     credential_id: UUID,
-    current_user: User = Depends(require_credential_admin),
+    current_user: User = Depends(require_permission("credentials", "write")),
     service: CredentialService = Depends(get_credential_service),
 ) -> CredentialSecretResponse:
     secret_value = await service.reveal_secret(
@@ -124,7 +114,7 @@ async def update_credential(
     body: CredentialUpdateRequest,
     request: Request,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(require_credential_admin),
+    current_user: User = Depends(require_permission("credentials", "write")),
     service: CredentialService = Depends(get_credential_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> CredentialResponse:
@@ -158,7 +148,7 @@ async def update_credential(
 async def revoke_credential(
     credential_id: UUID,
     request: Request,
-    current_user: User = Depends(require_credential_admin),
+    current_user: User = Depends(require_permission("credentials", "write")),
     service: CredentialService = Depends(get_credential_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> None:

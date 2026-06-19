@@ -120,6 +120,13 @@ UserProfile:
       type: string
     role:
       $ref: '#/Role'
+    role_id:
+      type: string
+      format: uuid
+      nullable: true
+    role_name:
+      type: string
+      nullable: true
     organization_id:
       type: string
       format: uuid
@@ -1038,6 +1045,87 @@ AuditLogListResponse:
         $ref: '#/AuditLogEntry'
     meta:
       $ref: '#/PaginationMeta'
+
+RoleResponse:
+  type: object
+  required: [id, name, is_system, created_at]
+  properties:
+    id:
+      type: string
+      format: uuid
+    name:
+      type: string
+    description:
+      type: string
+      nullable: true
+    is_system:
+      type: boolean
+    created_at:
+      type: string
+      format: date-time
+
+RoleListResponse:
+  type: object
+  required: [data]
+  properties:
+    data:
+      type: array
+      items:
+        $ref: '#/RoleResponse'
+
+CreateRoleRequest:
+  type: object
+  required: [name]
+  properties:
+    name:
+      type: string
+      maxLength: 64
+    description:
+      type: string
+      maxLength: 2000
+      nullable: true
+
+UpdateRoleRequest:
+  type: object
+  properties:
+    name:
+      type: string
+      maxLength: 64
+    description:
+      type: string
+      maxLength: 2000
+      nullable: true
+
+PermissionMatrixItem:
+  type: object
+  required: [resource, can_read, can_write, team_scoped]
+  properties:
+    resource:
+      type: string
+    can_read:
+      type: boolean
+    can_write:
+      type: boolean
+    team_scoped:
+      type: boolean
+
+PermissionMatrixResponse:
+  type: object
+  required: [data]
+  properties:
+    data:
+      type: array
+      items:
+        $ref: '#/PermissionMatrixItem'
+
+ReplacePermissionsRequest:
+  type: object
+  required: [permissions]
+  properties:
+    permissions:
+      type: array
+      items:
+        $ref: '#/PermissionMatrixItem'
 
 HealthResponse:
   type: object

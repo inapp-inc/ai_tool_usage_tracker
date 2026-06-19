@@ -19,13 +19,15 @@ import {
   import { useAuthStore } from "@/stores/authStore";
   import { Role } from "@/types";
   import { tokens } from "@/theme/palette";
-  
-  interface NavItem {
-    label: string;
-    icon: React.ElementType;
-    path: string;
-    roles: Role[] | "all";
-  }
+
+interface NavItem {
+  label: string;
+  icon: React.ElementType;
+  path: string;
+  /** @deprecated use resource */
+  roles?: Role[] | "all";
+  resource?: string;
+}
   
   interface NavSection {
     heading?: string;
@@ -40,6 +42,7 @@ import {
           icon: IconLayoutDashboard,
           path: "/insights",
           roles: "all",
+          resource: "insights",
         },
       ],
     },
@@ -50,7 +53,7 @@ import {
           label: "My Usage",
           icon: IconUser,
           path: "/my-usage",
-          roles: [Role.TeamMember],
+          resource: "my_usage",
         },
       ],
     },
@@ -61,13 +64,13 @@ import {
           label: "Alerts",
           icon: IconBell,
           path: "/alerts",
-          roles: [Role.SuperAdmin, Role.TeamAdmin],
+          resource: "alerts",
         },
         {
           label: "Uploads",
           icon: IconUpload,
           path: "/uploads",
-          roles: [Role.SuperAdmin, Role.TeamAdmin],
+          resource: "uploads",
         },
       ],
     },
@@ -78,37 +81,37 @@ import {
           label: "Tools",
           icon: IconTool,
           path: "/admin/tools",
-          roles: [Role.SuperAdmin],
+          resource: "tools",
         },
         {
           label: "Teams",
           icon: IconUsers,
           path: "/admin/teams",
-          roles: [Role.SuperAdmin],
+          resource: "teams",
         },
         {
           label: "Members",
           icon: IconUsers,
           path: "/admin/members",
-          roles: [Role.SuperAdmin],
+          resource: "members",
         },
         {
           label: "Credentials",
           icon: IconKey,
           path: "/admin/credentials",
-          roles: [Role.SuperAdmin],
+          resource: "credentials",
         },
         {
           label: "Audit log",
           icon: IconShield,
           path: "/admin/audit-log",
-          roles: [Role.SuperAdmin, Role.Auditor],
+          resource: "audit_logs",
         },
         {
           label: "Settings",
           icon: IconSettings,
           path: "/admin/settings",
-          roles: [Role.SuperAdmin],
+          resource: "settings",
         },
       ],
     },
@@ -130,7 +133,8 @@ import {
     const location = useLocation();
     const navigate = useNavigate();
     const user = useAuthStore((s) => s.user);
-  
+    const canRead = useAuthStore((s) => s.canRead);
+
     const toggleCollapse = useCallback(() => {
       setCollapsed((prev) => {
         const next = !prev;
@@ -141,11 +145,17 @@ import {
   
     const canSeeItem = useCallback(
       (item: NavItem): boolean => {
+        if (item.resource) {
+          if (item.resource === "insights" && item.roles === "all") {
+            return true;
+          }
+          return canRead(item.resource);
+        }
         if (item.roles === "all") return true;
         if (!user) return false;
         return (item.roles as Role[]).includes(user.platformRole);
       },
-      [user],
+      [user, canRead],
     );
   
     const isActive = (path: string) =>
