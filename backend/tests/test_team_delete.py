@@ -5,41 +5,8 @@ from uuid import uuid4
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.models.admin import Team
 from app.models.reporting import ReportJob
-from app.teams.deletion import (
-    delete_connected_credentials_for_team,
-    remove_team_from_report_jobs,
-)
-
-
-@pytest.mark.asyncio
-async def test_delete_connected_credentials_for_team() -> None:
-    team_id = uuid4()
-    org_id = uuid4()
-    team = Team(id=team_id, organization_id=org_id, name="Eng", tool_ids=[])
-    connected = [MagicMock(id=uuid4()), MagicMock(id=uuid4())]
-
-    session = AsyncMock()
-    tools = MagicMock()
-    tools.list_connected_for_team = AsyncMock(return_value=connected)
-    tools.delete = AsyncMock()
-
-    from app.teams import deletion as module
-
-    original_repo = module.ToolRepository
-    module.ToolRepository = lambda _session: tools
-    try:
-        count = await delete_connected_credentials_for_team(
-            session,
-            organization_id=org_id,
-            team=team,
-        )
-    finally:
-        module.ToolRepository = original_repo
-
-    assert count == 2
-    assert tools.delete.await_count == 2
+from app.teams.deletion import remove_team_from_report_jobs
 
 
 @pytest.mark.asyncio

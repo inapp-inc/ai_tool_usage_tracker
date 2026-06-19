@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from app.collector.adapters.cursor_verification_excel import (
+    VERIFICATION_FILENAME,
+    write_calculation_verification_excel,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,12 +124,23 @@ class CursorPullDumper:
         }
         path = self.run_dir / "sync-summary.json"
         path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        excel_path = self.run_dir / VERIFICATION_FILENAME
+        write_calculation_verification_excel(
+            output_path=excel_path,
+            raw_pages=self._raw_pages,
+            pulled=pulled,
+            ingested=ingested,
+            skipped_duplicates=skipped_duplicates,
+        )
+        summary["verification_excel"] = VERIFICATION_FILENAME
+        path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         logger.info(
-            "Cursor sync summary | pulled=%s ingested=%s skipped_duplicates=%s dir=%s",
+            "Cursor sync summary | pulled=%s ingested=%s skipped_duplicates=%s dir=%s excel=%s",
             pulled,
             ingested,
             skipped_duplicates,
             self.run_dir,
+            excel_path,
         )
         return path
 

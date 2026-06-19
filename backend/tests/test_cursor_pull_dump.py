@@ -5,6 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.collector.adapters.cursor_dump import CursorPullDumper
+from app.collector.adapters.cursor_verification_excel import VERIFICATION_FILENAME
 from app.collector.adapters.usage_parsing import (
     cursor_vendor_event_id,
     parse_cursor_usage_page,
@@ -65,4 +66,5 @@ def test_cursor_pull_dumper_writes_raw_parsed_and_summary(tmp_path: Path) -> Non
     assert summary_path.exists()
     assert (dumper.run_dir / "raw-filtered-usage-events-page-001.json").exists()
     assert (dumper.run_dir / "parsed-records.json").exists()
+    assert (dumper.run_dir / VERIFICATION_FILENAME).exists()
     assert records[0].estimated_cost == Decimal("0.125")

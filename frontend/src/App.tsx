@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactElement } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { useAuth } from "@/auth/AuthContext";
 import { RoleGuard } from "@/components/auth/RoleGuard";
@@ -60,11 +60,24 @@ const AuditLogPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import("@/pages/admin/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 );
+const CursorVerificationPage = lazy(() =>
+  import("@/pages/files/CursorVerificationPage").then((m) => ({
+    default: m.CursorVerificationPage,
+  })),
+);
 // ─── Guard ───────────────────────────────────────────────────────────────────
 function ProtectedRoute({ children }: { children: ReactElement }) {
   const { isAuthenticated } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   return children;
+}
+
+function UnknownRouteRedirect() {
+  const { pathname } = useLocation();
+  if (pathname.includes("/files/cursor-verification")) {
+    return <Navigate to="/files/cursor-verification" replace />;
+  }
+  return <Navigate to="/insights" replace />;
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
@@ -189,11 +202,19 @@ export function AppRoutes() {
           path="/settings/roles"
           element={<Navigate to="/admin/settings" replace />}
         />
+        <Route
+          path="/aitool/files/cursor-verification"
+          element={<Navigate to="/files/cursor-verification" replace />}
+        />
+        <Route
+          path="/files/cursor-verification"
+          element={<CursorVerificationPage />}
+        />
       </Route>
 
       {/* Fallback */}
       <Route path="/" element={<Navigate to="/login" replace />} />
-      <Route path="*" element={<Navigate to="/insights" replace />} />
+      <Route path="*" element={<UnknownRouteRedirect />} />
     </Routes>
   );
 }
