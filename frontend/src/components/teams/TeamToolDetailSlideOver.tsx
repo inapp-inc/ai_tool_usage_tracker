@@ -3,12 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { endOfDay, startOfMonth } from "date-fns";
 import { useMemo } from "react";
 
+import { fetchDashboardStats } from "@/api/dashboard";
 import { fetchTeamToolAssignment } from "@/api/teamTools";
 import { fetchTools } from "@/api/tools";
-import { fetchUsageSummary } from "@/api/usage";
 import type { Team } from "@/api/teams";
 import { SlideOver } from "@/components/layout/SlideOver";
 import { TeamToolPricingSummary } from "@/components/teams/TeamToolPricingSummary";
+import { UsageBreakdownStats } from "@/components/usage/UsageBreakdownStats";
 import { StatusBadge } from "@/components/data-display/StatusBadge";
 import { tokens } from "@/theme/palette";
 import { formatCost, formatTokens } from "@/utils/formatters";
@@ -87,7 +88,7 @@ export function TeamToolDetailSlideOver({
   const usageQuery = useQuery({
     queryKey: ["team-tool-usage", team?.id, toolId, period.from, period.to],
     queryFn: () =>
-      fetchUsageSummary(period.from, period.to, {
+      fetchDashboardStats(period.from, period.to, {
         teamId: team!.id,
         toolId: toolId!,
       }),
@@ -145,21 +146,14 @@ export function TeamToolDetailSlideOver({
             >
               Current usage (this month)
             </Typography>
-            <Box sx={{ display: "flex", gap: 1.5 }}>
-              <UsageStat
-                label="Tokens"
-                value={formatTokens(usageQuery.data?.totalTokens ?? 0)}
-              />
-              <UsageStat
-                label="Cost"
-                value={formatCost(usageQuery.data?.totalCost ?? 0)}
-                subvalue={
-                  usageQuery.data && usageQuery.data.totalTokens > 0
-                    ? `${formatCost(usageQuery.data.avgCostPerToken)} / token`
-                    : undefined
-                }
-              />
-            </Box>
+            {usageQuery.data ? (
+              <UsageBreakdownStats stats={usageQuery.data} showIncludedCost />
+            ) : (
+              <Box sx={{ display: "flex", gap: 1.5 }}>
+                <UsageStat label="Tokens" value={formatTokens(0)} />
+                <UsageStat label="Cost" value={formatCost(0)} />
+              </Box>
+            )}
           </Box>
 
           {catalogTool && (

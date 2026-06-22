@@ -1,15 +1,18 @@
-import { apiRequest } from "./client";
+import { apiFetch, apiRequest } from "./client";
 import {
   mapApiTool,
   mapApiToolMember,
+  mapApiToolPackage,
   toToolFormWriteBody,
   toToolUpdateBodyFromPartial,
   type AiTool,
   type ApiTool,
   type ApiToolMember,
+  type ApiToolPackage,
   type ApiToolWriteBody,
   type CreateToolRequest,
   type ToolMember,
+  type ToolPackage,
   type UpdateToolRequest,
 } from "./adapters/tools";
 
@@ -19,10 +22,13 @@ export type {
   ApiPricingModel,
   ApiTool,
   ApiToolMember,
+  ApiToolPackage,
   ApiToolWriteBody,
+  BillingType,
   CreateToolRequest,
   PricingModel,
   ToolMember,
+  ToolPackage,
   ToolPricing,
   ToolProvider,
   UpdateToolRequest,
@@ -30,7 +36,10 @@ export type {
 
 export {
   emptyToolPricing,
+  mapApiToolPackage,
   normalizePricing,
+  packageAllowanceFromPackage,
+  pricingFromPackage,
   toToolFormWriteBody,
   toToolUpdateBodyFromPartial,
 } from "./adapters/tools";
@@ -109,6 +118,13 @@ export async function fetchToolMembers(id: string): Promise<ToolMember[]> {
   return rows.map(mapApiToolMember);
 }
 
+export async function fetchToolPackages(toolId: string): Promise<ToolPackage[]> {
+  const response = await apiFetch(`/tools/${toolId}/packages`);
+  const payload = (await response.json()) as { data?: ApiToolPackage[] };
+  const rows = Array.isArray(payload.data) ? payload.data : [];
+  return rows.map(mapApiToolPackage);
+}
+
 export const toolsApi = {
   fetchTools,
   createTool,
@@ -116,4 +132,5 @@ export const toolsApi = {
   deleteTool,
   syncTool,
   fetchToolMembers,
+  fetchToolPackages,
 };

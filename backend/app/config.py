@@ -82,6 +82,14 @@ class Settings(BaseSettings):
         default=True,
         validation_alias="CURSOR_PULL_DUMP_ENABLED",
     )
+    copilot_pull_dump_enabled: bool = Field(
+        default=True,
+        validation_alias="COPILOT_PULL_DUMP_ENABLED",
+    )
+    openai_pull_dump_enabled: bool = Field(
+        default=True,
+        validation_alias="OPENAI_PULL_DUMP_ENABLED",
+    )
 
     def resolved_cors_origins(self) -> list[str]:
         """Explicit browser origins from CORS_ORIGINS (always merged when set)."""

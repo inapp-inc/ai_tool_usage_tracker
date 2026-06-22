@@ -1,0 +1,3 @@
+name: copilot-schema
+status: implemented
+description: GitHub Copilot seat-based productivity analytics schema, ingest, API, and dashboard

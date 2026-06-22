@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.admin import Team, TeamTool, Tool
+from app.models.admin import Team, TeamTool, Tool, ToolPackage
 from app.models.auth import User
 from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.repository import TeamRepository
@@ -72,6 +72,8 @@ class TeamToolService:
 
         assignment = TeamTool(team_id=team.id, tool_id=tool.id)
         self._apply_pricing_fields(assignment, body)
+        await self._apply_package_binding(assignment, body, tool)
+        self._apply_subscription_fields(assignment, body)
         await self._team_tools.create(assignment)
         await self._ensure_tool_on_team(team, tool.id)
         await self._session.commit()
@@ -89,6 +91,8 @@ class TeamToolService:
         tool = await self._require_tool(user.organization_id, tool_id)
         assignment = await self._require_assignment(team.id, tool.id)
         self._apply_pricing_fields(assignment, body)
+        await self._apply_package_binding(assignment, body, tool)
+        self._apply_subscription_fields(assignment, body)
         await self._session.commit()
         await self._session.refresh(assignment)
         return self._to_response(assignment, tool.name)
@@ -420,6 +424,91 @@ class TeamToolService:
             overage_price=assignment.overage_price,
         )
 
+    def _apply_subscription_fields(
+        self,
+        assignment: TeamTool,
+        body: TeamToolAssignRequest | TeamToolUpdateRequest,
+    ) -> None:
+        updates = body.model_fields_set
+        if "subscription_start" in updates:
+            assignment.subscription_start = body.subscription_start
+        if "subscription_end" in updates:
+            assignment.subscription_end = body.subscription_end
+        if "monthly_budget" in updates:
+            assignment.monthly_budget = body.monthly_budget
+        if "alert_threshold" in updates:
+            assignment.alert_threshold = body.alert_threshold
+
+    async def _apply_package_binding(
+        self,
+        assignment: TeamTool,
+        body: TeamToolAssignRequest | TeamToolUpdateRequest,
+        tool: Tool,
+    ) -> None:
+        if "package_id" not in body.model_fields_set:
+            return
+
+        package_id = body.package_id
+        assignment.package_id = package_id
+        if package_id is None:
+            return
+
+        package = await self._session.get(ToolPackage, package_id)
+        if package is None or not package.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Package not found.",
+            )
+
+        catalogue_id = catalogue_tool_id_from_connected(tool) or tool.id
+        if package.tool_id != catalogue_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Package does not belong to this tool.",
+            )
+
+        assignment.plan_name = package.package_name
+        config = (
+            dict(assignment.pricing_config)
+            if isinstance(assignment.pricing_config, dict)
+            else {}
+        )
+        if package.monthly_price is not None:
+            config["flat_monthly_cost"] = str(package.monthly_price)
+        config["plan_name"] = package.package_name
+        assignment.pricing_config = config
+
+        if package.billing_type == "SEAT_BASED":
+            assignment.pricing_model = "custom"
+            if package.seat_limit is not None:
+                assignment.seat_count = package.seat_limit
+            if package.monthly_price is not None:
+                assignment.cost_per_seat = package.monthly_price
+            config["cost_per_seat"] = (
+                str(package.monthly_price) if package.monthly_price is not None else None
+            )
+            config["seat_count"] = package.seat_limit
+            assignment.pricing_config = config
+            return
+
+        assignment.pricing_model = "package_with_overage"
+        allowance: int | None = None
+        if package.billing_type == "TOKEN_BASED":
+            allowance = package.token_limit
+        elif package.billing_type == "REQUEST_BASED":
+            allowance = package.request_limit
+        elif package.billing_type == "CREDIT_BASED" and package.credit_limit is not None:
+            allowance = int(package.credit_limit)
+        if allowance is not None:
+            assignment.package_allowance = allowance
+            config["included_tokens"] = allowance
+        assignment.pricing_config = normalize_pricing_config(
+            assignment.pricing_model,
+            config,
+            package_allowance=assignment.package_allowance,
+            overage_price=assignment.overage_price,
+        )
+
     @staticmethod
     def _to_response(assignment: TeamTool, tool_name: str) -> TeamToolAssignmentResponse:
         config = assignment.pricing_config if isinstance(assignment.pricing_config, dict) else {}
@@ -437,6 +526,11 @@ class TeamToolService:
             overage_price=assignment.overage_price,
             plan_name=assignment.plan_name,
             pricing_config=config,
+            package_id=assignment.package_id,
+            subscription_start=assignment.subscription_start,
+            subscription_end=assignment.subscription_end,
+            monthly_budget=assignment.monthly_budget,
+            alert_threshold=assignment.alert_threshold,
             created_at=assignment.created_at,
             updated_at=assignment.updated_at,
         )

@@ -118,6 +118,7 @@ class ToolResponse(BaseModel):
     organization_id: UUID
     name: str
     vendor: str
+    billing_type: str = "TOKEN_BASED"
     description: str | None = None
     api_endpoint: str | None = None
     integration_config: dict = Field(default_factory=dict)

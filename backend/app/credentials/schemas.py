@@ -42,6 +42,16 @@ class CredentialCreateRequest(BaseModel):
         max_length=100,
         description="GitHub organization login — required when connecting Microsoft Copilot.",
     )
+    gcp_project_id: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Google Cloud project ID for Gemini usage monitoring.",
+    )
+    gcp_service_account_json: str | None = Field(
+        default=None,
+        max_length=16384,
+        description="GCP service account JSON (roles/monitoring.viewer) for Gemini token usage.",
+    )
     pull_interval_minutes: int = Field(default=60, ge=5, le=1440)
     rotation_reminder_days: int | None = Field(default=None, gt=0)
     expires_at: datetime | None = None

@@ -15,6 +15,11 @@ const LoginPage = lazy(() =>
 const InsightsPage = lazy(() =>
   import("@/pages/insights/InsightsPage").then((m) => ({ default: m.InsightsPage })),
 );
+const CopilotDashboardPage = lazy(() =>
+  import("@/pages/copilot/CopilotDashboardPage").then((m) => ({
+    default: m.CopilotDashboardPage,
+  })),
+);
 const MyUsagePage = lazy(() =>
   import("@/pages/usage/MyUsagePage").then((m) => ({ default: m.MyUsagePage })),
 );
@@ -96,6 +101,14 @@ export function AppRoutes() {
         }
       >
         <Route path="/insights" element={<InsightsPage />} />
+        <Route
+          path="/insights/copilot"
+          element={
+            <RoleGuard resource="insights" fallback={<Navigate to="/insights" replace />}>
+              <CopilotDashboardPage />
+            </RoleGuard>
+          }
+        />
 
         <Route path="/dashboard" element={<Navigate to="/insights" replace />} />
         <Route path="/usage/teams" element={<Navigate to="/insights" replace />} />

@@ -15,7 +15,7 @@ from app.collector.adapters.cursor_verification_excel import (
 from app.collector.adapters.usage_parsing import parse_cursor_usage_page
 
 
-def test_build_verification_rows_flags_included_kind_as_zero_cost() -> None:
+def test_build_verification_rows_flags_included_kind_plan_cost() -> None:
     payload = {
         "usageEvents": [
             {
@@ -44,6 +44,8 @@ def test_build_verification_rows_flags_included_kind_as_zero_cost() -> None:
     assert len(filtered_rows) == 1
     assert filtered_rows[0]["kind_included"] == "Y"
     assert filtered_rows[0]["parsed_estimated_cost"] == 0.0
+    assert filtered_rows[0]["parsed_included_cost"] == 9.99
+    assert filtered_rows[0]["parsed_total_cost"] == 9.99
     assert filtered_rows[0]["parsed_total_tokens"] == 165
     assert filtered_rows[0]["cost_matches_rule"] == "Y"
     assert daily_rows == []

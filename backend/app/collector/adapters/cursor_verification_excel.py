@@ -17,6 +17,7 @@ from app.collector.adapters.usage_parsing import (
     _int_token,
     cursor_vendor_event_id,
 )
+from app.usage.cost import cursor_included_cost_from_event
 from app.usage.tokens import usage_event_token_total
 
 VERIFICATION_FILENAME = "calculation-verification.xlsx"
@@ -41,8 +42,10 @@ FILTERED_COLUMNS = [
     ("parsed_total_tokens", "Parsed total_tokens"),
     ("raw_charged_cents", "API chargedCents"),
     ("raw_charged_usd", "chargedCents / 100"),
+    ("parsed_included_cost", "Parsed included cost (plan, USD)"),
     ("cost_rule", "Cost rule applied"),
-    ("parsed_estimated_cost", "Parsed estimated_cost (USD)"),
+    ("parsed_estimated_cost", "Parsed billable cost (USD)"),
+    ("parsed_total_cost", "Total cost (included + billable, USD)"),
     ("cost_matches_rule", "Cost matches rule?"),
     ("vendor_event_id", "vendor_event_id"),
 ]
@@ -77,6 +80,7 @@ def _filtered_row(source: str, page: int, event: dict[str, Any]) -> dict[str, An
     kind = event.get("kind")
     kind_included = _cursor_kind_is_included(kind)
     estimated_cost = _cursor_estimated_cost(event, token_usage)
+    included_cost = cursor_included_cost_from_event(event, token_usage)
     charged_cents = event.get("chargedCents")
     try:
         raw_charged_usd = Decimal(str(charged_cents or 0)) / Decimal("100")
@@ -84,11 +88,13 @@ def _filtered_row(source: str, page: int, event: dict[str, Any]) -> dict[str, An
         raw_charged_usd = Decimal("0")
 
     if kind_included:
-        cost_rule = 'kind contains "include" -> $0'
-        cost_matches = estimated_cost == Decimal("0")
+        cost_rule = 'kind contains "include" -> totalCents/100 (plan consumption)'
+        cost_matches = included_cost > Decimal("0") or estimated_cost == Decimal("0")
+        parsed_included_cost = float(included_cost)
     else:
-        cost_rule = "chargedCents / 100"
+        cost_rule = "chargedCents / 100 (additional billable)"
         cost_matches = estimated_cost == raw_charged_usd
+        parsed_included_cost = None
 
     timestamp = event.get("timestamp")
     user_email = event.get("userEmail") or event.get("email") or ""
@@ -114,8 +120,12 @@ def _filtered_row(source: str, page: int, event: dict[str, Any]) -> dict[str, An
         "parsed_total_tokens": total_tokens,
         "raw_charged_cents": charged_cents,
         "raw_charged_usd": float(raw_charged_usd),
+        "parsed_included_cost": parsed_included_cost,
         "cost_rule": cost_rule,
         "parsed_estimated_cost": float(estimated_cost),
+        "parsed_total_cost": float(
+            included_cost if kind_included else estimated_cost
+        ),
         "cost_matches_rule": "Y" if cost_matches else "N",
         "vendor_event_id": cursor_vendor_event_id(
             timestamp=timestamp,
@@ -249,7 +259,7 @@ def _write_summary_sheet(
     sheet["A1"].font = bold
     sheet["B1"].font = bold
 
-    filtered_cost = sum(float(row.get("parsed_estimated_cost") or 0) for row in filtered_rows)
+    filtered_cost = sum(float(row.get("parsed_total_cost") or 0) for row in filtered_rows)
     filtered_tokens = sum(int(row.get("parsed_total_tokens") or 0) for row in filtered_rows)
     cost_mismatches = sum(
         1 for row in filtered_rows if row.get("cost_matches_rule") != "Y"

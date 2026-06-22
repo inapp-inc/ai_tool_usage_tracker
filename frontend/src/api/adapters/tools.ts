@@ -32,10 +32,18 @@ export interface ToolPricing {
 
 import type { ToolIntegrationConfig } from "@/types/integrationConfig";
 
+export type BillingType =
+  | "TOKEN_BASED"
+  | "REQUEST_BASED"
+  | "CREDIT_BASED"
+  | "SEAT_BASED"
+  | "LICENSE_BASED";
+
 export interface AiTool {
   id: string;
   name: string;
   provider: ToolProvider;
+  billingType: BillingType;
   parentSlug: string | null;
   parentLabel: string | null;
   productLabel: string | null;
@@ -136,6 +144,7 @@ export interface ApiTool {
   organization_id: string;
   name: string;
   vendor: string;
+  billing_type?: BillingType | string;
   description?: string | null;
   api_endpoint?: string | null;
   integration_config?: ApiToolIntegrationConfig;
@@ -164,6 +173,101 @@ export interface ApiTool {
 export interface ApiToolMember {
   email: string;
   name?: string | null;
+}
+
+export interface ApiToolPackage {
+  id: string;
+  tool_id: string;
+  package_name: string;
+  billing_type: BillingType | string;
+  monthly_price: number | string | null;
+  yearly_price: number | string | null;
+  seat_limit: number | null;
+  token_limit: number | null;
+  request_limit: number | null;
+  credit_limit: number | string | null;
+  currency: string;
+  is_active: boolean;
+}
+
+export interface ToolPackage {
+  id: string;
+  toolId: string;
+  packageName: string;
+  billingType: BillingType;
+  monthlyPrice: number | null;
+  yearlyPrice: number | null;
+  seatLimit: number | null;
+  tokenLimit: number | null;
+  requestLimit: number | null;
+  creditLimit: number | null;
+  currency: string;
+  isActive: boolean;
+}
+
+function billingTypeFromApi(value: string | undefined): BillingType {
+  const normalized = (value ?? "TOKEN_BASED").toUpperCase();
+  if (
+    normalized === "TOKEN_BASED" ||
+    normalized === "REQUEST_BASED" ||
+    normalized === "CREDIT_BASED" ||
+    normalized === "SEAT_BASED" ||
+    normalized === "LICENSE_BASED"
+  ) {
+    return normalized;
+  }
+  return "TOKEN_BASED";
+}
+
+export function mapApiToolPackage(api: ApiToolPackage): ToolPackage {
+  return {
+    id: api.id,
+    toolId: api.tool_id,
+    packageName: api.package_name,
+    billingType: billingTypeFromApi(api.billing_type),
+    monthlyPrice: toNullableNumber(api.monthly_price),
+    yearlyPrice: toNullableNumber(api.yearly_price),
+    seatLimit: api.seat_limit,
+    tokenLimit: api.token_limit,
+    requestLimit: api.request_limit,
+    creditLimit: toNullableNumber(api.credit_limit),
+    currency: api.currency,
+    isActive: api.is_active,
+  };
+}
+
+export function packageAllowanceFromPackage(pkg: ToolPackage): number | null {
+  if (pkg.billingType === "TOKEN_BASED") {
+    return pkg.tokenLimit;
+  }
+  if (pkg.billingType === "REQUEST_BASED") {
+    return pkg.requestLimit;
+  }
+  if (pkg.billingType === "CREDIT_BASED") {
+    return pkg.creditLimit == null ? null : Math.trunc(pkg.creditLimit);
+  }
+  return null;
+}
+
+export function pricingFromPackage(pkg: ToolPackage): Partial<ToolPricing> {
+  const patch: Partial<ToolPricing> = {
+    planName: pkg.packageName,
+    flatMonthlyCost: pkg.monthlyPrice,
+  };
+  if (pkg.billingType === "SEAT_BASED") {
+    return {
+      ...patch,
+      model: "per_seat",
+      costPerSeat: pkg.monthlyPrice,
+      seatCount: pkg.seatLimit,
+    };
+  }
+  const allowance = packageAllowanceFromPackage(pkg);
+  return {
+    ...patch,
+    model: allowance != null ? "flat_fee" : "per_token",
+    includedTokens: allowance,
+  };
 }
 
 const VENDOR_TO_PROVIDER: Record<string, ToolProvider> = {
@@ -361,6 +465,7 @@ export function mapApiTool(api: ApiTool): AiTool {
     id: api.id,
     name: api.name,
     provider: providerFromVendor(api.vendor, api.pricing_config),
+    billingType: billingTypeFromApi(api.billing_type),
     parentSlug: api.parent_slug ?? null,
     parentLabel: api.parent_label ?? null,
     productLabel: api.product_label ?? null,

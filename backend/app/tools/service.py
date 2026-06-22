@@ -15,12 +15,13 @@ from app.collector.adapters.registry import fetch_provider_members, fetch_provid
 from app.integration.resolve import resolve_tool_polling_context
 from app.collector.service import CollectorService
 from app.core.token_crypto import decrypt_token, encrypt_token, mask_token
-from app.models.admin import Provider, Tool
+from app.models.admin import Provider, Tool, ToolPackage
 from app.models.collector import CollectorConfig, UsageEvent
 from app.tools.catalogue import catalogue_tool_id_from_connected
 from app.settings.builtin_catalog import BUILTIN_CATALOGUE_SLUGS
 from app.settings.parent_repository import ProviderParentRepository
 from app.settings.repository import ProviderRepository
+from app.tools.package_schemas import ToolPackageListResponse, ToolPackageResponse
 from app.tools.pricing import (
     merge_pricing_config,
     normalize_pricing_config,
@@ -81,6 +82,22 @@ class ToolService:
                 self._to_response(row, provider_map=provider_map, parent_map=parent_map)
                 for row in rows
             ],
+            meta=PaginationMeta(has_more=False),
+        )
+
+    async def list_packages(self, tool_id: UUID, organization_id: UUID) -> ToolPackageListResponse:
+        tool = await self._tools.get_by_id(tool_id, organization_id)
+        if tool is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found")
+        catalogue_id = catalogue_tool_id_from_connected(tool) or tool.id
+        result = await self._session.execute(
+            select(ToolPackage)
+            .where(ToolPackage.tool_id == catalogue_id, ToolPackage.is_active.is_(True))
+            .order_by(ToolPackage.package_name.asc())
+        )
+        rows = result.scalars().all()
+        return ToolPackageListResponse(
+            data=[ToolPackageResponse.model_validate(row) for row in rows],
             meta=PaginationMeta(has_more=False),
         )
 
@@ -648,6 +665,7 @@ class ToolService:
             organization_id=tool.organization_id,
             name=tool.name,
             vendor=tool.vendor,
+            billing_type=getattr(tool, "billing_type", None) or "TOKEN_BASED",
             description=tool.description,
             api_endpoint=tool.api_endpoint,
             integration_config=tool.integration_config if isinstance(tool.integration_config, dict) else {},

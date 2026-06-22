@@ -40,7 +40,7 @@ import {
 } from "@/api/credentials";
 import { ApiClientError } from "@/api/client";
 import { fetchToolOptions } from "@/api/tools";
-import { providerRequiresOrganizationId } from "@/api/providers";
+import { providerRequiresGcpMonitoring, providerRequiresOpenAiAdminKey, providerRequiresOrganizationId } from "@/api/providers";
 import { fetchTeams } from "@/api/teams";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
@@ -60,6 +60,8 @@ const createSchema = z.object({
   syncSchedule: z.enum(["hourly", "daily"]),
   apiKey: z.string().min(1, "API key is required"),
   organizationId: z.string().max(100).optional(),
+  gcpProjectId: z.string().max(100).optional(),
+  gcpServiceAccountJson: z.string().max(16384).optional(),
   rotationReminderDays: z.number().int().positive().nullable(),
   expiresAt: z.string().nullable(),
 });
@@ -88,6 +90,8 @@ function defaultFormValues(): CreateFormValues {
     syncSchedule: "hourly",
     apiKey: "",
     organizationId: "",
+    gcpProjectId: "",
+    gcpServiceAccountJson: "",
     rotationReminderDays: null,
     expiresAt: null,
   };
@@ -264,6 +268,10 @@ export function CredentialsPage() {
   );
   const showOrganizationId =
     !isEditMode && providerRequiresOrganizationId(selectedCatalogueTool?.provider ?? "");
+  const showOpenAiAdminKeyHint =
+    !isEditMode && providerRequiresOpenAiAdminKey(selectedCatalogueTool?.provider ?? "");
+  const showGcpMonitoring =
+    !isEditMode && providerRequiresGcpMonitoring(selectedCatalogueTool?.provider ?? "");
 
   const handleCopyCredential = useCallback(async (credentialId: string) => {
     setCopyError(null);
@@ -376,6 +384,10 @@ export function CredentialsPage() {
       catalogueToolId: (data as CreateFormValues).catalogueToolId,
       apiKey: data.apiKey,
       organizationId: showOrganizationId ? data.organizationId?.trim() || null : null,
+      gcpProjectId: showGcpMonitoring ? data.gcpProjectId?.trim() || null : null,
+      gcpServiceAccountJson: showGcpMonitoring
+        ? data.gcpServiceAccountJson?.trim() || null
+        : null,
     });
   };
 
@@ -800,6 +812,39 @@ export function CredentialsPage() {
                 />
               )}
 
+              {showGcpMonitoring && (
+                <>
+                  <TextField
+                    {...register("gcpProjectId")}
+                    fullWidth
+                    label="GCP project ID"
+                    size="small"
+                    placeholder="my-gemini-project"
+                    error={Boolean(errors.gcpProjectId)}
+                    helperText={
+                      errors.gcpProjectId?.message ??
+                      "Google Cloud project linked to your Gemini API key (for token usage sync)."
+                    }
+                    sx={{ mb: 2 }}
+                  />
+                  <TextField
+                    {...register("gcpServiceAccountJson")}
+                    fullWidth
+                    label="GCP service account JSON"
+                    size="small"
+                    multiline
+                    minRows={4}
+                    placeholder='{"type":"service_account",...}'
+                    error={Boolean(errors.gcpServiceAccountJson)}
+                    helperText={
+                      errors.gcpServiceAccountJson?.message ??
+                      "Service account with roles/monitoring.viewer — used to pull token usage from Cloud Monitoring."
+                    }
+                    sx={{ mb: 2 }}
+                  />
+                </>
+              )}
+
               <Controller
                 name="syncSchedule"
                 control={control}
@@ -854,7 +899,11 @@ export function CredentialsPage() {
                     errors.apiKey?.message ??
                     (saveError
                       ? saveError
-                      : "The key is verified with the provider before saving. Usage syncs in the background.")
+                      : showOpenAiAdminKeyHint
+                        ? "Paste an Organization Admin API key (starts with sk-admin-). It is verified against OpenAI organization endpoints before saving."
+                        : showGcpMonitoring
+                          ? "Paste your Gemini API key from Google AI Studio. Add GCP project + service account below to sync historical token usage."
+                          : "The key is verified with the provider before saving. Usage syncs in the background.")
                   }
                   sx={{ mb: 2 }}
                 />

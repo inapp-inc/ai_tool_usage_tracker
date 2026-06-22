@@ -126,8 +126,14 @@ function normalizeFilters(filters?: DashboardFilters): DashboardFilters | undefi
     return undefined;
   }
   return {
-    teamId: filters.teamId && filters.teamId !== ALL_TEAMS ? filters.teamId : undefined,
-    toolId: filters.toolId && filters.toolId !== ALL_TOOLS ? filters.toolId : undefined,
+    teamId:
+      filters.teamId && filters.teamId !== ALL_TEAMS && filters.teamId !== ""
+        ? filters.teamId
+        : undefined,
+    toolId:
+      filters.toolId && filters.toolId !== ALL_TOOLS && filters.toolId !== ""
+        ? filters.toolId
+        : undefined,
   };
 }
 

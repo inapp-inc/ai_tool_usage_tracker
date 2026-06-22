@@ -1,11 +1,16 @@
 """Azure OpenAI provider adapter."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlparse
 
 from app.collector.adapters.base import ProviderSnapshot, ProviderValidationError, UsageRecord
 from app.collector.adapters.http_utils import get_json
+from app.normalization.converters import token_to_usage_record
+from app.normalization.token import map_azure_openai_usage
+
+logger = logging.getLogger(__name__)
 
 
 class AzureOpenAIUsageAdapter:
@@ -80,13 +85,25 @@ class AzureOpenAIUsageAdapter:
     ) -> list[UsageRecord]:
         del api_token, pricing_config
         midpoint = since + (until - since) / 2
-        return [
-            UsageRecord(
-                vendor_event_id=f"azure-stub-{midpoint.date()}",
-                model="gpt-4o",
-                occurred_at=midpoint,
-                input_tokens=9_100,
-                output_tokens=2_400,
-                estimated_cost=Decimal("0.055000"),
-            )
-        ]
+        logger.info(
+            "Azure OpenAI fetch_usage | cost management API not wired yet | since=%s until=%s",
+            since,
+            until,
+        )
+        return []
+
+    @staticmethod
+    def parse_usage_rows(
+        rows: list[dict],
+        *,
+        fallback_at: datetime,
+        deployment: str | None = None,
+    ) -> list[UsageRecord]:
+        records: list[UsageRecord] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            normalized = map_azure_openai_usage(row, fallback_at=fallback_at, deployment=deployment)
+            if normalized is not None:
+                records.append(token_to_usage_record(normalized))
+        return records

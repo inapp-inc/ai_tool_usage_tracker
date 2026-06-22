@@ -10,6 +10,14 @@ import {
   type ToolProvider,
 } from "./tools";
 
+export interface TeamToolPackageBinding {
+  packageId: string | null;
+  subscriptionStart: string | null;
+  subscriptionEnd: string | null;
+  monthlyBudget: number | null;
+  alertThreshold: number | null;
+}
+
 export interface ApiTeamToolAssignment {
   id: string;
   team_id: string;
@@ -24,6 +32,11 @@ export interface ApiTeamToolAssignment {
   overage_price: number | string | null;
   plan_name: string | null;
   pricing_config?: ApiPricingConfig;
+  package_id?: string | null;
+  subscription_start?: string | null;
+  subscription_end?: string | null;
+  monthly_budget?: number | string | null;
+  alert_threshold?: number | string | null;
   created_at: string;
   updated_at: string;
 }
@@ -34,6 +47,7 @@ export interface TeamToolAssignment {
   toolId: string;
   toolName: string;
   pricing: ToolPricing;
+  package: TeamToolPackageBinding;
   createdAt: string;
   updatedAt: string;
 }
@@ -42,6 +56,40 @@ export interface TeamToolAssignBody {
   toolId: string;
   pricing: ToolPricing;
   provider?: ToolProvider;
+  package?: TeamToolPackageBinding;
+}
+
+export function emptyTeamToolPackageBinding(): TeamToolPackageBinding {
+  return {
+    packageId: null,
+    subscriptionStart: null,
+    subscriptionEnd: null,
+    monthlyBudget: null,
+    alertThreshold: null,
+  };
+}
+
+function packageFromApi(api: ApiTeamToolAssignment): TeamToolPackageBinding {
+  return {
+    packageId: api.package_id ?? null,
+    subscriptionStart: api.subscription_start ?? null,
+    subscriptionEnd: api.subscription_end ?? null,
+    monthlyBudget: toNullableNumber(api.monthly_budget),
+    alertThreshold: toNullableNumber(api.alert_threshold),
+  };
+}
+
+function packageToApiFields(
+  binding: TeamToolPackageBinding | undefined,
+): Record<string, unknown> {
+  const pkg = binding ?? emptyTeamToolPackageBinding();
+  return {
+    package_id: pkg.packageId,
+    subscription_start: pkg.subscriptionStart || null,
+    subscription_end: pkg.subscriptionEnd || null,
+    monthly_budget: pkg.monthlyBudget,
+    alert_threshold: pkg.alertThreshold,
+  };
 }
 
 function inferPricingModel(apiModel: string | null): PricingModel {
@@ -83,6 +131,7 @@ export function mapApiTeamToolAssignment(api: ApiTeamToolAssignment): TeamToolAs
     toolId: api.tool_id,
     toolName: api.tool_name,
     pricing: pricingFromTeamToolAssignment(api),
+    package: packageFromApi(api),
     createdAt: api.created_at,
     updatedAt: api.updated_at,
   };
@@ -107,6 +156,7 @@ export function toTeamToolAssignApiBody(
     overage_price: fields.overage_price,
     plan_name: config.plan_name ?? null,
     pricing_config: config,
+    ...packageToApiFields(body.package),
   };
 }
 

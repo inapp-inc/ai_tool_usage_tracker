@@ -14,6 +14,11 @@ export interface ApiTokenUsageWidget {
   input_tokens: number;
   output_tokens: number;
   total_tokens: number;
+  cache_write_tokens?: number;
+  cache_read_tokens?: number;
+  included_tokens?: number | null;
+  billable_tokens?: number | null;
+  breakdown_available?: boolean;
   last_updated_at: string;
 }
 
@@ -22,6 +27,11 @@ export interface ApiCostOverviewWidget {
   package_allowance: number;
   allowance_consumed_pct?: number | null;
   overage_cost: number;
+  included_tokens?: number | null;
+  billable_tokens?: number | null;
+  included_cost?: number | null;
+  billable_cost?: number | null;
+  breakdown_available?: boolean;
   last_updated_at: string;
 }
 
@@ -120,6 +130,18 @@ export function buildDashboardStats(
     costDelta: deltas.cost_delta,
     toolsDelta: deltas.tools_delta,
     teamsDelta: deltas.teams_delta,
+    breakdownAvailable: Boolean(tokens.breakdown_available ?? cost.breakdown_available),
+    includedTokens: tokens.included_tokens ?? undefined,
+    billableTokens: tokens.billable_tokens ?? undefined,
+    inputTokens: inputTokens,
+    outputTokens: outputTokens,
+    cacheWriteTokens: tokens.cache_write_tokens ?? 0,
+    cacheReadTokens: tokens.cache_read_tokens ?? 0,
+    includedCost: cost.included_cost != null ? Number(cost.included_cost) : undefined,
+    billableCost: cost.billable_cost != null ? Number(cost.billable_cost) : undefined,
+    packageAllowance: Number(cost.package_allowance),
+    allowanceConsumedPct: cost.allowance_consumed_pct ?? null,
+    overageCost: Number(cost.overage_cost),
   };
 }
 

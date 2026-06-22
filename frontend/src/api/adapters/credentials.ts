@@ -80,6 +80,8 @@ export function toCredentialCreateBody(body: CreateCredentialRequest): {
   team_id: string;
   secret_value: string;
   organization_id?: string | null;
+  gcp_project_id?: string | null;
+  gcp_service_account_json?: string | null;
   pull_interval_minutes: number;
   rotation_reminder_days: number | null;
   expires_at: string | null;
@@ -92,6 +94,10 @@ export function toCredentialCreateBody(body: CreateCredentialRequest): {
     secret_value: body.apiKey,
     ...(body.organizationId?.trim()
       ? { organization_id: body.organizationId.trim() }
+      : {}),
+    ...(body.gcpProjectId?.trim() ? { gcp_project_id: body.gcpProjectId.trim() } : {}),
+    ...(body.gcpServiceAccountJson?.trim()
+      ? { gcp_service_account_json: body.gcpServiceAccountJson.trim() }
       : {}),
     pull_interval_minutes: SYNC_SCHEDULE_MINUTES[body.syncSchedule],
     rotation_reminder_days: body.rotationReminderDays,

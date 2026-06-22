@@ -21,6 +21,11 @@ class TokenUsageWidget(BaseModel):
     input_tokens: int
     output_tokens: int
     total_tokens: int
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
+    included_tokens: int | None = None
+    billable_tokens: int | None = None
+    breakdown_available: bool = False
     last_updated_at: datetime
 
 
@@ -29,6 +34,11 @@ class CostOverviewWidget(BaseModel):
     package_allowance: Decimal
     allowance_consumed_pct: float | None = None
     overage_cost: Decimal
+    included_tokens: int | None = None
+    billable_tokens: int | None = None
+    included_cost: Decimal | None = None
+    billable_cost: Decimal | None = None
+    breakdown_available: bool = False
     last_updated_at: datetime
 
 

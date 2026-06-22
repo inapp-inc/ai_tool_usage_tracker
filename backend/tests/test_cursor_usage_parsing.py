@@ -39,6 +39,9 @@ def test_parse_cursor_usage_page_separate_token_fields() -> None:
     assert record.estimated_cost == Decimal("0.2136")
     assert record.user_email == "dev@acme.example"
     assert record.model == "claude-4.5-sonnet"
+    assert record.included_in_plan is False
+    assert record.cursor_kind is None
+    assert record.reference_cost is None
 
 
 def test_parse_cursor_usage_page_included_in_business_has_zero_cost() -> None:
@@ -77,6 +80,9 @@ def test_parse_cursor_usage_page_included_in_business_has_zero_cost() -> None:
     assert record.total_tokens == 401302
     assert record.estimated_cost == Decimal("0")
     assert record.user_email == "rohith.sk@inapp.com"
+    assert record.included_in_plan is True
+    assert record.cursor_kind == "Included in Business"
+    assert record.reference_cost == Decimal("0.31781")
 
 
 def test_cursor_estimated_cost_included_kind_is_zero() -> None:
@@ -85,7 +91,25 @@ def test_cursor_estimated_cost_included_kind_is_zero() -> None:
     assert _cursor_estimated_cost(event, token_usage) == Decimal("0")
 
 
-def test_cursor_estimated_cost_non_included_uses_charged_cents_only() -> None:
-    event = {"kind": "Usage-based", "chargedCents": 14.68865}
-    token_usage = {"totalCents": 31.781}
-    assert _cursor_estimated_cost(event, token_usage) == Decimal("0.1468865")
+def test_parse_cursor_usage_page_usage_based_kind() -> None:
+    payload = {
+        "usageEvents": [
+            {
+                "timestamp": "1781804248151",
+                "model": "default",
+                "kind": "Usage-based",
+                "chargedCents": 14.68865,
+                "tokenUsage": {
+                    "inputTokens": 100,
+                    "outputTokens": 50,
+                },
+            }
+        ],
+        "pagination": {"hasNextPage": False},
+    }
+    records, _ = parse_cursor_usage_page(payload)
+    record = records[0]
+    assert record.included_in_plan is False
+    assert record.cursor_kind == "Usage-based"
+    assert record.estimated_cost == Decimal("0.1468865")
+    assert record.reference_cost is None

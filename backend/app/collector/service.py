@@ -11,7 +11,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collector.adapters.base import ProviderValidationError
+from app.collector.adapters.copilot_dump import create_copilot_pull_dumper
 from app.collector.adapters.cursor_dump import create_cursor_pull_dumper
+from app.collector.adapters.openai_dump import create_openai_pull_dumper
 from app.collector.adapters.registry import fetch_provider_usage, validate_provider_api_key
 from app.config import get_settings
 from app.integration.resolve import resolve_tool_polling_context
@@ -26,6 +28,7 @@ from app.collector.schemas import (
 from app.core.token_crypto import decrypt_token, encrypt_token, mask_token
 from app.models.admin import Team, Tool
 from app.models.collector import CollectorConfig, CollectorRun, UsageEvent
+from app.teams.team_tool_repository import TeamToolRepository
 from app.tools.catalogue import catalogue_tool_id_from_connected, team_id_from_connected
 
 
@@ -54,6 +57,7 @@ class CollectorService:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+        self._team_tools = TeamToolRepository(session)
 
     async def list_collectors(self) -> list[CollectorResponse]:
         result = await self._session.execute(
@@ -166,6 +170,8 @@ class CollectorService:
             until = until or datetime.now(UTC)
             since = since or (until - timedelta(minutes=config.pull_interval_minutes))
             pull_dumper = None
+            copilot_pull_dumper = None
+            openai_pull_dumper = None
             if config.provider == "cursor":
                 settings = get_settings()
                 pull_dumper = create_cursor_pull_dumper(
@@ -175,25 +181,77 @@ class CollectorService:
                     since=since,
                     until=until,
                 )
-
-            records = await self._pull_usage(
-                config,
-                since=since,
-                until=until,
-                cursor_pull_dumper=pull_dumper,
-            )
-            ingested, skipped_duplicates = await self._persist_records(config, records)
-
-            if pull_dumper is not None:
-                pull_dumper.add_parsed_records(records)
-                pull_dumper.write_parsed_records()
-                pull_dumper.write_summary(
-                    pulled=len(records),
-                    ingested=ingested,
-                    skipped_duplicates=skipped_duplicates,
+            elif config.provider == "copilot":
+                settings = get_settings()
+                copilot_pull_dumper = create_copilot_pull_dumper(
+                    enabled=settings.copilot_pull_dump_enabled,
+                    storage_root=settings.local_storage_root,
+                    tool_id=config.tool_id,
                     since=since,
                     until=until,
                 )
+            elif config.provider == "openai":
+                settings = get_settings()
+                openai_pull_dumper = create_openai_pull_dumper(
+                    enabled=settings.openai_pull_dump_enabled,
+                    storage_root=settings.local_storage_root,
+                    tool_id=config.tool_id,
+                    since=since,
+                    until=until,
+                )
+
+            if config.provider == "copilot":
+                sync_result, records = await self._sync_copilot_productivity(
+                    config,
+                    since=since,
+                    until=until,
+                    copilot_pull_dumper=copilot_pull_dumper,
+                )
+                ingested = sync_result.user_rows + sync_result.seat_rows
+                skipped_duplicates = 0
+                ingested_vendor_ids: list[str] = []
+                skipped_duplicate_vendor_ids: list[str] = []
+            else:
+                records = await self._pull_usage(
+                    config,
+                    since=since,
+                    until=until,
+                    cursor_pull_dumper=pull_dumper,
+                    copilot_pull_dumper=copilot_pull_dumper,
+                    openai_pull_dumper=openai_pull_dumper,
+                )
+                ingested, skipped_duplicates, ingested_vendor_ids, skipped_duplicate_vendor_ids = (
+                    await self._persist_records(config, records)
+                )
+
+            active_dumper = pull_dumper or copilot_pull_dumper or openai_pull_dumper
+            if active_dumper is not None:
+                active_dumper.add_parsed_records(records)
+                active_dumper.write_parsed_records()
+                if copilot_pull_dumper is not None:
+                    copilot_pull_dumper.set_ingest_audit(
+                        ingested_vendor_ids=ingested_vendor_ids,
+                        skipped_duplicate_vendor_ids=skipped_duplicate_vendor_ids,
+                    )
+                write_summary = active_dumper.write_summary
+                if openai_pull_dumper is not None:
+                    write_summary(
+                        pulled=len(records),
+                        ingested=ingested,
+                        skipped_duplicates=skipped_duplicates,
+                        since=since,
+                        until=until,
+                        ingested_vendor_ids=ingested_vendor_ids,
+                        skipped_duplicate_vendor_ids=skipped_duplicate_vendor_ids,
+                    )
+                else:
+                    write_summary(
+                        pulled=len(records),
+                        ingested=ingested,
+                        skipped_duplicates=skipped_duplicates,
+                        since=since,
+                        until=until,
+                    )
 
             run.status = "completed"
             run.records_ingested = ingested
@@ -240,6 +298,8 @@ class CollectorService:
         since: datetime | None = None,
         until: datetime | None = None,
         cursor_pull_dumper=None,
+        copilot_pull_dumper=None,
+        openai_pull_dumper=None,
     ):
         token = decrypt_token(config.api_token_ciphertext)
         until = until or datetime.now(UTC)
@@ -263,9 +323,92 @@ class CollectorService:
             api_endpoint=api_endpoint,
             integration_config=integration_config,
             cursor_pull_dumper=cursor_pull_dumper,
+            copilot_pull_dumper=copilot_pull_dumper,
+            openai_pull_dumper=openai_pull_dumper,
         )
 
-    async def _persist_records(self, config: CollectorConfig, records) -> tuple[int, int]:
+    async def _sync_copilot_productivity(
+        self,
+        config: CollectorConfig,
+        *,
+        since: datetime,
+        until: datetime,
+        copilot_pull_dumper=None,
+    ):
+        from app.collector.adapters.copilot import CopilotUsageAdapter
+        from app.collector.adapters.copilot_merge import merge_copilot_records
+        from app.collector.adapters.copilot_parsing import parse_copilot_user_day
+        from app.copilot.ingest import CopilotIngestService, resolve_copilot_seat_price
+
+        token = decrypt_token(config.api_token_ciphertext)
+        until = until or datetime.now(UTC)
+        since = since or (until - timedelta(minutes=config.pull_interval_minutes))
+
+        tool = await self._session.get(Tool, config.tool_id) if config.tool_id else None
+        pricing_config, api_endpoint, _integration_config = await resolve_tool_polling_context(
+            self._session,
+            tool,
+        )
+        team_id = await self._resolve_team_id_for_tool(tool) if tool else None
+        if team_id is None:
+            raise ProviderValidationError("Copilot sync requires a team-linked tool credential.")
+
+        assignment = None
+        catalogue_tool_id = tool.id if tool else None
+        if tool is not None:
+            catalogue_id = catalogue_tool_id_from_connected(tool)
+            if catalogue_id is not None:
+                catalogue_tool_id = catalogue_id
+            assignment = await self._team_tools.get_by_team_and_tool(team_id, catalogue_tool_id)
+
+        adapter = CopilotUsageAdapter()
+        pull = await adapter.fetch_productivity_pull(
+            token,
+            since=since,
+            until=until,
+            pricing_config=pricing_config,
+            copilot_pull_dumper=copilot_pull_dumper,
+        )
+        seat_price = await resolve_copilot_seat_price(
+            self._session,
+            tool=tool,
+            team_tool_assignment=assignment,
+        )
+        subscription_type = None
+        if assignment and assignment.package_id:
+            from app.models.admin import ToolPackage
+
+            package = await self._session.get(ToolPackage, assignment.package_id)
+            if package:
+                subscription_type = package.package_name
+
+        ingest = CopilotIngestService(self._session)
+        sync_result = await ingest.sync_from_pull(
+            team_id=team_id,
+            tool_id=catalogue_tool_id,
+            github_org_id=pull.github_org_id,
+            seat_price=seat_price,
+            subscription_type=subscription_type,
+            user_metric_rows=pull.user_metric_rows,
+            org_metric_rows=pull.org_metric_rows,
+            seat_payloads=pull.seats,
+            sync_until=until,
+        )
+
+        metrics_records = []
+        for row in pull.user_metric_rows:
+            if isinstance(row, dict):
+                parsed = parse_copilot_user_day(row)
+                if parsed is not None:
+                    metrics_records.append(parsed)
+        records = merge_copilot_records(metrics_records, pull.seats, fallback_at=until)
+        return sync_result, records
+
+    async def _persist_records(
+        self,
+        config: CollectorConfig,
+        records,
+    ) -> tuple[int, int, list[str], list[str]]:
         organization_id = None
         team_id = None
         tool_id = config.tool_id
@@ -291,9 +434,12 @@ class CollectorService:
 
         ingested = 0
         skipped_duplicates = 0
+        ingested_vendor_ids: list[str] = []
+        skipped_duplicate_vendor_ids: list[str] = []
         for record in records:
             if record.vendor_event_id and record.vendor_event_id in existing_ids:
                 skipped_duplicates += 1
+                skipped_duplicate_vendor_ids.append(record.vendor_event_id)
                 continue
 
             stmt = (
@@ -312,6 +458,10 @@ class CollectorService:
                     cache_read_tokens=record.cache_read_tokens,
                     total_tokens=record.total_tokens,
                     estimated_cost=record.estimated_cost,
+                    requests=getattr(record, "requests", 0),
+                    included_in_plan=getattr(record, "included_in_plan", False),
+                    cursor_kind=getattr(record, "cursor_kind", None),
+                    reference_cost=getattr(record, "reference_cost", None),
                     vendor_event_id=record.vendor_event_id,
                     user_email=getattr(record, "user_email", None),
                     user_name=getattr(record, "user_name", None),
@@ -326,9 +476,11 @@ class CollectorService:
                 ingested += 1
                 if record.vendor_event_id:
                     existing_ids.add(record.vendor_event_id)
+                    ingested_vendor_ids.append(record.vendor_event_id)
             elif record.vendor_event_id:
                 skipped_duplicates += 1
-        return ingested, skipped_duplicates
+                skipped_duplicate_vendor_ids.append(record.vendor_event_id)
+        return ingested, skipped_duplicates, ingested_vendor_ids, skipped_duplicate_vendor_ids
 
     async def _organization_id_for_collector(self, config: CollectorConfig) -> UUID | None:
         if config.tool_id is None:

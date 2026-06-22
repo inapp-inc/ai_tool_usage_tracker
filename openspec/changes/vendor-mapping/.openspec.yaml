@@ -1,0 +1,3 @@
+name: vendor-mapping
+status: implemented
+description: Normalized vendor API mapping for token, productivity, and license tools (Cursor unchanged)

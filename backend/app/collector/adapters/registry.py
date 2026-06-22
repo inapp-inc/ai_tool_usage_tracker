@@ -101,6 +101,8 @@ async def fetch_provider_usage(
     api_endpoint: str | None = None,
     integration_config: dict | None = None,
     cursor_pull_dumper: object | None = None,
+    copilot_pull_dumper: object | None = None,
+    openai_pull_dumper: object | None = None,
 ) -> list[UsageRecord]:
     """Poll usage — config engine first when integration_config.usage is set (any provider)."""
     merged_config = _merge_adapter_config(
@@ -129,6 +131,10 @@ async def fetch_provider_usage(
     extra_kwargs: dict[str, object] = {}
     if cursor_pull_dumper is not None:
         extra_kwargs["cursor_pull_dumper"] = cursor_pull_dumper
+    if copilot_pull_dumper is not None:
+        extra_kwargs["copilot_pull_dumper"] = copilot_pull_dumper
+    if openai_pull_dumper is not None:
+        extra_kwargs["openai_pull_dumper"] = openai_pull_dumper
     try:
         return await adapter.fetch_usage(
             api_token,

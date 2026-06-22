@@ -33,6 +33,7 @@ from app.tools.pricing import (
     organization_id_from_pricing,
     validate_organization_id,
     vendor_requires_api_endpoint,
+    vendor_requires_gcp_monitoring,
     vendor_requires_organization_id,
 )
 from app.tools.catalogue import catalogue_tool_id_from_connected, team_id_from_connected
@@ -155,6 +156,21 @@ class CredentialService:
         pricing_config.setdefault("provider_slug", catalogue_tool.vendor)
         if body.organization_id and vendor_requires_organization_id(catalogue_tool.vendor):
             pricing_config["organization_id"] = validate_organization_id(body.organization_id)
+        if vendor_requires_gcp_monitoring(catalogue_tool.vendor):
+            gcp_project = str(body.gcp_project_id or "").strip()
+            gcp_sa = str(body.gcp_service_account_json or "").strip()
+            if gcp_project:
+                pricing_config["gcp_project_id"] = gcp_project
+            if gcp_sa:
+                from app.collector.adapters.google_gcp_auth import parse_service_account_json
+
+                try:
+                    pricing_config["gcp_service_account_json"] = parse_service_account_json(gcp_sa)
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=str(exc),
+                    ) from exc
 
         tool = await self._tools.create(
             organization_id=organization_id,

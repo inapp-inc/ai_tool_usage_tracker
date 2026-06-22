@@ -1,10 +1,10 @@
 """Admin ORM models."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func, text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -82,6 +82,53 @@ class TeamTool(Base):
     pricing_config: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
+    package_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("admin.tool_packages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    subscription_start: Mapped[date | None] = mapped_column(Date)
+    subscription_end: Mapped[date | None] = mapped_column(Date)
+    monthly_budget: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    alert_threshold: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class ToolPackage(Base):
+    """Predefined subscription package for a catalogue tool (admin.tool_packages)."""
+
+    __tablename__ = "tool_packages"
+    __table_args__ = (
+        UniqueConstraint("tool_id", "package_name", name="uq_tool_packages_tool_name"),
+        {"schema": "admin"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tool_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("admin.tools.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    package_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    billing_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    monthly_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    yearly_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    seat_limit: Mapped[int | None] = mapped_column(Integer)
+    token_limit: Mapped[int | None] = mapped_column(BigInteger)
+    request_limit: Mapped[int | None] = mapped_column(BigInteger)
+    credit_limit: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -197,6 +244,7 @@ class Tool(Base):
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     vendor: Mapped[str] = mapped_column(String(64), nullable=False)
+    billing_type: Mapped[str] = mapped_column(String(32), nullable=False, default="TOKEN_BASED")
     description: Mapped[str | None] = mapped_column(String(500))
     pricing_model: Mapped[str] = mapped_column(String(32), nullable=False)
     token_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))

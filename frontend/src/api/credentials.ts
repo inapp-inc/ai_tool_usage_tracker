@@ -39,6 +39,8 @@ export interface CreateCredentialRequest {
   teamId: string;
   apiKey: string;
   organizationId?: string | null;
+  gcpProjectId?: string | null;
+  gcpServiceAccountJson?: string | null;
   syncSchedule: SyncSchedule;
   rotationReminderDays: number | null;
   expiresAt: string | null;

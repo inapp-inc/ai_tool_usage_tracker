@@ -1,10 +1,15 @@
 """Anthropic provider adapter."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from app.collector.adapters.base import ProviderSnapshot, ProviderValidationError, UsageRecord
 from app.collector.adapters.http_utils import get_json
+from app.normalization.converters import token_to_usage_record
+from app.normalization.token import map_anthropic_usage
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicUsageAdapter:
@@ -58,14 +63,21 @@ class AnthropicUsageAdapter:
         until: datetime,
     ) -> list[UsageRecord]:
         del api_token
-        midpoint = since + (until - since) / 2
-        return [
-            UsageRecord(
-                vendor_event_id=f"anthropic-stub-{midpoint.date()}",
-                model="claude-3-5-sonnet",
-                occurred_at=midpoint,
-                input_tokens=8_400,
-                output_tokens=2_100,
-                estimated_cost=Decimal("0.067800"),
-            )
-        ]
+        # Anthropic admin usage API is org-specific; parse normalized rows when payload is supplied.
+        logger.info(
+            "Anthropic fetch_usage | no org usage API wired yet | since=%s until=%s",
+            since,
+            until,
+        )
+        return []
+
+    @staticmethod
+    def parse_usage_rows(rows: list[dict], *, fallback_at: datetime) -> list[UsageRecord]:
+        records: list[UsageRecord] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            normalized = map_anthropic_usage(row, fallback_at=fallback_at)
+            if normalized is not None:
+                records.append(token_to_usage_record(normalized))
+        return records

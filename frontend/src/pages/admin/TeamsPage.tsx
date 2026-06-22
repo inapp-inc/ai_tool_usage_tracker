@@ -25,7 +25,8 @@ import { Link as RouterLink } from "react-router-dom";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
-import { emptyTeamToolPricing } from "@/api/adapters/teamTools";
+import { emptyTeamToolPackageBinding, emptyTeamToolPricing } from "@/api/adapters/teamTools";
+import type { TeamToolPackageBinding } from "@/api/adapters/teamTools";
 import type { ToolPricing, ToolProvider } from "@/api/adapters/tools";
 import { fetchTools } from "@/api/tools";
 import { syncTeamToolAssignments, fetchTeamTools } from "@/api/teamTools";
@@ -35,6 +36,7 @@ import { StatusBadge } from "@/components/data-display/StatusBadge";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
+import { TeamToolPackageSelector } from "@/components/teams/TeamToolPackageSelector";
 import { TeamToolDetailSlideOver } from "@/components/teams/TeamToolDetailSlideOver";
 import { ToolPricingFields } from "@/components/tools/ToolPricingFields";
 import { Role } from "@/types";
@@ -158,6 +160,7 @@ export function TeamsPage() {
   });
   const [deleteTarget, setDeleteTarget] = useState<Team | null>(null);
   const [toolPricingById, setToolPricingById] = useState<Record<string, ToolPricing>>({});
+  const [toolPackageById, setToolPackageById] = useState<Record<string, TeamToolPackageBinding>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
   const [syncingTeamId, setSyncingTeamId] = useState<string | null>(null);
@@ -243,6 +246,7 @@ export function TeamsPage() {
   useEffect(() => {
     if (!slideOver.open) {
       setToolPricingById({});
+      setToolPackageById({});
       setSaveError(null);
       return;
     }
@@ -260,15 +264,21 @@ export function TeamsPage() {
       void fetchTeamTools(slideOver.team.id)
         .then((rows) => {
           const pricing: Record<string, ToolPricing> = {};
+          const packages: Record<string, TeamToolPackageBinding> = {};
           for (const row of rows) {
             pricing[row.toolId] = row.pricing;
+            packages[row.toolId] = row.package;
           }
           for (const toolId of slideOver.team!.toolIds) {
             if (!pricing[toolId]) {
               pricing[toolId] = emptyTeamToolPricing();
             }
+            if (!packages[toolId]) {
+              packages[toolId] = emptyTeamToolPackageBinding();
+            }
           }
           setToolPricingById(pricing);
+          setToolPackageById(packages);
         })
         .finally(() => setAssignmentsLoading(false));
       return;
@@ -282,6 +292,7 @@ export function TeamsPage() {
       toolIds: [],
     });
     setToolPricingById({});
+    setToolPackageById({});
   }, [reset, slideOver.open, slideOver.team?.id]);
 
   const handleToolClick = useCallback((team: Team, toolId: string, toolName: string) => {
@@ -489,6 +500,7 @@ export function TeamsPage() {
     const assignments = data.toolIds.map((toolId) => ({
       toolId,
       pricing: toolPricingById[toolId] ?? emptyTeamToolPricing(),
+      package: toolPackageById[toolId] ?? emptyTeamToolPackageBinding(),
       provider: providerByToolId.get(toolId) ?? "custom",
     }));
 
@@ -669,6 +681,15 @@ export function TeamsPage() {
                             }
                             return next;
                           });
+                          setToolPackageById((previous) => {
+                            const next = { ...previous };
+                            for (const toolId of nextIds) {
+                              if (!next[toolId]) {
+                                next[toolId] = emptyTeamToolPackageBinding();
+                              }
+                            }
+                            return next;
+                          });
                         }}
                         renderValue={(selected) => {
                           const names = (selected as string[])
@@ -729,6 +750,24 @@ export function TeamsPage() {
                       </Typography>
                     </AccordionSummary>
                     <AccordionDetails>
+                      <TeamToolPackageSelector
+                        toolId={toolId}
+                        value={toolPackageById[toolId] ?? emptyTeamToolPackageBinding()}
+                        pricing={toolPricingById[toolId] ?? emptyTeamToolPricing()}
+                        onChange={(pkg) =>
+                          setToolPackageById((previous) => ({
+                            ...previous,
+                            [toolId]: pkg,
+                          }))
+                        }
+                        onPricingChange={(pricing) =>
+                          setToolPricingById((previous) => ({
+                            ...previous,
+                            [toolId]: pricing,
+                          }))
+                        }
+                        disabled={assignmentsLoading || savePending}
+                      />
                       <ToolPricingFields
                         value={toolPricingById[toolId] ?? emptyTeamToolPricing()}
                         onChange={(pricing) =>

@@ -87,6 +87,40 @@ export async function fetchCursorPullRuns(): Promise<CursorPullRunList> {
   };
 }
 
+export async function fetchCopilotPullRuns(): Promise<CursorPullRunList> {
+  const response = await apiFetch("/files/copilot-pulls");
+  if (!response.ok) {
+    const message =
+      response.status === 401
+        ? "Session expired. Please sign in again."
+        : `Failed to load Copilot verification files (${response.status}).`;
+    throw new Error(message);
+  }
+  const payload = (await response.json()) as ApiCursorPullRunListResponse;
+  return {
+    storageRoot: payload.storage_root,
+    cursorPullsDir: payload.cursor_pulls_dir,
+    runs: payload.data.map(mapRun),
+  };
+}
+
+export async function fetchOpenaiPullRuns(): Promise<CursorPullRunList> {
+  const response = await apiFetch("/files/openai-pulls");
+  if (!response.ok) {
+    const message =
+      response.status === 401
+        ? "Session expired. Please sign in again."
+        : `Failed to load OpenAI verification files (${response.status}).`;
+    throw new Error(message);
+  }
+  const payload = (await response.json()) as ApiCursorPullRunListResponse;
+  return {
+    storageRoot: payload.storage_root,
+    cursorPullsDir: payload.cursor_pulls_dir,
+    runs: payload.data.map(mapRun),
+  };
+}
+
 export async function downloadCursorPullFile(downloadPath: string, filename: string): Promise<void> {
   const response = await apiFetch(downloadPath);
   if (!response.ok) {
@@ -107,6 +141,8 @@ export function absoluteDownloadUrl(downloadPath: string): string {
 
 export const filesApi = {
   fetchCursorPullRuns,
+  fetchCopilotPullRuns,
+  fetchOpenaiPullRuns,
   downloadCursorPullFile,
   absoluteDownloadUrl,
 };

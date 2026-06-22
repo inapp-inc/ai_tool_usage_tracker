@@ -8,6 +8,7 @@ from app.auth.router import router as auth_router
 from app.collector.router import router as collectors_router
 from app.config import get_settings
 from app.connectivity import verify_connectivity
+from app.copilot.router import router as copilot_router
 from app.credentials.router import router as credentials_router
 from app.dashboard.router import router as dashboard_router
 from app.files.router import router as files_router
@@ -33,6 +34,7 @@ router.include_router(tools_router)
 router.include_router(users_router)
 router.include_router(members_router)
 router.include_router(credentials_router)
+router.include_router(copilot_router)
 router.include_router(settings_router)
 router.include_router(dashboard_router)
 router.include_router(files_router)

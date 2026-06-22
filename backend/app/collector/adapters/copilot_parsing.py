@@ -7,7 +7,13 @@ from decimal import Decimal
 from typing import Any
 
 from app.collector.adapters.base import ProviderMember, UsageRecord
-from app.integration.numbers import parse_compact_int
+from app.collector.adapters.copilot_metrics_fields import (
+    COPILOT_USED_FLAGS,
+    feature_flags_from_row,
+    has_usage_signal,
+    tokens_from_user_day,
+    user_login_from_row,
+)
 
 
 def _parse_iso_datetime(value: object) -> datetime | None:
@@ -21,33 +27,6 @@ def _parse_iso_datetime(value: object) -> datetime | None:
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     except ValueError:
         return None
-
-
-def _int_field(row: dict[str, Any], key: str) -> int:
-    return parse_compact_int(row.get(key), default=0)
-
-
-def _tokens_from_user_day(row: dict[str, Any]) -> tuple[int, int]:
-    input_tokens = 0
-    output_tokens = 0
-
-    cli = row.get("totals_by_cli")
-    if isinstance(cli, dict):
-        token_usage = cli.get("token_usage")
-        if isinstance(token_usage, dict):
-            input_tokens += _int_field(token_usage, "prompt_tokens_sum")
-            output_tokens += _int_field(token_usage, "output_tokens_sum")
-
-    if input_tokens + output_tokens == 0:
-        input_tokens = (
-            _int_field(row, "loc_added_sum")
-            + _int_field(row, "loc_deleted_sum")
-            + _int_field(row, "code_generation_activity_count")
-            + _int_field(row, "code_acceptance_activity_count")
-            + _int_field(row, "user_initiated_interaction_count")
-        )
-
-    return max(input_tokens, 0), max(output_tokens, 0)
 
 
 def parse_copilot_seat(seat: dict[str, Any], *, fallback_at: datetime) -> UsageRecord | None:
@@ -83,12 +62,11 @@ def parse_copilot_seat(seat: dict[str, Any], *, fallback_at: datetime) -> UsageR
 
 
 def parse_copilot_user_day(row: dict[str, Any]) -> UsageRecord | None:
-    login = row.get("user_login")
-    if not isinstance(login, str) or not login.strip():
+    login = user_login_from_row(row)
+    if login is None:
         return None
-    login = login.strip()
 
-    day = row.get("day")
+    day = row.get("day") or row.get("report_day")
     if isinstance(day, str) and day.strip():
         try:
             occurred_at = datetime.fromisoformat(day.strip()).replace(tzinfo=UTC)
@@ -97,23 +75,15 @@ def parse_copilot_user_day(row: dict[str, Any]) -> UsageRecord | None:
     else:
         occurred_at = datetime.now(UTC)
 
-    input_tokens, output_tokens = _tokens_from_user_day(row)
-    if input_tokens + output_tokens <= 0 and not any(
-        row.get(flag) for flag in ("used_chat", "used_cli", "used_agent")
-    ):
+    input_tokens, output_tokens, _rule = tokens_from_user_day(row)
+    if not has_usage_signal(row):
         return None
 
     day_key = occurred_at.strftime("%Y-%m-%d")
     user_id = row.get("user_id", login)
     vendor_event_id = f"copilot-user-{user_id}-{day_key}"
 
-    features: list[str] = []
-    if row.get("used_chat"):
-        features.append("chat")
-    if row.get("used_cli"):
-        features.append("cli")
-    if row.get("used_agent"):
-        features.append("agent")
+    features = feature_flags_from_row(row)
     model = "+".join(features) if features else "copilot"
 
     return UsageRecord(
@@ -144,3 +114,23 @@ def parse_copilot_seat_members(seats: list[dict[str, Any]]) -> list[ProviderMemb
         members.append(ProviderMember(email=login, name=login))
     members.sort(key=lambda row: row.email.lower())
     return members
+
+
+def seat_to_synthetic_user_day(seat: dict[str, Any], *, fallback_day: str) -> dict[str, Any]:
+    """Build a user-metrics-shaped row from seat API data when metrics NDJSON is unavailable."""
+    assignee = seat.get("assignee") if isinstance(seat.get("assignee"), dict) else {}
+    login = assignee.get("login")
+    activity_at = seat.get("last_activity_at")
+    day = fallback_day
+    if isinstance(activity_at, str) and "T" in activity_at:
+        day = activity_at.split("T", 1)[0]
+    return {
+        "user_login": login,
+        "day": day,
+        "used_chat": bool(activity_at),
+        "loc_added_sum": 1 if activity_at else 0,
+        "code_generation_activity_count": 1 if activity_at else 0,
+        "_synthetic_from_seat": True,
+        "_seat_plan_type": seat.get("plan_type"),
+        "_seat_last_activity_editor": seat.get("last_activity_editor"),
+    }

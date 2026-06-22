@@ -16,6 +16,8 @@ from app.settings.builtin_catalog import (
     COPILOT_DEFAULT_API_ENDPOINT,
     COPILOT_INTEGRATION_CONFIG,
 )
+from app.tools.billing_types import billing_type_for_vendor
+from app.tools.package_seed import sync_packages_for_catalogue_tool
 from app.tools.pricing import normalize_pricing_config
 
 
@@ -64,6 +66,7 @@ async def sync_org_builtin_catalogue_tools(
                     organization_id=organization_id,
                     name=product.label,
                     vendor=product.slug,
+                    billing_type=billing_type_for_vendor(product.slug),
                     description=product.description,
                     api_endpoint=COPILOT_DEFAULT_API_ENDPOINT if product.slug == "copilot" else None,
                     integration_config=dict(COPILOT_INTEGRATION_CONFIG)
@@ -81,6 +84,17 @@ async def sync_org_builtin_catalogue_tools(
                     built_in=True,
                 )
             )
+            await session.flush()
+            result = await session.execute(
+                select(Tool).where(
+                    Tool.organization_id == organization_id,
+                    Tool.catalogue_only.is_(True),
+                    Tool.vendor == product.slug,
+                )
+            )
+            created = result.scalars().first()
+            if created is not None:
+                await sync_packages_for_catalogue_tool(session, created)
             continue
 
         canonical = _pick_canonical_catalogue_row(existing_rows)
@@ -90,6 +104,7 @@ async def sync_org_builtin_catalogue_tools(
         canonical.catalogue_only = True
         canonical.active = True
         canonical.name = product.label
+        canonical.billing_type = billing_type_for_vendor(product.slug)
         if product.description:
             canonical.description = product.description
         if product.slug == "copilot":
@@ -98,6 +113,8 @@ async def sync_org_builtin_catalogue_tools(
                 "usage"
             ):
                 canonical.integration_config = dict(COPILOT_INTEGRATION_CONFIG)
+
+        await sync_packages_for_catalogue_tool(session, canonical)
 
 
 async def sync_all_org_builtin_catalogue_tools(session: AsyncSession) -> None:

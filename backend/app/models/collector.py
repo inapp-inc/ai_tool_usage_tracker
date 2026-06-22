@@ -153,11 +153,15 @@ class UsageEvent(Base):
     cache_write_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     cache_read_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     total_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     estimated_cost: Mapped[Decimal] = mapped_column(
         Numeric(18, 6),
         nullable=False,
         default=Decimal("0"),
     )
+    included_in_plan: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cursor_kind: Mapped[str | None] = mapped_column(String(128))
+    reference_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     vendor_event_id: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

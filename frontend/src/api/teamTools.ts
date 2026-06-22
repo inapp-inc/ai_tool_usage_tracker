@@ -8,7 +8,9 @@ import {
   type TeamToolAssignment,
 } from "./adapters/teamTools";
 
-export type { TeamToolAssignBody, TeamToolAssignment };
+export type { TeamToolAssignBody, TeamToolAssignment, TeamToolPackageBinding };
+
+export { emptyTeamToolPackageBinding } from "./adapters/teamTools";
 
 export async function fetchTeamTools(teamId: string): Promise<TeamToolAssignment[]> {
   const rows = await apiRequest<ApiTeamToolAssignment[]>(`/teams/${teamId}/tools`);

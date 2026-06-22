@@ -13,6 +13,8 @@ Functional requirements for the **AI Tool Usage Tracker** platform, derived from
 | [05-notifications.md](./05-notifications.md) | Notifications | FR-NTF-001 – FR-NTF-003 |
 | [06-usage-ingestion.md](./06-usage-ingestion.md) | Individual Usage Monitoring | FR-ING-001 – FR-ING-004 |
 | [07-platform-security.md](./07-platform-security.md) | Platform, Security & NFRs | FR-PLT-001 – FR-PLT-004 |
+| [cursor-implementation.md](./cursor-implementation.md) | Cursor Phase 1 (included/billable, Insights UX) | FR-CSR-001 – FR-CSR-007 |
+| [ToolNewFlow.md](./ToolNewFlow.md) | Multi-vendor architecture, billing types, packages, executive dashboard | AC-MVT-001 – AC-MVT-005 |
 | [NFR.md](./NFR.md) | Non-Functional Specifications | NFR-SEC / PER / SCL / AVL / MON / AUD / ACC / CMP / BKP / LOC |
 
 ## Priority Legend

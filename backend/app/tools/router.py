@@ -11,6 +11,7 @@ from app.auth.dependencies import get_current_user
 from app.core.permissions import require_permission
 from app.db.session import get_session
 from app.models.auth import User
+from app.tools.package_schemas import ToolPackageListResponse
 from app.tools.schemas import ToolCreateRequest, ToolListResponse, ToolMembersListResponse, ToolResponse, ToolUpdateRequest
 from app.tools.service import ToolService
 
@@ -70,6 +71,15 @@ async def list_tool_members(
     service: ToolService = Depends(get_tool_service),
 ) -> ToolMembersListResponse:
     return await service.list_tool_members(current_user.organization_id, tool_id)
+
+
+@router.get("/{tool_id}/packages", response_model=ToolPackageListResponse)
+async def list_tool_packages(
+    tool_id: UUID,
+    current_user: User = Depends(require_permission("tools", "read")),
+    service: ToolService = Depends(get_tool_service),
+) -> ToolPackageListResponse:
+    return await service.list_packages(tool_id, current_user.organization_id)
 
 
 @router.get("/{tool_id}", response_model=ToolResponse)

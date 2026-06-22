@@ -67,6 +67,7 @@ import {
   fetchRecentAlerts,
   fetchTeamCost,
   fetchTopUsers,
+  type DashboardStats,
   type RecentAlert,
   type TeamCostDataPoint,
   type TopUser,
@@ -87,14 +88,11 @@ import {
   type SubscriptionCadence,
   type SubscriptionChannel,
 } from "@/api/reports";
-import { fetchCredentials } from "@/api/credentials";
+import { fetchCredentials, type Credential } from "@/api/credentials";
 import { fetchTeams, type Team } from "@/api/teams";
 import {
-  ALL_TEAMS,
-  ALL_TOOLS,
   fetchDailyBreakdown,
   fetchDailyUsage,
-  fetchTeamDrilldown,
   fetchTeamUsage,
   fetchToolOptions,
   type DailyBreakdownTeam,
@@ -107,6 +105,7 @@ import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { SkeletonCard } from "@/components/data-display/SkeletonCard";
 import { StatCard } from "@/components/data-display/StatCard";
 import { StatusBadge } from "@/components/data-display/StatusBadge";
+import { TeamDetailSlideOver } from "@/components/insights/TeamDetailSlideOver";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { PeriodSelector } from "@/components/inputs/PeriodSelector";
@@ -264,9 +263,111 @@ function SubscriptionChannelIcons({ channel }: { channel: SubscriptionChannel })
 function createDefaultFilters(): InsightsFilters {
   return {
     period: currentMonthUtcRange(),
-    teamId: ALL_TEAMS,
-    toolId: ALL_TOOLS,
+    teamId: "",
+    toolId: "",
   };
+}
+
+function resolveFirstToolForTeam(
+  teamId: string,
+  teams: Team[],
+  credentials: Credential[],
+): string {
+  const team = teams.find((row) => row.id === teamId);
+  if (!team) {
+    return "";
+  }
+  if (team.toolIds.length > 0) {
+    return team.toolIds[0];
+  }
+  const credential = credentials.find(
+    (row) => row.teamId === teamId && row.catalogueToolId,
+  );
+  return credential?.catalogueToolId ?? "";
+}
+
+function resolveDefaultInsightsFilters(
+  teams: Team[],
+  credentials: Credential[],
+): { teamId: string; toolId: string } | null {
+  const sorted = [...teams].sort((a, b) => a.name.localeCompare(b.name));
+  const firstTeam = sorted[0];
+  if (!firstTeam) {
+    return null;
+  }
+  return {
+    teamId: firstTeam.id,
+    toolId: resolveFirstToolForTeam(firstTeam.id, teams, credentials),
+  };
+}
+
+function TokenStatTooltip({ stats }: { stats: DashboardStats }) {
+  if (!stats.breakdownAvailable) {
+    return (
+      <Typography variant="caption" sx={{ display: "block" }}>
+        Cursor breakdown not applicable for this tool, or re-sync Cursor to populate
+        included vs billable data.
+      </Typography>
+    );
+  }
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+      <Typography variant="caption">Total tokens: {formatTokens(stats.totalTokens)}</Typography>
+      <Typography variant="caption">
+        Included in plan: {formatTokens(stats.includedTokens ?? 0)}
+      </Typography>
+      <Typography variant="caption">
+        Billable: {formatTokens(stats.billableTokens ?? 0)}
+      </Typography>
+      <Divider sx={{ my: 0.5, borderColor: "rgba(255,255,255,0.2)" }} />
+      <Typography variant="caption">Input: {formatTokens(stats.inputTokens ?? 0)}</Typography>
+      <Typography variant="caption">Output: {formatTokens(stats.outputTokens ?? 0)}</Typography>
+      <Typography variant="caption">
+        Cache write: {formatTokens(stats.cacheWriteTokens ?? 0)}
+      </Typography>
+      <Typography variant="caption">
+        Cache read: {formatTokens(stats.cacheReadTokens ?? 0)}
+      </Typography>
+    </Box>
+  );
+}
+
+function CostStatTooltip({ stats }: { stats: DashboardStats }) {
+  if (!stats.breakdownAvailable) {
+    return (
+      <Typography variant="caption" sx={{ display: "block" }}>
+        Cursor breakdown not applicable for this tool.
+      </Typography>
+    );
+  }
+
+  const allowanceUsed =
+    stats.packageAllowance && stats.packageAllowance > 0
+      ? `${(((stats.includedCost ?? 0) / stats.packageAllowance) * 100).toFixed(1)}%`
+      : "—";
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+      <Typography variant="caption">
+        Total cost: {formatCost(stats.totalCost)}
+      </Typography>
+      <Typography variant="caption">
+        Included in plan: {formatCost(stats.includedCost ?? 0)}
+      </Typography>
+      <Typography variant="caption">
+        Additional billable: {formatCost(stats.billableCost ?? 0)}
+      </Typography>
+      <Divider sx={{ my: 0.5, borderColor: "rgba(255,255,255,0.2)" }} />
+      <Typography variant="caption">
+        Package allowance: {formatCost(stats.packageAllowance ?? 0)}
+      </Typography>
+      <Typography variant="caption">Allowance used: {allowanceUsed}</Typography>
+      <Typography variant="caption">
+        Overage (billable): {formatCost(stats.overageCost ?? 0)}
+      </Typography>
+    </Box>
+  );
 }
 
 function SectionError() {
@@ -418,6 +519,7 @@ export function InsightsPage() {
   const queryClient = useQueryClient();
 
   const [filters, setFilters] = useState<InsightsFilters>(createDefaultFilters);
+  const [filtersInitialized, setFiltersInitialized] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
   const [chartMode, setChartMode] = useState<ChartMode>("tokens");
   const [drilldown, setDrilldown] = useState<{
@@ -443,15 +545,19 @@ export function InsightsPage() {
   };
 
   const dashboardFilters: DashboardFilters = { teamId, toolId };
+  const insightsFiltersReady =
+    filtersInitialized && Boolean(teamId) && Boolean(toolId);
 
   const statsQuery = useQuery({
     queryKey: ["insights", "stats", from, to, teamId, toolId],
     queryFn: () => fetchDashboardStats(from, to, dashboardFilters),
+    enabled: insightsFiltersReady,
   });
 
   const dailyQuery = useQuery({
     queryKey: ["insights", "daily", from, to, teamId, toolId],
     queryFn: () => fetchDailyUsage(from, to, dashboardFilters),
+    enabled: insightsFiltersReady,
   });
 
   const openDateDrilldown = useCallback((point: DailyUsagePoint) => {
@@ -507,21 +613,25 @@ export function InsightsPage() {
   const teamCostQuery = useQuery({
     queryKey: ["insights", "teamCost", from, to, teamId, toolId],
     queryFn: () => fetchTeamCost(from, to, dashboardFilters),
+    enabled: insightsFiltersReady,
   });
 
   const topUsersQuery = useQuery({
     queryKey: ["insights", "topUsers", from, to, teamId, toolId],
     queryFn: () => fetchTopUsers(from, to, dashboardFilters),
+    enabled: insightsFiltersReady,
   });
 
   const alertsQuery = useQuery({
     queryKey: ["insights", "recentAlerts", teamId, toolId],
     queryFn: () => fetchRecentAlerts(dashboardFilters),
+    enabled: Boolean(teamId),
   });
 
   const teamsUsageQuery = useQuery({
     queryKey: ["insights", "teams", from, to, teamId, toolId],
     queryFn: () => fetchTeamUsage(from, to, dashboardFilters),
+    enabled: insightsFiltersReady,
   });
 
   const reportsQuery = useQuery({
@@ -544,18 +654,27 @@ export function InsightsPage() {
     queryFn: fetchCredentials,
   });
 
-  const drilldownQuery = useQuery({
-    queryKey: ["insights", "drilldown", drilldown.team?.teamId, from, to, toolId],
-    queryFn: () =>
-      fetchTeamDrilldown(
-        drilldown.team!.teamId,
-        from,
-        to,
-        toolId !== ALL_TOOLS ? toolId : null,
-        dashboardFilters,
-      ),
-    enabled: drilldown.open && Boolean(drilldown.team?.teamId),
-  });
+  useEffect(() => {
+    if (filtersInitialized || teamsQuery.isPending) {
+      return;
+    }
+    const teams = teamsQuery.data ?? EMPTY_TEAMS;
+    const credentials = credentialsQuery.data ?? [];
+    const defaults = resolveDefaultInsightsFilters(teams, credentials);
+    if (defaults) {
+      setFilters((prev) => ({
+        ...prev,
+        teamId: defaults.teamId,
+        toolId: defaults.toolId,
+      }));
+    }
+    setFiltersInitialized(true);
+  }, [
+    credentialsQuery.data,
+    filtersInitialized,
+    teamsQuery.data,
+    teamsQuery.isPending,
+  ]);
 
   const {
     data: dailyBreakdown,
@@ -697,12 +816,31 @@ export function InsightsPage() {
   const toolOptions = toolOptionsQuery.data ?? [];
   const credentials = credentialsQuery.data ?? [];
 
-  const filteredToolOptions = useMemo(() => {
-    if (teamId === ALL_TEAMS) {
-      return toolOptions;
+  const drilldownAssignedToolIds = useMemo(() => {
+    if (!drilldown.team) {
+      return [];
     }
+    const selectedTeam = teams.find((team) => team.id === drilldown.team?.teamId);
+    const ids = new Set(selectedTeam?.toolIds ?? []);
+    for (const credential of credentials) {
+      if (credential.teamId === drilldown.team.teamId && credential.catalogueToolId) {
+        ids.add(credential.catalogueToolId);
+      }
+    }
+    return [...ids];
+  }, [credentials, drilldown.team, teams]);
+
+  const drilldownTeamMeta = useMemo(
+    () => teams.find((team) => team.id === drilldown.team?.teamId) ?? null,
+    [drilldown.team?.teamId, teams],
+  );
+
+  const filteredToolOptions = useMemo(() => {
     const selectedTeam = teams.find((team) => team.id === teamId);
-    const assignedToolIds = new Set(selectedTeam?.toolIds ?? []);
+    if (!selectedTeam) {
+      return [];
+    }
+    const assignedToolIds = new Set(selectedTeam.toolIds ?? []);
     for (const credential of credentials) {
       if (credential.teamId === teamId && credential.catalogueToolId) {
         assignedToolIds.add(credential.catalogueToolId);
@@ -712,35 +850,33 @@ export function InsightsPage() {
   }, [credentials, teamId, teams, toolOptions]);
 
   useEffect(() => {
-    if (teamId === ALL_TEAMS) {
+    if (!teamId) {
       return;
     }
     setFilters((prev) => {
-      if (prev.toolId === ALL_TOOLS) {
-        return prev;
+      if (!prev.toolId) {
+        const firstTool = resolveFirstToolForTeam(teamId, teams, credentials);
+        return firstTool ? { ...prev, toolId: firstTool } : prev;
       }
       const stillValid = filteredToolOptions.some((tool) => tool.id === prev.toolId);
-      return stillValid ? prev : { ...prev, toolId: ALL_TOOLS };
+      if (stillValid) {
+        return prev;
+      }
+      return {
+        ...prev,
+        toolId: resolveFirstToolForTeam(teamId, teams, credentials),
+      };
     });
-  }, [filteredToolOptions, teamId]);
+  }, [credentials, filteredToolOptions, teamId, teams]);
 
   const sortedTeamRows = useMemo(() => {
-    let rows = teamsUsageQuery.data ?? [];
-    if (teamId && teamId !== ALL_TEAMS) {
-      rows = rows.filter((row) => row.teamId === teamId);
-    }
+    const rows = teamsUsageQuery.data ?? [];
     return [...rows].sort((a, b) => b.cost - a.cost);
-  }, [teamsUsageQuery.data, teamId]);
+  }, [teamsUsageQuery.data]);
 
-  const sortedDrilldownUsers = useMemo(() => {
-    const users = drilldownQuery.data ?? [];
-    return [...users].sort((a, b) => b.tokens - a.tokens);
-  }, [drilldownQuery.data]);
-
-  const activeMemberCount = useMemo(
-    () => sortedDrilldownUsers.filter((user) => user.tokens > 0).length,
-    [sortedDrilldownUsers],
-  );
+  const noTeamsAvailable = filtersInitialized && teams.length === 0;
+  const noToolsAssigned =
+    filtersInitialized && Boolean(teamId) && filteredToolOptions.length === 0;
 
   const topUserColumns: Column<TopUser>[] = useMemo(
     () => [
@@ -1098,15 +1234,16 @@ export function InsightsPage() {
             labelId="insights-team-label"
             label="Team"
             value={filters.teamId}
-            onChange={(event) =>
+            onChange={(event) => {
+              const nextTeamId = event.target.value;
               setFilters((prev) => ({
                 ...prev,
-                teamId: event.target.value,
-                toolId: ALL_TOOLS,
-              }))
-            }
+                teamId: nextTeamId,
+                toolId: resolveFirstToolForTeam(nextTeamId, teams, credentials),
+              }));
+            }}
+            disabled={teams.length === 0}
           >
-            <MenuItem value={ALL_TEAMS}>All teams</MenuItem>
             {teams.map((team) => (
               <MenuItem key={team.id} value={team.id}>
                 {team.name}
@@ -1124,8 +1261,8 @@ export function InsightsPage() {
             onChange={(event) =>
               setFilters((prev) => ({ ...prev, toolId: event.target.value }))
             }
+            disabled={filteredToolOptions.length === 0}
           >
-            <MenuItem value={ALL_TOOLS}>All tools</MenuItem>
             {filteredToolOptions.map((tool) => (
               <MenuItem key={tool.id} value={tool.id}>
                 {tool.name}
@@ -1133,6 +1270,17 @@ export function InsightsPage() {
             ))}
           </Select>
         </FormControl>
+        {noTeamsAvailable && (
+          <Alert severity="info" sx={{ flex: 1 }}>
+            No teams available. Create a team to view insights.
+          </Alert>
+        )}
+        {noToolsAssigned && (
+          <Alert severity="info" sx={{ flex: 1 }}>
+            No tools assigned to this team. Assign tools or connect a credential to see
+            usage.
+          </Alert>
+        )}
       </Box>
 
       <Box
@@ -1164,6 +1312,7 @@ export function InsightsPage() {
               deltaLabel="vs prev period"
               icon={IconActivity}
               iconColor={tokens.primary}
+              tooltipContent={<TokenStatTooltip stats={statsQuery.data} />}
             />
             <StatCard
               label="Total Cost"
@@ -1172,6 +1321,7 @@ export function InsightsPage() {
               deltaLabel="vs prev period"
               icon={IconCurrencyDollar}
               iconColor={tokens.success}
+              tooltipContent={<CostStatTooltip stats={statsQuery.data} />}
             />
             <StatCard
               label="Active Tools"
@@ -1479,58 +1629,19 @@ export function InsightsPage() {
         />
       </SlideOver>
 
-      <SlideOver
+      <TeamDetailSlideOver
         open={drilldown.open}
         onClose={() => setDrilldown({ open: false, team: null })}
-        width={560}
-        title={drilldown.team?.teamName ?? ""}
-        subtitle="Token and cost breakdown by user"
-      >
-        {drilldown.team && (
-          <>
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 2,
-                mb: 2,
-                pb: 2,
-                borderBottom: `0.5px solid ${tokens.border}`,
-              }}
-            >
-              <InlineStat
-                label="Total tokens"
-                value={formatTokens(drilldown.team.tokens)}
-              />
-              <Divider orientation="vertical" flexItem />
-              <InlineStat
-                label="Total cost"
-                value={formatCost(drilldown.team.cost)}
-              />
-              <Divider orientation="vertical" flexItem />
-              <InlineStat
-                label="Active members"
-                value={activeMemberCount}
-              />
-            </Box>
-
-            {drilldownQuery.isError && (
-              <Alert severity="error" sx={{ mb: 2 }}>
-                Failed to load team breakdown.
-              </Alert>
-            )}
-
-            <DataTable
-              columns={drilldownColumns}
-              rows={sortedDrilldownUsers}
-              rowKey={(row) => row.userId}
-              loading={drilldownQuery.isPending}
-              stickyHeader
-              emptyTitle="No usage data"
-            />
-          </>
-        )}
-      </SlideOver>
+        teamRow={drilldown.team}
+        teamMeta={drilldownTeamMeta}
+        from={from}
+        to={to}
+        filterToolId={toolId}
+        toolOptions={toolOptions}
+        assignedToolIds={drilldownAssignedToolIds}
+        credentials={credentials}
+        userColumns={drilldownColumns}
+      />
 
       <SlideOver
         open={userDrilldown !== null}

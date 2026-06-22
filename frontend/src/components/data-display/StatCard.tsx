@@ -3,10 +3,11 @@ import {
   Card,
   CardContent,
   Skeleton,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
-import type { ElementType } from "react";
+import type { ElementType, ReactNode } from "react";
 
 import { tokens } from "@/theme/palette";
 
@@ -19,6 +20,7 @@ interface StatCardProps {
   iconColor?: string;
   loading?: boolean;
   onClick?: () => void;
+  tooltipContent?: ReactNode;
 }
 
 export function StatCard({
@@ -30,6 +32,7 @@ export function StatCard({
   iconColor = tokens.primary,
   loading = false,
   onClick,
+  tooltipContent,
 }: StatCardProps) {
   const isPositive = delta !== undefined && delta >= 0;
   const deltaColor = isPositive ? tokens.success : tokens.critical;
@@ -39,11 +42,11 @@ export function StatCard({
       ? `${deltaPrefix}${Math.abs(delta).toFixed(1)}%`
       : null;
 
-  return (
+  const card = (
     <Card
       onClick={onClick}
       sx={{
-        cursor: onClick ? "pointer" : "default",
+        cursor: onClick || tooltipContent ? "pointer" : "default",
         "&:hover": onClick
           ? { backgroundColor: tokens.bgDefault }
           : undefined,
@@ -140,4 +143,24 @@ export function StatCard({
       </CardContent>
     </Card>
   );
+
+  if (tooltipContent) {
+    return (
+      <Tooltip
+        title={tooltipContent}
+        arrow
+        enterTouchDelay={0}
+        leaveTouchDelay={4000}
+        slotProps={{
+          tooltip: {
+            sx: { maxWidth: 320, p: 1.5 },
+          },
+        }}
+      >
+        {card}
+      </Tooltip>
+    );
+  }
+
+  return card;
 }

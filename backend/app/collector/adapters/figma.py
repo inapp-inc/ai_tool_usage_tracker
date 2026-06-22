@@ -8,6 +8,8 @@ from app.collector.adapters.base import ProviderMember, ProviderSnapshot, Provid
 from app.collector.adapters.http_utils import get_with_detail
 from app.collector.adapters.member_parsing import dedupe_members, parse_figma_members
 from app.integration.http_log import log_provider_http
+from app.normalization.converters import license_to_usage_record
+from app.normalization.license import map_figma_member_seat, with_license_cost
 
 logger = logging.getLogger(__name__)
 

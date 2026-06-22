@@ -17,6 +17,7 @@ from app.tools.catalogue import connected_to_catalogue_map, find_connected_for_c
 from app.tools.repository import ToolRepository
 from app.usage.periods import current_month_window
 from app.usage.aggregates import sum_org_cost, sum_tokens_and_cost_by_team
+from app.usage.cost import usage_event_effective_cost_sql
 
 
 @dataclass(frozen=True)
@@ -158,7 +159,7 @@ class TeamMetricsLoader:
                 func.coalesce(func.sum(UsageEvent.input_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.output_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.total_tokens), 0),
-                func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+                func.coalesce(func.sum(usage_event_effective_cost_sql()), 0),
             )
             .where(
                 UsageEvent.organization_id == organization_id,
@@ -191,7 +192,7 @@ class TeamMetricsLoader:
         result = await self._session.execute(
             select(
                 UsageEvent.team_id,
-                func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+                func.coalesce(func.sum(usage_event_effective_cost_sql()), 0),
             )
             .where(
                 UsageEvent.organization_id == organization_id,

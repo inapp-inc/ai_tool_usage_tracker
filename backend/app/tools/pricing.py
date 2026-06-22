@@ -38,6 +38,11 @@ def vendor_requires_organization_id(vendor: str) -> bool:
     return vendor.strip().lower().replace("-", "_") in {"copilot", "github_copilot", "github"}
 
 
+def vendor_requires_gcp_monitoring(vendor: str) -> bool:
+    slug = normalize_vendor(vendor)
+    return slug in {"google", "gemini"}
+
+
 def organization_id_from_pricing(pricing_config: dict | None) -> str | None:
     raw = (pricing_config or {}).get("organization_id")
     if raw is None:

@@ -6,6 +6,10 @@ import hashlib
 
 from app.collector.adapters.base import UsageRecord
 from app.integration.numbers import parse_compact_int
+from app.usage.cost import (
+    cursor_billable_cost_from_event,
+    cursor_included_cost_from_event,
+)
 
 
 def cursor_vendor_event_id(
@@ -43,24 +47,15 @@ def _int_token(value: object) -> int:
 
 
 def _cursor_kind_is_included(kind: object) -> bool:
-    """True when Cursor kind indicates usage included in plan (no billable cost)."""
+    """True when Cursor kind indicates usage included in the subscription plan."""
     return "include" in str(kind or "").lower()
 
 
 def _cursor_estimated_cost(event: dict, token_usage: dict) -> Decimal:
-    """Map Cursor usageEvents cost to USD.
-
-    When ``kind`` contains ``include`` (e.g. "Included in Business"), cost is
-    zero — usage is covered by the plan; do not use ``chargedCents`` or
-    ``totalCents``. Otherwise use ``chargedCents / 100``.
-    """
+    """Billable USD only — zero for plan-included rows."""
     if _cursor_kind_is_included(event.get("kind")):
         return Decimal("0")
-
-    try:
-        return Decimal(str(event.get("chargedCents") or 0)) / Decimal("100")
-    except Exception:  # noqa: BLE001
-        return Decimal("0")
+    return cursor_billable_cost_from_event(event, token_usage)
 
 
 def parse_cursor_usage_page(payload: object) -> tuple[list[UsageRecord], bool]:
@@ -78,7 +73,12 @@ def parse_cursor_usage_page(payload: object) -> tuple[list[UsageRecord], bool]:
         cache_write_tokens = _int_token(token_usage.get("cacheWriteTokens"))
         cache_read_tokens = _int_token(token_usage.get("cacheReadTokens"))
 
+        kind = event.get("kind")
+        included_in_plan = _cursor_kind_is_included(kind)
         estimated_cost = _cursor_estimated_cost(event, token_usage)
+        reference_cost = (
+            cursor_included_cost_from_event(event, token_usage) if included_in_plan else None
+        )
 
         timestamp = event.get("timestamp")
         user_email = event.get("userEmail") or event.get("email") or ""
@@ -100,6 +100,9 @@ def parse_cursor_usage_page(payload: object) -> tuple[list[UsageRecord], bool]:
                 cache_read_tokens=cache_read_tokens,
                 estimated_cost=estimated_cost,
                 user_email=str(user_email).strip() or None,
+                included_in_plan=included_in_plan,
+                cursor_kind=str(kind).strip() if kind else None,
+                reference_cost=reference_cost if included_in_plan else None,
             )
         )
 

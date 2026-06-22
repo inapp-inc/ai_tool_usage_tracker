@@ -181,14 +181,35 @@ class GenericUsageAdapter:
                 raise ProviderValidationError(str(exc)) from exc
 
         del api_token
-        midpoint = since + (until - since) / 2
-        return [
-            UsageRecord(
-                vendor_event_id=f"{self.provider}-stub-{midpoint.date()}",
-                model="default",
-                occurred_at=midpoint,
-                input_tokens=3_000,
-                output_tokens=900,
-                estimated_cost=Decimal("0.012000"),
-            )
-        ]
+        logger.info(
+            "%s fetch_usage | no config-driven usage; returning empty",
+            self.provider,
+        )
+        return []
+
+    @staticmethod
+    def parse_token_rows(
+        provider: str,
+        rows: list[dict],
+        *,
+        fallback_at: datetime,
+    ) -> list[UsageRecord]:
+        from app.normalization.converters import token_to_usage_record
+        from app.normalization.token import (
+            map_bedrock_usage,
+            map_generic_token_usage,
+        )
+
+        records: list[UsageRecord] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if provider == "bedrock":
+                normalized = map_bedrock_usage(row, fallback_at=fallback_at)
+            else:
+                normalized = map_generic_token_usage(
+                    row, source=provider.replace("_", " ").title(), fallback_at=fallback_at
+                )
+            if normalized is not None:
+                records.append(token_to_usage_record(normalized))
+        return records

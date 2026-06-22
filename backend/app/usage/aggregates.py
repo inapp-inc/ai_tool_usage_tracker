@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collector import UsageEvent
+from app.usage.cost import usage_event_effective_cost_sql
 
 
 async def sum_tokens_and_cost_by_team(
@@ -25,7 +26,7 @@ async def sum_tokens_and_cost_by_team(
         select(
             UsageEvent.team_id,
             func.coalesce(func.sum(UsageEvent.total_tokens), 0),
-            func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+            func.coalesce(func.sum(usage_event_effective_cost_sql()), 0),
         )
         .where(
             UsageEvent.organization_id == organization_id,
@@ -63,6 +64,6 @@ async def sum_org_cost(
         conditions.append(UsageEvent.tool_id.in_(tool_ids))
 
     result = await session.execute(
-        select(func.coalesce(func.sum(UsageEvent.estimated_cost), 0)).where(*conditions)
+        select(func.coalesce(func.sum(usage_event_effective_cost_sql()), 0)).where(*conditions)
     )
     return Decimal(str(result.scalar_one()))

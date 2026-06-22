@@ -1,6 +1,6 @@
 """Pydantic schemas aligned with OpenAPI Team components."""
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -114,6 +114,11 @@ class TeamToolAssignmentResponse(BaseModel):
     overage_price: Decimal | None = None
     plan_name: str | None = None
     pricing_config: dict = Field(default_factory=dict)
+    package_id: UUID | None = None
+    subscription_start: date | None = None
+    subscription_end: date | None = None
+    monthly_budget: Decimal | None = None
+    alert_threshold: Decimal | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -129,6 +134,11 @@ class TeamToolAssignRequest(BaseModel):
     overage_price: Decimal | None = Field(default=None, ge=0)
     plan_name: str | None = Field(default=None, max_length=200)
     pricing_config: dict | None = None
+    package_id: UUID | None = None
+    subscription_start: date | None = None
+    subscription_end: date | None = None
+    monthly_budget: Decimal | None = Field(default=None, ge=0)
+    alert_threshold: Decimal | None = Field(default=None, ge=0, le=100)
 
 
 class TeamToolUpdateRequest(BaseModel):
@@ -141,6 +151,11 @@ class TeamToolUpdateRequest(BaseModel):
     overage_price: Decimal | None = Field(default=None, ge=0)
     plan_name: str | None = Field(default=None, max_length=200)
     pricing_config: dict | None = None
+    package_id: UUID | None = None
+    subscription_start: date | None = None
+    subscription_end: date | None = None
+    monthly_budget: Decimal | None = Field(default=None, ge=0)
+    alert_threshold: Decimal | None = Field(default=None, ge=0, le=100)
 
 
 class TeamToolAssignmentListResponse(BaseModel):

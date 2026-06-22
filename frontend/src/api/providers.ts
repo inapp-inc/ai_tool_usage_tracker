@@ -220,6 +220,14 @@ export function providerRequiresOrganizationId(slug: string): boolean {
   return slug === "copilot";
 }
 
+export function providerRequiresOpenAiAdminKey(slug: string): boolean {
+  return slug === "openai";
+}
+
+export function providerRequiresGcpMonitoring(slug: string): boolean {
+  return slug === "google";
+}
+
 export function providerRequiresApiEndpoint(
   slug: string,
   providers: Provider[],

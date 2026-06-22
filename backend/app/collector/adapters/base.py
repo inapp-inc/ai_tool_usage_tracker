@@ -41,6 +41,10 @@ class UsageRecord:
     cache_read_tokens: int = 0
     user_email: str | None = None
     user_name: str | None = None
+    requests: int = 0
+    included_in_plan: bool = False
+    cursor_kind: str | None = None
+    reference_cost: Decimal | None = None
 
     @property
     def total_tokens(self) -> int:

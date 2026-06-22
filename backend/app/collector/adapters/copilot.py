@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import httpx
 
 from app.collector.adapters.base import ProviderMember, ProviderSnapshot, ProviderValidationError, UsageRecord
+from app.collector.adapters.copilot_merge import merge_copilot_records
+from app.collector.adapters.copilot_metrics_fields import normalize_download_links
 from app.collector.adapters.copilot_parsing import (
-    parse_copilot_seat,
     parse_copilot_seat_members,
     parse_copilot_user_day,
 )
+from app.collector.adapters.copilot_dump import CopilotPullDumper
 from app.collector.adapters.http_utils import get_with_detail
 from app.integration.http_log import log_provider_http
 from app.tools.pricing import organization_id_from_pricing
@@ -24,8 +27,17 @@ logger = logging.getLogger(__name__)
 GITHUB_API = "https://api.github.com"
 SEATS_PATH = "/orgs/{org}/copilot/billing/seats"
 METRICS_REPORT_PATH = "/orgs/{org}/copilot/metrics/reports/users-1-day"
+ORG_METRICS_REPORT_PATH = "/orgs/{org}/copilot/metrics/reports/organization-1-day"
 MAX_METRICS_DAYS = 28
 SEATS_PAGE_SIZE = 100
+
+
+@dataclass
+class CopilotProductivityPull:
+    github_org_id: str
+    user_metric_rows: list[dict]
+    org_metric_rows: list[dict]
+    seats: list[dict]
 
 
 def _github_headers(api_token: str, *, api_version: str = "2022-11-28") -> dict[str, str]:
@@ -142,6 +154,7 @@ class CopilotUsageAdapter:
         until: datetime,
         pricing_config: dict | None = None,
         api_endpoint: str | None = None,
+        copilot_pull_dumper: CopilotPullDumper | None = None,
         **_kwargs: object,
     ) -> list[UsageRecord]:
         org_id = _require_org_id(pricing_config)
@@ -150,37 +163,19 @@ class CopilotUsageAdapter:
         if until.tzinfo is None:
             until = until.replace(tzinfo=UTC)
 
-        records: list[UsageRecord] = []
-        seen_ids: set[str] = set()
-
         metrics_records = await self._fetch_user_metrics(
             api_token,
             org_id,
             since=since,
             until=until,
+            pull_dumper=copilot_pull_dumper,
         )
-        for record in metrics_records:
-            if record.vendor_event_id in seen_ids:
-                continue
-            seen_ids.add(record.vendor_event_id)
-            records.append(record)
-
-        seats = await self._fetch_all_seats(api_token, org_id)
-        fallback_at = until
-        for seat in seats:
-            seat_record = parse_copilot_seat(seat, fallback_at=fallback_at)
-            if seat_record is None:
-                continue
-            if any(
-                record.user_email == seat_record.user_email
-                and record.occurred_at.date() == seat_record.occurred_at.date()
-                for record in records
-            ):
-                continue
-            if seat_record.vendor_event_id in seen_ids:
-                continue
-            seen_ids.add(seat_record.vendor_event_id)
-            records.append(seat_record)
+        seats = await self._fetch_all_seats(
+            api_token,
+            org_id,
+            pull_dumper=copilot_pull_dumper,
+        )
+        records = merge_copilot_records(metrics_records, seats, fallback_at=until)
 
         logger.info(
             "Copilot fetch_usage | org=%s seats=%s metrics_rows=%s total_records=%s",
@@ -191,7 +186,136 @@ class CopilotUsageAdapter:
         )
         return records
 
-    async def _fetch_all_seats(self, api_token: str, org_id: str) -> list[dict]:
+    async def fetch_productivity_pull(
+        self,
+        api_token: str,
+        *,
+        since: datetime,
+        until: datetime,
+        pricing_config: dict | None = None,
+        copilot_pull_dumper: CopilotPullDumper | None = None,
+    ) -> CopilotProductivityPull:
+        """Fetch raw Copilot productivity payloads for dedicated schema ingest."""
+        org_id = _require_org_id(pricing_config)
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=UTC)
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=UTC)
+
+        user_rows: list[dict] = []
+        org_rows: list[dict] = []
+        start_day = since.astimezone(UTC).date()
+        end_day = min(until.astimezone(UTC).date(), datetime.now(UTC).date() - timedelta(days=1))
+        if end_day < start_day:
+            end_day = start_day
+
+        day = start_day
+        days_fetched = 0
+        while day <= end_day and days_fetched < MAX_METRICS_DAYS:
+            user_rows.extend(
+                await self._fetch_user_metrics_raw_for_day(
+                    api_token,
+                    org_id,
+                    day,
+                    pull_dumper=copilot_pull_dumper,
+                )
+            )
+            org_rows.extend(
+                await self._fetch_org_metrics_raw_for_day(
+                    api_token,
+                    org_id,
+                    day,
+                    pull_dumper=copilot_pull_dumper,
+                )
+            )
+            day += timedelta(days=1)
+            days_fetched += 1
+
+        seats = await self._fetch_all_seats(api_token, org_id, pull_dumper=copilot_pull_dumper)
+        return CopilotProductivityPull(
+            github_org_id=org_id,
+            user_metric_rows=user_rows,
+            org_metric_rows=org_rows,
+            seats=seats,
+        )
+
+    async def _fetch_user_metrics_raw_for_day(
+        self,
+        api_token: str,
+        org_id: str,
+        day: date,
+        *,
+        pull_dumper: CopilotPullDumper | None = None,
+    ) -> list[dict]:
+        url = f"{GITHUB_API}{METRICS_REPORT_PATH.format(org=org_id)}"
+        result = await get_with_detail(
+            url,
+            headers=_github_headers(api_token, api_version="2026-03-10"),
+            params={"day": day.isoformat()},
+            timeout=30.0,
+        )
+        if pull_dumper is not None:
+            pull_dumper.write_raw_page(
+                source="copilot-user-metrics",
+                page=int(day.strftime("%Y%m%d")),
+                request_body={"org": org_id, "day": day.isoformat()},
+                response_payload=result.json if isinstance(result.json, dict) else {"error": result.text[:500]},
+                status_code=result.status_code,
+            )
+        if result.status_code != 200 or not isinstance(result.json, dict):
+            return []
+
+        rows: list[dict] = []
+        for link in normalize_download_links(result.json.get("download_links")):
+            downloaded, _status, _error = await self._download_report_rows(link, api_token=api_token)
+            rows.extend(downloaded)
+            if pull_dumper is not None:
+                pull_dumper.write_metrics_rows(
+                    day=day.isoformat(),
+                    download_url=link,
+                    rows=downloaded,
+                )
+        return rows
+
+    async def _fetch_org_metrics_raw_for_day(
+        self,
+        api_token: str,
+        org_id: str,
+        day: date,
+        *,
+        pull_dumper: CopilotPullDumper | None = None,
+    ) -> list[dict]:
+        url = f"{GITHUB_API}{ORG_METRICS_REPORT_PATH.format(org=org_id)}"
+        result = await get_with_detail(
+            url,
+            headers=_github_headers(api_token, api_version="2026-03-10"),
+            params={"day": day.isoformat()},
+            timeout=30.0,
+        )
+        if pull_dumper is not None:
+            pull_dumper.write_raw_page(
+                source="copilot-org-metrics",
+                page=int(day.strftime("%Y%m%d")),
+                request_body={"org": org_id, "day": day.isoformat()},
+                response_payload=result.json if isinstance(result.json, dict) else {"error": result.text[:500]},
+                status_code=result.status_code,
+            )
+        if result.status_code != 200 or not isinstance(result.json, dict):
+            return []
+
+        rows: list[dict] = []
+        for link in normalize_download_links(result.json.get("download_links")):
+            downloaded, _status, _error = await self._download_report_rows(link, api_token=api_token)
+            rows.extend(downloaded)
+        return rows
+
+    async def _fetch_all_seats(
+        self,
+        api_token: str,
+        org_id: str,
+        *,
+        pull_dumper: CopilotPullDumper | None = None,
+    ) -> list[dict]:
         url = f"{GITHUB_API}{SEATS_PATH.format(org=org_id)}"
         seats: list[dict] = []
         page = 1
@@ -211,7 +335,24 @@ class CopilotUsageAdapter:
                 tool_vendor="copilot",
             )
             if result.status_code != 200 or not isinstance(result.json, dict):
+                if pull_dumper is not None:
+                    pull_dumper.write_raw_page(
+                        source="copilot-seats",
+                        page=page,
+                        request_body={"org": org_id, "page": page, "per_page": SEATS_PAGE_SIZE},
+                        response_payload=result.json if isinstance(result.json, dict) else {"error": result.text[:500]},
+                        status_code=result.status_code,
+                    )
                 break
+
+            if pull_dumper is not None:
+                pull_dumper.write_raw_page(
+                    source="copilot-seats",
+                    page=page,
+                    request_body={"org": org_id, "page": page, "per_page": SEATS_PAGE_SIZE},
+                    response_payload=result.json,
+                    status_code=result.status_code,
+                )
 
             batch = result.json.get("seats")
             if not isinstance(batch, list) or not batch:
@@ -231,6 +372,7 @@ class CopilotUsageAdapter:
         *,
         since: datetime,
         until: datetime,
+        pull_dumper: CopilotPullDumper | None = None,
     ) -> list[UsageRecord]:
         records: list[UsageRecord] = []
         start_day = since.astimezone(UTC).date()
@@ -241,7 +383,12 @@ class CopilotUsageAdapter:
         day = start_day
         days_fetched = 0
         while day <= end_day and days_fetched < MAX_METRICS_DAYS:
-            day_records = await self._fetch_user_metrics_for_day(api_token, org_id, day)
+            day_records = await self._fetch_user_metrics_for_day(
+                api_token,
+                org_id,
+                day,
+                pull_dumper=pull_dumper,
+            )
             records.extend(day_records)
             day += timedelta(days=1)
             days_fetched += 1
@@ -253,6 +400,8 @@ class CopilotUsageAdapter:
         api_token: str,
         org_id: str,
         day: date,
+        *,
+        pull_dumper: CopilotPullDumper | None = None,
     ) -> list[UsageRecord]:
         url = f"{GITHUB_API}{METRICS_REPORT_PATH.format(org=org_id)}"
         result = await get_with_detail(
@@ -270,6 +419,15 @@ class CopilotUsageAdapter:
             tool_vendor="copilot",
         )
 
+        if pull_dumper is not None:
+            pull_dumper.write_raw_page(
+                source="copilot-user-metrics",
+                page=int(day.strftime("%Y%m%d")),
+                request_body={"org": org_id, "day": day.isoformat()},
+                response_payload=result.json if isinstance(result.json, dict) else {"error": result.text[:500]},
+                status_code=result.status_code,
+            )
+
         if result.status_code in (403, 422):
             logger.info(
                 "Copilot user metrics unavailable for org=%s (HTTP %s — enable "
@@ -277,48 +435,89 @@ class CopilotUsageAdapter:
                 org_id,
                 result.status_code,
             )
+            if pull_dumper is not None:
+                pull_dumper.write_metrics_rows(
+                    day=day.isoformat(),
+                    download_url="",
+                    rows=[],
+                    download_status=result.status_code,
+                    download_error="Metrics API unavailable — enable Copilot usage metrics in GitHub org",
+                )
             return []
         if result.status_code != 200 or not isinstance(result.json, dict):
+            if pull_dumper is not None:
+                pull_dumper.write_metrics_rows(
+                    day=day.isoformat(),
+                    download_url="",
+                    rows=[],
+                    download_status=result.status_code,
+                    download_error=(result.text or "")[:500],
+                )
             return []
 
-        download_links = result.json.get("download_links")
-        if not isinstance(download_links, list):
+        download_links = normalize_download_links(result.json.get("download_links"))
+        if not download_links:
+            if pull_dumper is not None:
+                pull_dumper.write_metrics_rows(
+                    day=day.isoformat(),
+                    download_url="",
+                    rows=[],
+                    download_status=result.status_code,
+                    download_error="No download_links in metrics API response",
+                )
             return []
 
         records: list[UsageRecord] = []
         for link in download_links:
-            if not isinstance(link, str) or not link.strip():
-                continue
-            for row in await self._download_report_rows(link.strip()):
+            downloaded_rows, download_status, download_error = await self._download_report_rows(
+                link,
+                api_token=api_token,
+            )
+            for row in downloaded_rows:
                 parsed = parse_copilot_user_day(row)
                 if parsed is not None:
                     records.append(parsed)
+            if pull_dumper is not None:
+                pull_dumper.write_metrics_rows(
+                    day=day.isoformat(),
+                    download_url=link,
+                    rows=downloaded_rows,
+                    download_status=download_status,
+                    download_error=download_error,
+                )
         return records
 
-    @staticmethod
-    async def _download_report_rows(url: str) -> list[dict]:
+    async def _download_report_rows(
+        self,
+        url: str,
+        *,
+        api_token: str | None = None,
+    ) -> tuple[list[dict], int, str | None]:
+        headers = {"Accept": "application/json", "User-Agent": "ai-tool-monitor"}
+        if api_token:
+            headers["Authorization"] = f"Bearer {api_token.strip()}"
         async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            response = await client.get(url)
+            response = await client.get(url, headers=headers)
         if response.status_code >= 400:
             logger.warning(
                 "Copilot metrics download failed | url=%s status=%s",
                 url[:120],
                 response.status_code,
             )
-            return []
+            return [], response.status_code, response.text[:500]
 
         text = response.text.strip()
         if not text:
-            return []
+            return [], response.status_code, "Download returned empty body"
 
         if text.startswith("["):
             try:
                 payload = json.loads(text)
             except json.JSONDecodeError:
-                return []
+                return [], response.status_code, "Download JSON array parse failed"
             if isinstance(payload, list):
-                return [row for row in payload if isinstance(row, dict)]
-            return []
+                return [row for row in payload if isinstance(row, dict)], response.status_code, None
+            return [], response.status_code, "Download JSON root is not an array"
 
         rows: list[dict] = []
         for line in text.splitlines():
@@ -331,4 +530,6 @@ class CopilotUsageAdapter:
                 continue
             if isinstance(row, dict):
                 rows.append(row)
-        return rows
+        if not rows:
+            return [], response.status_code, "Download NDJSON contained no object rows"
+        return rows, response.status_code, None

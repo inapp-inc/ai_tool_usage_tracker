@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Date, and_, cast, func, or_, select
+from sqlalchemy import Date, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dashboard.scope import DashboardScope
@@ -37,11 +37,13 @@ from app.models.auth import User
 from app.models.collector import CollectorConfig, UsageEvent
 from app.models.notifications import Threshold, ThresholdEvent
 from app.teams.membership_repository import TeamMembershipRepository
+from app.teams.pricing_resolution import resolve_team_tool_pricing
 from app.teams.repository import TeamRepository
 from app.teams.team_tool_repository import TeamToolRepository
 from app.tools.catalogue import usage_tool_ids_for_filter
 from app.tools.repository import ToolRepository
 from app.usage.aggregates import sum_tokens_and_cost_by_team
+from app.usage.cost import usage_event_effective_cost_sql
 from app.usage.tokens import usage_event_token_total, usage_event_token_total_sql
 from app.users.repository import UserAdminRepository
 
@@ -69,6 +71,7 @@ def effective_token_total(
 
 
 _TOKEN_TOTAL_EXPR = usage_event_token_total_sql()
+_EFFECTIVE_COST_EXPR = usage_event_effective_cost_sql()
 
 
 def _sum_tokens():
@@ -90,8 +93,15 @@ def _previous_period(from_dt: datetime, to_dt: datetime) -> tuple[datetime, date
 class TokenCostTotals:
     input_tokens: int
     output_tokens: int
+    cache_write_tokens: int
+    cache_read_tokens: int
     total_tokens: int
     estimated_cost: Decimal
+    included_tokens: int
+    billable_tokens: int
+    included_cost: Decimal
+    billable_cost: Decimal
+    breakdown_available: bool
 
 
 class DashboardService:
@@ -175,6 +185,7 @@ class DashboardService:
             self._org_usage_predicate(scope.organization_id, org_team_ids),
             UsageEvent.occurred_at >= from_dt,
             UsageEvent.occurred_at <= to_dt,
+            UsageEvent.provider != "copilot",
         ]
         if scope.user_id is not None:
             email_match = (
@@ -203,6 +214,50 @@ class DashboardService:
         org_tools = await self._tools.list_by_organization(organization_id, active=None)
         return usage_tool_ids_for_filter(org_tools, tool_id)
 
+    async def _cursor_breakdown_available(
+        self,
+        organization_id: UUID,
+        tool_id: UUID | None,
+        usage_tool_ids: list[UUID] | None,
+    ) -> bool:
+        if tool_id is None:
+            return False
+        tools = await self._tools.list_by_organization(organization_id, active=None)
+        tool_by_id = {row.id: row for row in tools}
+        candidate_ids = usage_tool_ids if usage_tool_ids else [tool_id]
+        for candidate_id in candidate_ids:
+            tool = tool_by_id.get(candidate_id)
+            if tool is not None and tool.vendor == "cursor":
+                return True
+        selected = tool_by_id.get(tool_id)
+        return selected is not None and selected.vendor == "cursor"
+
+    async def _resolve_package_allowance(
+        self,
+        scope: DashboardScope,
+        *,
+        team_id: UUID | None = None,
+        tool_id: UUID | None = None,
+    ) -> Decimal:
+        if team_id is not None and tool_id is not None:
+            tool = await self._session.get(Tool, tool_id)
+            if tool is not None:
+                assignment = await self._team_tools.get_by_team_and_tool(team_id, tool_id)
+                resolved = resolve_team_tool_pricing(assignment, tool)
+                flat_monthly = resolved.pricing_config.get("flat_monthly_cost")
+                if flat_monthly is not None:
+                    try:
+                        return Decimal(str(flat_monthly))
+                    except Exception:  # noqa: BLE001
+                        pass
+                if resolved.package_allowance and resolved.token_price:
+                    return (
+                        Decimal(resolved.package_allowance)
+                        * (resolved.token_price / Decimal("1000"))
+                    )
+                return Decimal("0")
+        return await self._package_allowance(scope)
+
     async def _aggregate_totals(
         self,
         scope: DashboardScope,
@@ -223,13 +278,46 @@ class DashboardService:
             tool_id=tool_id,
             usage_tool_ids=usage_tool_ids,
         )
+        breakdown_available = await self._cursor_breakdown_available(
+            scope.organization_id,
+            tool_id,
+            usage_tool_ids,
+        )
+        included_predicate = and_(
+            UsageEvent.included_in_plan.is_(True),
+            UsageEvent.provider == "cursor",
+        )
+        billable_predicate = and_(
+            UsageEvent.included_in_plan.is_(False),
+            UsageEvent.provider == "cursor",
+        )
         result = await self._session.execute(
             select(
                 func.coalesce(func.sum(UsageEvent.input_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.output_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.cache_write_tokens), 0),
                 func.coalesce(func.sum(UsageEvent.cache_read_tokens), 0),
-                func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+                func.coalesce(func.sum(_EFFECTIVE_COST_EXPR), 0),
+                func.coalesce(
+                    func.sum(case((included_predicate, _TOKEN_TOTAL_EXPR), else_=0)),
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(case((billable_predicate, _TOKEN_TOTAL_EXPR), else_=0)),
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(
+                        case((included_predicate, UsageEvent.reference_cost), else_=0)
+                    ),
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(
+                        case((billable_predicate, UsageEvent.estimated_cost), else_=0)
+                    ),
+                    0,
+                ),
             ).where(*filters)
         )
         row = result.one()
@@ -237,16 +325,27 @@ class DashboardService:
         output_tokens = int(row[1])
         cache_write_tokens = int(row[2])
         cache_read_tokens = int(row[3])
+        total_tokens = effective_token_total(
+            input_tokens,
+            output_tokens,
+            cache_write_tokens=cache_write_tokens,
+            cache_read_tokens=cache_read_tokens,
+        )
+        included_cost = Decimal(str(row[7])) if breakdown_available else Decimal("0")
+        billable_cost = Decimal(str(row[8])) if breakdown_available else Decimal("0")
+        total_cost = Decimal(str(row[4]))
         return TokenCostTotals(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            total_tokens=effective_token_total(
-                input_tokens,
-                output_tokens,
-                cache_write_tokens=cache_write_tokens,
-                cache_read_tokens=cache_read_tokens,
-            ),
-            estimated_cost=Decimal(str(row[4])),
+            cache_write_tokens=cache_write_tokens,
+            cache_read_tokens=cache_read_tokens,
+            total_tokens=total_tokens,
+            estimated_cost=total_cost,
+            included_tokens=int(row[5]) if breakdown_available else 0,
+            billable_tokens=int(row[6]) if breakdown_available else 0,
+            included_cost=included_cost,
+            billable_cost=billable_cost,
+            breakdown_available=breakdown_available,
         )
 
     async def _last_updated_at(self, scope: DashboardScope) -> datetime:
@@ -284,6 +383,11 @@ class DashboardService:
             input_tokens=totals.input_tokens,
             output_tokens=totals.output_tokens,
             total_tokens=totals.total_tokens,
+            cache_write_tokens=totals.cache_write_tokens,
+            cache_read_tokens=totals.cache_read_tokens,
+            included_tokens=totals.included_tokens if totals.breakdown_available else None,
+            billable_tokens=totals.billable_tokens if totals.breakdown_available else None,
+            breakdown_available=totals.breakdown_available,
             last_updated_at=await self._last_updated_at(scope),
         )
 
@@ -299,16 +403,37 @@ class DashboardService:
         totals = await self._aggregate_totals(
             scope, from_dt, to_dt, team_id=team_id, tool_id=tool_id
         )
-        allowance = await self._package_allowance(scope)
-        consumed_pct = None
-        if allowance > 0:
-            consumed_pct = float(min((totals.estimated_cost / allowance) * 100, 999.9))
-        overage = max(totals.estimated_cost - allowance, Decimal("0"))
+        allowance = await self._resolve_package_allowance(
+            scope,
+            team_id=team_id,
+            tool_id=tool_id,
+        )
+        if totals.breakdown_available:
+            total_spend = totals.included_cost + totals.billable_cost
+            consumed_pct = None
+            if allowance > 0:
+                consumed_pct = float(min((totals.included_cost / allowance) * 100, 999.9))
+            overage = totals.billable_cost
+            billable_cost = totals.billable_cost
+            included_cost = totals.included_cost
+        else:
+            total_spend = totals.estimated_cost
+            consumed_pct = None
+            if allowance > 0:
+                consumed_pct = float(min((total_spend / allowance) * 100, 999.9))
+            overage = max(total_spend - allowance, Decimal("0"))
+            billable_cost = None
+            included_cost = None
         return CostOverviewWidget(
-            actual_spend=totals.estimated_cost,
+            actual_spend=total_spend,
             package_allowance=allowance,
             allowance_consumed_pct=consumed_pct,
             overage_cost=overage,
+            included_tokens=totals.included_tokens if totals.breakdown_available else None,
+            billable_tokens=totals.billable_tokens if totals.breakdown_available else None,
+            included_cost=included_cost,
+            billable_cost=billable_cost,
+            breakdown_available=totals.breakdown_available,
             last_updated_at=await self._last_updated_at(scope),
         )
 
@@ -353,7 +478,7 @@ class DashboardService:
                 UsageEvent.tool_id,
                 Tool.name,
                 _sum_tokens(),
-                func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+                func.coalesce(func.sum(_EFFECTIVE_COST_EXPR), 0),
             )
             .outerjoin(Tool, Tool.id == UsageEvent.tool_id)
             .where(*filters, UsageEvent.tool_id.is_not(None))
@@ -407,7 +532,7 @@ class DashboardService:
                 select(
                     UsageEvent.team_id,
                     _sum_tokens(),
-                    func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+                    func.coalesce(func.sum(_EFFECTIVE_COST_EXPR), 0),
                 )
                 .where(*filters, UsageEvent.team_id.is_not(None))
                 .group_by(UsageEvent.team_id)
@@ -472,7 +597,7 @@ class DashboardService:
                     UsageEvent.team_id,
                     Team.name,
                     _sum_tokens(),
-                    func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+                    func.coalesce(func.sum(_EFFECTIVE_COST_EXPR), 0),
                 )
                 .join(Team, Team.id == UsageEvent.team_id)
                 .where(*filters, UsageEvent.team_id.is_not(None))
@@ -497,7 +622,7 @@ class DashboardService:
                 UsageEvent.user_email,
                 UsageEvent.team_id,
                 _sum_tokens(),
-                func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+                func.coalesce(func.sum(_EFFECTIVE_COST_EXPR), 0),
                 func.count(UsageEvent.id),
             )
             .where(
@@ -568,7 +693,7 @@ class DashboardService:
             select(
                 bucket,
                 _sum_tokens(),
-                func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+                func.coalesce(func.sum(_EFFECTIVE_COST_EXPR), 0),
             )
             .where(*filters)
             .group_by(bucket)
@@ -662,7 +787,12 @@ class DashboardService:
             allowance = await self._package_allowance(scope)
             if allowance <= 0:
                 return Decimal("0")
-            return (totals.estimated_cost / allowance) * Decimal("100")
+            consumed = (
+                totals.included_cost
+                if totals.breakdown_available
+                else totals.estimated_cost
+            )
+            return (consumed / allowance) * Decimal("100")
         return Decimal(totals.total_tokens)
 
     async def get_threshold_current_value(
@@ -744,7 +874,7 @@ class DashboardService:
                 UsageEvent.team_id,
                 Team.name,
                 _sum_tokens(),
-                func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+                func.coalesce(func.sum(_EFFECTIVE_COST_EXPR), 0),
             )
             .outerjoin(Team, Team.id == UsageEvent.team_id)
             .where(*filters, UsageEvent.team_id.is_not(None))
@@ -764,7 +894,7 @@ class DashboardService:
                     UsageEvent.user_id,
                     UsageEvent.user_email,
                     _sum_tokens(),
-                    func.coalesce(func.sum(UsageEvent.estimated_cost), 0),
+                    func.coalesce(func.sum(_EFFECTIVE_COST_EXPR), 0),
                 )
                 .where(
                     *user_filters,
