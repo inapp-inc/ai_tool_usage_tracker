@@ -21,6 +21,7 @@ import {
   InputLabel,
   MenuItem,
   Select,
+  TextField,
   Step,
   StepLabel,
   Stepper,
@@ -42,6 +43,7 @@ import {
   type UploadRecord,
 } from "@/api/uploads";
 import { fetchTeams, type Team } from "@/api/teams";
+import { fetchTools } from "@/api/tools";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { StatusBadge } from "@/components/data-display/StatusBadge";
@@ -100,20 +102,42 @@ export function UploadsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState<string>("");
+  const [selectedToolId, setSelectedToolId] = useState<string>("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<UploadRecord | null>(null);
   const [dialogStep, setDialogStep] = useState<UploadDialogStep>("file");
   const [activeUploadId, setActiveUploadId] = useState<string | null>(null);
   const [columnMapping, setColumnMapping] = useState<UploadColumnMapping>({});
+  const [filterTeamId, setFilterTeamId] = useState<string>("");
+  const [filterToolId, setFilterToolId] = useState<string>("");
+  const [filterPeriodFrom, setFilterPeriodFrom] = useState<string>("");
+  const [filterPeriodTo, setFilterPeriodTo] = useState<string>("");
 
   const uploadsQuery = useQuery({
-    queryKey: ["uploads"],
-    queryFn: fetchUploads,
+    queryKey: [
+      "uploads",
+      filterTeamId,
+      filterToolId,
+      filterPeriodFrom,
+      filterPeriodTo,
+    ],
+    queryFn: () =>
+      fetchUploads({
+        teamId: filterTeamId || null,
+        toolId: filterToolId || null,
+        periodFrom: filterPeriodFrom || null,
+        periodTo: filterPeriodTo || null,
+      }),
   });
 
   const teamsQuery = useQuery({
     queryKey: ["teams"],
     queryFn: fetchTeams,
+  });
+
+  const catalogToolsQuery = useQuery({
+    queryKey: ["tools", "catalog"],
+    queryFn: () => fetchTools(),
   });
 
   const mappingQuery = useQuery({
@@ -138,10 +162,12 @@ export function UploadsPage() {
     mutationFn: ({
       file,
       teamId,
+      toolId,
     }: {
       file: File;
       teamId: string | null;
-    }) => uploadFile(file, teamId),
+      toolId: string | null;
+    }) => uploadFile(file, teamId, toolId),
     onSuccess: async (record) => {
       await queryClient.invalidateQueries({ queryKey: ["uploads"] });
       if (record.status === "error") {
@@ -173,16 +199,29 @@ export function UploadsPage() {
     mutationFn: deleteUpload,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["uploads"] });
+      await queryClient.invalidateQueries({ queryKey: ["copilot"] });
+      await queryClient.invalidateQueries({ queryKey: ["teams"] });
+      await queryClient.invalidateQueries({ queryKey: ["insights"] });
       setDeleteTarget(null);
     },
   });
 
   const teams = teamsQuery.data ?? EMPTY_TEAMS;
+  const catalogTools = catalogToolsQuery.data ?? [];
+  const selectedTool = catalogTools.find((tool) => tool.id === selectedToolId) ?? null;
+  const isCopilotToolSelected = selectedTool?.provider === "copilot";
+  const isFigmaToolSelected = selectedTool?.provider === "figma";
+  const isBillingToolSelected = isCopilotToolSelected || isFigmaToolSelected;
+  const uploadBlocked =
+    Boolean(selectedFile) &&
+    isBillingToolSelected &&
+    selectedTeamId === "";
 
   const handleCloseDialog = () => {
     setDialogOpen(false);
     setSelectedFile(null);
     setSelectedTeamId("");
+    setSelectedToolId("");
     setIsDragOver(false);
     setDialogStep("file");
     setActiveUploadId(null);
@@ -190,7 +229,10 @@ export function UploadsPage() {
   };
 
   const isCsvUpload = selectedFile?.name.toLowerCase().endsWith(".csv") ?? false;
-  const mappingReady = isColumnMappingReady(columnMapping);
+  const mappingReady = isColumnMappingReady(
+    columnMapping,
+    mappingQuery.data?.fields,
+  );
 
   const handleFileSelect = (file: File | null) => {
     if (!file) {
@@ -225,6 +267,11 @@ export function UploadsPage() {
               <Typography variant="body2" sx={{ fontWeight: 500 }}>
                 {row.fileName}
               </Typography>
+              {row.billingPeriodStart && row.billingPeriodEnd && (
+                <Typography variant="caption" sx={{ color: tokens.textMuted, display: "block" }}>
+                  {row.billingPeriodStart} → {row.billingPeriodEnd}
+                </Typography>
+              )}
               <FormatChip format={row.format} />
             </Box>
           </Box>
@@ -269,6 +316,15 @@ export function UploadsPage() {
         render: (row) => (
           <Typography variant="caption" sx={{ color: tokens.textMuted }}>
             {row.teamName ?? "Org-wide"}
+          </Typography>
+        ),
+      },
+      {
+        key: "toolName",
+        header: "Tool",
+        render: (row) => (
+          <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+            {row.toolName ?? "—"}
           </Typography>
         ),
       },
@@ -365,6 +421,57 @@ export function UploadsPage() {
           >
             Upload File
           </Button>
+        </Box>
+
+        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mb: 2 }}>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel id="upload-filter-team">Team</InputLabel>
+            <Select
+              labelId="upload-filter-team"
+              label="Team"
+              value={filterTeamId}
+              onChange={(event) => setFilterTeamId(event.target.value)}
+            >
+              <MenuItem value="">All teams</MenuItem>
+              {teams.map((team) => (
+                <MenuItem key={team.id} value={team.id}>
+                  {team.name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel id="upload-filter-tool">Tool</InputLabel>
+            <Select
+              labelId="upload-filter-tool"
+              label="Tool"
+              value={filterToolId}
+              onChange={(event) => setFilterToolId(event.target.value)}
+            >
+              <MenuItem value="">All tools</MenuItem>
+              {catalogTools.map((tool) => (
+                <MenuItem key={tool.id} value={tool.id}>
+                  {tool.name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <TextField
+            size="small"
+            label="Period from"
+            type="date"
+            InputLabelProps={{ shrink: true }}
+            value={filterPeriodFrom}
+            onChange={(event) => setFilterPeriodFrom(event.target.value)}
+          />
+          <TextField
+            size="small"
+            label="Period to"
+            type="date"
+            InputLabelProps={{ shrink: true }}
+            value={filterPeriodTo}
+            onChange={(event) => setFilterPeriodTo(event.target.value)}
+          />
         </Box>
 
         {uploadsQuery.isError && (
@@ -547,7 +654,45 @@ export function UploadsPage() {
               </Select>
             </FormControl>
 
-            {selectedFile && (
+            <FormControl fullWidth size="small" sx={{ mt: 2 }}>
+              <InputLabel id="upload-tool-label">Tool (optional)</InputLabel>
+              <Select
+                labelId="upload-tool-label"
+                label="Tool (optional)"
+                value={selectedToolId}
+                onChange={(event) => setSelectedToolId(event.target.value)}
+              >
+                <MenuItem value="">Auto-detect from data</MenuItem>
+                {catalogTools.map((tool) => (
+                  <MenuItem key={tool.id} value={tool.id}>
+                    {tool.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            {isCopilotToolSelected && (
+              <Alert severity="info" sx={{ mt: 1 }}>
+                Copilot billing CSV requires a team assignment. Map SKU and unit type
+                columns after upload — usage events are not imported.
+              </Alert>
+            )}
+
+            {isFigmaToolSelected && (
+              <Alert severity="info" sx={{ mt: 1 }}>
+                Figma billing CSV requires a team with Figma pricing configured (full/view
+                seat costs and credits per USD). One row per user is imported per usage period.
+              </Alert>
+            )}
+
+            {uploadBlocked && (
+              <Alert severity="warning" sx={{ mt: 1 }}>
+                Select a team before uploading{" "}
+                {isFigmaToolSelected ? "Figma" : "Copilot"} billing data.
+              </Alert>
+            )}
+
+            {selectedFile && !isBillingToolSelected && (
               <Alert severity="info" sx={{ mt: 1 }}>
                 {isCsvUpload
                   ? "After upload, map CSV columns to fields. If you assign a team, usage and members import to that team."
@@ -581,12 +726,15 @@ export function UploadsPage() {
             ) : (
             <Button
               variant="contained"
-              disabled={!selectedFile || uploadMutation.isPending}
+              disabled={
+                !selectedFile || uploadMutation.isPending || uploadBlocked
+              }
               onClick={() => {
                 if (selectedFile) {
                   uploadMutation.mutate({
                     file: selectedFile,
                     teamId: selectedTeamId === "" ? null : selectedTeamId,
+                    toolId: selectedToolId === "" ? null : selectedToolId,
                   });
                 }
               }}

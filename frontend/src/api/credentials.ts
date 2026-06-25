@@ -110,8 +110,13 @@ export async function updateCredential(
   return mapApiCredential(updated);
 }
 
-export async function revokeCredential(id: string): Promise<void> {
+export async function deleteCredential(id: string): Promise<void> {
   await apiRequest<void>(`/credentials/${id}`, { method: "DELETE" });
+}
+
+/** @deprecated Use deleteCredential */
+export async function revokeCredential(id: string): Promise<void> {
+  await deleteCredential(id);
 }
 
 /** Fetch full decrypted API key for clipboard copy (super_admin only). */
@@ -127,6 +132,7 @@ export const credentialsApi = {
   createCredential,
   validateCredential,
   updateCredential,
+  deleteCredential,
   revokeCredential,
   revealCredentialSecret,
 };

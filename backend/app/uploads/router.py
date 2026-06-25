@@ -1,9 +1,10 @@
 """Uploads REST API."""
 
 import uuid
+from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.router import get_audit_recorder, record_audit_event
@@ -32,6 +33,10 @@ def get_upload_service(session: AsyncSession = Depends(get_session)) -> UploadSe
 
 @router.get("", response_model=UploadListResponse)
 async def list_uploads(
+    team_id: UUID | None = Query(default=None),
+    tool_id: UUID | None = Query(default=None),
+    period_from: date | None = Query(default=None),
+    period_to: date | None = Query(default=None),
     current_user: User = Depends(require_permission("uploads", "read")),
     managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("uploads")),
     service: UploadService = Depends(get_upload_service),
@@ -39,6 +44,10 @@ async def list_uploads(
     return await service.list_uploads(
         current_user.organization_id,
         team_ids=managed_team_ids if managed_team_ids else None,
+        team_id=team_id,
+        tool_id=tool_id,
+        period_from=period_from,
+        period_to=period_to,
     )
 
 
@@ -46,10 +55,11 @@ async def list_uploads(
 async def create_upload(
     file: UploadFile = File(...),
     team_id: UUID | None = Form(default=None),
+    tool_id: UUID | None = Form(default=None),
     current_user: User = Depends(require_permission("uploads", "write")),
     service: UploadService = Depends(get_upload_service),
 ) -> UploadCreateResponse:
-    return await service.create_upload(current_user, file=file, team_id=team_id)
+    return await service.create_upload(current_user, file=file, team_id=team_id, tool_id=tool_id)
 
 
 @router.get("/{upload_id}/mapping", response_model=UploadMappingResponse)

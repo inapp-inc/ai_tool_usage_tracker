@@ -60,6 +60,51 @@ def test_calculate_pricing_cost_includes_seat_fixed_cost() -> None:
     assert cost == Decimal("100")
 
 
+def test_calculate_pricing_cost_per_team_multiplies_by_members() -> None:
+    pricing = _pricing(
+        pricing_model="custom",
+        token_price=Decimal("0"),
+        output_token_price=None,
+        cost_per_seat=None,
+        seat_count=8,
+        pricing_config={
+            "model": "per_team",
+            "flat_monthly_cost": 39,
+            "cost_per_team": 39,
+            "seat_count": 8,
+        },
+    )
+
+    cost = calculate_pricing_cost(
+        pricing,
+        input_tokens=0,
+        output_tokens=0,
+        total_tokens=0,
+    )
+
+    assert cost == Decimal("312")
+
+
+def test_calculate_pricing_cost_per_user_multiplies_by_user_count() -> None:
+    pricing = _pricing(
+        pricing_model="custom",
+        token_price=Decimal("0"),
+        output_token_price=None,
+        cost_per_seat=Decimal("5"),
+        seat_count=12,
+        pricing_config={"model": "per_seat", "cost_per_seat": 5, "seat_count": 12},
+    )
+
+    cost = calculate_pricing_cost(
+        pricing,
+        input_tokens=0,
+        output_tokens=0,
+        total_tokens=0,
+    )
+
+    assert cost == Decimal("60")
+
+
 def test_calculate_pricing_cost_package_overage() -> None:
     pricing = _pricing(
         pricing_model="package_with_overage",

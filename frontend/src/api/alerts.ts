@@ -32,7 +32,7 @@ export interface AlertRule {
 
 export interface AlertEvent {
   id: string;
-  ruleId: string;
+  ruleId: string | null;
   ruleName: string;
   severity: AlertSeverity;
   message: string;

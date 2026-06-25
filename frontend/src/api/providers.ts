@@ -224,6 +224,10 @@ export function providerRequiresOpenAiAdminKey(slug: string): boolean {
   return slug === "openai";
 }
 
+export function providerRequiresAnthropicAdminKey(slug: string): boolean {
+  return slug === "anthropic";
+}
+
 export function providerRequiresGcpMonitoring(slug: string): boolean {
   return slug === "google";
 }

@@ -34,7 +34,7 @@ export interface ApiThreshold {
 
 export interface ApiThresholdEvent {
   id: string;
-  rule_id: string;
+  rule_id: string | null;
   rule_name: string;
   severity: string;
   message: string;
@@ -119,7 +119,7 @@ export function mapApiThreshold(api: ApiThreshold): AlertRule {
 export function mapApiThresholdEvent(api: ApiThresholdEvent): AlertEvent {
   return {
     id: api.id,
-    ruleId: api.rule_id,
+    ruleId: api.rule_id ?? null,
     ruleName: api.rule_name,
     severity: severityFromApi(api.severity),
     message: api.message,

@@ -67,7 +67,7 @@ class ThresholdUpdateRequest(BaseModel):
 
 class ThresholdEventResponse(BaseModel):
     id: UUID
-    rule_id: UUID
+    rule_id: UUID | None = None
     rule_name: str
     severity: AlertSeverityApi
     message: str

@@ -138,6 +138,7 @@ class ThresholdEventRepository:
         *,
         organization_id: UUID,
         threshold_id: UUID,
+        rule_name: str,
         severity: str,
         message: str,
         team_id: UUID | None = None,
@@ -145,6 +146,7 @@ class ThresholdEventRepository:
         row = ThresholdEvent(
             organization_id=organization_id,
             threshold_id=threshold_id,
+            rule_name=rule_name,
             severity=severity,
             message=message,
             team_id=team_id,

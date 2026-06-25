@@ -71,7 +71,7 @@ async def create_threshold(
 
 @router.get("/events", response_model=ThresholdEventListResponse)
 async def list_threshold_events(
-    current_user: User = Depends(require_permission("alerts", "write")),
+    current_user: User = Depends(require_permission("alerts", "read")),
     managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("alerts")),
     service: ThresholdService = Depends(get_threshold_service),
 ) -> ThresholdEventListResponse:

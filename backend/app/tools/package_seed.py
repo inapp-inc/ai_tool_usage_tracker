@@ -21,7 +21,7 @@ async def sync_packages_for_catalogue_tool(
         return
 
     vendor = tool.vendor
-    billing_type = billing_type_for_vendor(vendor)
+    default_billing_type = billing_type_for_vendor(vendor)
     seeds = packages_for_vendor(vendor)
     if not seeds:
         return
@@ -32,6 +32,7 @@ async def sync_packages_for_catalogue_tool(
     existing_by_name = {row.package_name: row for row in result.scalars().all()}
 
     for seed in seeds:
+        billing_type = seed.billing_type or default_billing_type
         row = existing_by_name.get(seed.package_name)
         if row is None:
             session.add(

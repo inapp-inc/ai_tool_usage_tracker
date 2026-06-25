@@ -28,7 +28,7 @@ import { z } from "zod";
 import { emptyTeamToolPackageBinding, emptyTeamToolPricing } from "@/api/adapters/teamTools";
 import type { TeamToolPackageBinding } from "@/api/adapters/teamTools";
 import type { ToolPricing, ToolProvider } from "@/api/adapters/tools";
-import { fetchTools } from "@/api/tools";
+import { fetchTools, normalizePricing } from "@/api/tools";
 import { syncTeamToolAssignments, fetchTeamTools } from "@/api/teamTools";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
@@ -73,6 +73,7 @@ interface ToolDetailState {
   team: Team | null;
   toolId: string | null;
   toolName: string;
+  toolProvider: ToolProvider | null;
 }
 
 function truncateDescription(text: string, maxLength = 60): string {
@@ -157,6 +158,7 @@ export function TeamsPage() {
     team: null,
     toolId: null,
     toolName: "",
+    toolProvider: null,
   });
   const [deleteTarget, setDeleteTarget] = useState<Team | null>(null);
   const [toolPricingById, setToolPricingById] = useState<Record<string, ToolPricing>>({});
@@ -261,7 +263,7 @@ export function TeamsPage() {
       });
 
       setAssignmentsLoading(true);
-      void fetchTeamTools(slideOver.team.id)
+      void fetchTeamTools(slideOver.team.id, Object.fromEntries(providerByToolId))
         .then((rows) => {
           const pricing: Record<string, ToolPricing> = {};
           const packages: Record<string, TeamToolPackageBinding> = {};
@@ -293,11 +295,20 @@ export function TeamsPage() {
     });
     setToolPricingById({});
     setToolPackageById({});
-  }, [reset, slideOver.open, slideOver.team?.id]);
+  }, [reset, slideOver.open, slideOver.team?.id, providerByToolId]);
 
-  const handleToolClick = useCallback((team: Team, toolId: string, toolName: string) => {
-    setToolDetail({ open: true, team, toolId, toolName });
-  }, []);
+  const handleToolClick = useCallback(
+    (team: Team, toolId: string, toolName: string) => {
+      setToolDetail({
+        open: true,
+        team,
+        toolId,
+        toolName,
+        toolProvider: providerByToolId.get(toolId) ?? null,
+      });
+    },
+    [providerByToolId],
+  );
 
   const handleRefreshTeam = useCallback(
     async (team: Team) => {
@@ -310,6 +321,7 @@ export function TeamsPage() {
           queryClient.invalidateQueries({ queryKey: ["tool-options"] }),
           queryClient.invalidateQueries({ queryKey: ["team-tool-assignment"] }),
           queryClient.invalidateQueries({ queryKey: ["team-tool-usage"] }),
+          queryClient.invalidateQueries({ queryKey: ["team-tool-copilot-billing"] }),
         ]);
 
         if (result.syncedCount === 0 && result.failedCount === 0) {
@@ -411,7 +423,7 @@ export function TeamsPage() {
         header: "Total cost",
         sortable: true,
         render: (row) => (
-          <Tooltip title="Sum of recorded usage cost this calendar month (UTC)">
+          <Tooltip title="All-time usage cost plus imported Copilot billing">
             <Typography variant="body2">{formatCost(row.totalCost)}</Typography>
           </Tooltip>
         ),
@@ -676,7 +688,15 @@ export function TeamsPage() {
                             const next = { ...previous };
                             for (const toolId of nextIds) {
                               if (!next[toolId]) {
-                                next[toolId] = emptyTeamToolPricing();
+                                const provider = providerByToolId.get(toolId);
+                                next[toolId] =
+                                  provider === "copilot"
+                                    ? normalizePricing({
+                                        ...emptyTeamToolPricing(),
+                                        model: "per_seat",
+                                        seatCount: 1,
+                                      })
+                                    : emptyTeamToolPricing();
                               }
                             }
                             return next;
@@ -752,12 +772,16 @@ export function TeamsPage() {
                     <AccordionDetails>
                       <TeamToolPackageSelector
                         toolId={toolId}
+                        vendor={providerByToolId.get(toolId)}
                         value={toolPackageById[toolId] ?? emptyTeamToolPackageBinding()}
                         pricing={toolPricingById[toolId] ?? emptyTeamToolPricing()}
                         onChange={(pkg) =>
                           setToolPackageById((previous) => ({
                             ...previous,
-                            [toolId]: pkg,
+                            [toolId]: {
+                              ...(previous[toolId] ?? emptyTeamToolPackageBinding()),
+                              ...pkg,
+                            },
                           }))
                         }
                         onPricingChange={(pricing) =>
@@ -767,9 +791,13 @@ export function TeamsPage() {
                           }))
                         }
                         disabled={assignmentsLoading || savePending}
+                        teamMemberCount={slideOver.team?.memberCount ?? 0}
                       />
+                      {providerByToolId.get(toolId) !== "copilot" && (
                       <ToolPricingFields
                         value={toolPricingById[toolId] ?? emptyTeamToolPricing()}
+                        vendor={providerByToolId.get(toolId)}
+                        billingType={toolPackageById[toolId]?.billingType ?? null}
                         onChange={(pricing) =>
                           setToolPricingById((previous) => ({
                             ...previous,
@@ -778,6 +806,7 @@ export function TeamsPage() {
                         }
                         disabled={assignmentsLoading || savePending}
                       />
+                      )}
                     </AccordionDetails>
                   </Accordion>
                 ))}
@@ -853,11 +882,18 @@ export function TeamsPage() {
         <TeamToolDetailSlideOver
           open={toolDetail.open}
           onClose={() =>
-            setToolDetail({ open: false, team: null, toolId: null, toolName: "" })
+            setToolDetail({
+              open: false,
+              team: null,
+              toolId: null,
+              toolName: "",
+              toolProvider: null,
+            })
           }
           team={toolDetail.team}
           toolId={toolDetail.toolId}
           toolName={toolDetail.toolName}
+          toolProvider={toolDetail.toolProvider}
         />
 
         <ConfirmDialog

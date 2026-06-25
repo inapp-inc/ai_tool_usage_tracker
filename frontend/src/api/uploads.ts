@@ -29,9 +29,20 @@ export interface UploadRecord {
   uploadedByName: string;
   teamId: string | null;
   teamName: string | null;
+  toolId: string | null;
+  toolName: string | null;
+  billingPeriodStart: string | null;
+  billingPeriodEnd: string | null;
   fileSizeKb: number;
   createdAt: string;
   processedAt: string | null;
+}
+
+export interface UploadListFilters {
+  teamId?: string | null;
+  toolId?: string | null;
+  periodFrom?: string | null;
+  periodTo?: string | null;
 }
 
 export interface UploadPreviewRow {
@@ -55,10 +66,13 @@ export interface UploadPreview {
   fileName: string;
   teamId: string | null;
   teamName: string | null;
+  toolId: string | null;
   totalRows: number;
   validRows: number;
   errorRows: number;
   rows: UploadPreviewRow[];
+  copilotSummary: CopilotImportSummary | null;
+  figmaSummary: FigmaImportSummary | null;
 }
 
 export interface SubmitUploadRequest {
@@ -81,6 +95,63 @@ export interface UploadColumnMapping {
   tokens?: string | null;
   timestamp?: string | null;
   tool?: string | null;
+  sku?: string | null;
+  unit_type?: string | null;
+  monthly_amount?: string | null;
+  net_amount?: string | null;
+  quantity?: string | null;
+  billing_period_start?: string | null;
+  billing_period_end?: string | null;
+  user_login?: string | null;
+  user_id?: string | null;
+  user_email?: string | null;
+  user_name?: string | null;
+  seat_type?: string | null;
+  seat_credits_used?: string | null;
+  paid_credits_used?: string | null;
+  last_activity?: string | null;
+  usage_period_start?: string | null;
+  usage_period_end?: string | null;
+}
+
+export interface CopilotImportSummary {
+  monthlyCostLimit: number;
+  additionalCost: number;
+  creditsCost: number;
+  totalCost: number;
+  periodConflicts?: Array<{
+    billingPeriodStart: string;
+    billingPeriodEnd: string;
+    existingFilename: string;
+    existingUploadId: string;
+  }>;
+  skuBreakdown: Array<{
+    sku: string;
+    billingPeriodStart: string | null;
+    billingPeriodEnd: string | null;
+    monthlyCostLimit: number;
+    additionalCost: number;
+    totalCost: number;
+    seatCount: number;
+    rowCount: number;
+  }>;
+}
+
+export interface FigmaImportSummary {
+  totalSeatCost: number;
+  totalPaidCost: number;
+  totalCost: number;
+  fullSeatCount: number;
+  viewSeatCount: number;
+  userCount: number;
+  periodCount: number;
+  creditsPerUsd: number | null;
+  periodConflicts?: Array<{
+    usagePeriodStart: string;
+    usagePeriodEnd: string;
+    existingFilename: string;
+    existingUploadId: string;
+  }>;
 }
 
 export interface UploadMapping {
@@ -95,19 +166,39 @@ export interface UploadMapping {
 
 export type { ApiUpload, ApiUploadPreview, ApiUploadMapping } from "./adapters/uploads";
 
-export async function fetchUploads(): Promise<UploadRecord[]> {
-  const rows = await apiRequest<ApiUpload[]>("/uploads");
+export async function fetchUploads(
+  filters: UploadListFilters = {},
+): Promise<UploadRecord[]> {
+  const params = new URLSearchParams();
+  if (filters.teamId) {
+    params.set("team_id", filters.teamId);
+  }
+  if (filters.toolId) {
+    params.set("tool_id", filters.toolId);
+  }
+  if (filters.periodFrom) {
+    params.set("period_from", filters.periodFrom);
+  }
+  if (filters.periodTo) {
+    params.set("period_to", filters.periodTo);
+  }
+  const query = params.toString();
+  const rows = await apiRequest<ApiUpload[]>(`/uploads${query ? `?${query}` : ""}`);
   return rows.map(mapApiUpload);
 }
 
 export async function uploadFile(
   file: File,
   teamId: string | null,
+  toolId: string | null = null,
 ): Promise<UploadRecord> {
   const formData = new FormData();
   formData.append("file", file);
   if (teamId) {
     formData.append("team_id", teamId);
+  }
+  if (toolId) {
+    formData.append("tool_id", toolId);
   }
 
   const response = await apiFetch("/uploads", {

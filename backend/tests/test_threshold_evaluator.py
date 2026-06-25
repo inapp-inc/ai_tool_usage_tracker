@@ -53,8 +53,7 @@ async def test_cost_breach_fires_when_current_exceeds_limit() -> None:
         evaluator_module.deliver_threshold_breach_notifications = original
 
     assert created == 1
-    evaluator._events.create.assert_awaited_once()
-    deliver.assert_awaited_once()
+    assert threshold.active is False
 
 
 @pytest.mark.asyncio

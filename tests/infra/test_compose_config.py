@@ -39,11 +39,40 @@ def test_frontend_production_service() -> None:
     assert "4501" in str(frontend.get("ports", []))
 
 
-def test_frontend_dev_default_service() -> None:
+def test_frontend_dev_dev_profile_only() -> None:
     compose = _load_compose()
     frontend_dev = compose["services"]["frontend-dev"]
-    assert frontend_dev.get("profiles") is None
+    assert frontend_dev.get("profiles") == ["dev"]
     assert "5173" in str(frontend_dev.get("ports", []))
+
+
+def test_prod_profile_excludes_frontend_dev() -> None:
+    """Production (--profile prod) must not start the Vite dev container."""
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(COMPOSE_FILE),
+            "-f",
+            str(REPO_ROOT / "docker-compose.prod.yml"),
+            "--profile",
+            "prod",
+            "config",
+            "--services",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=REPO_ROOT,
+    )
+    services = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    assert "frontend-dev" not in services
+    assert "frontend" in services
+    assert "api" in services
+    assert "postgres" in services
 
 
 def test_postgres_default_host_port_is_5433() -> None:

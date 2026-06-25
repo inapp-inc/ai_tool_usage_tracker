@@ -70,7 +70,7 @@ export function UploadMappingPage() {
     );
   }
 
-  const mappingReady = isColumnMappingReady(mapping);
+  const mappingReady = isColumnMappingReady(mapping, mappingQuery.data?.fields);
 
   return (
     <Box>

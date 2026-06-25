@@ -4,7 +4,8 @@ from app.models.admin import Team, TeamMembership, TeamTool, Tool, ToolPackage
 from app.models.auth import Organization, RefreshToken, User
 from app.models.roles import Role, RolePermission
 from app.models.collector import CollectorConfig, CollectorRun, UsageEvent
-from app.models.copilot import CopilotOrganization, CopilotSeat, CopilotUserUsage
+from app.models.copilot import CopilotBillingImport, CopilotOrganization, CopilotSeat, CopilotUserUsage
+from app.models.figma import FigmaBillingImport, FigmaBillingImportUser
 from app.models.ingestion import ParsedRow, Upload
 from app.models.notifications import InAppNotification, Threshold, ThresholdEvent
 

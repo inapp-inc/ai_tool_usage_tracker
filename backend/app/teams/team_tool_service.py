@@ -12,6 +12,7 @@ from app.models.admin import Team, TeamTool, Tool, ToolPackage
 from app.models.auth import User
 from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.repository import TeamRepository
+from app.teams.team_tool_repository import TeamToolRepository
 from app.teams.schemas import (
     PaginationMeta,
     TeamSyncResponse,
@@ -21,7 +22,7 @@ from app.teams.schemas import (
     TeamToolSyncResult,
     TeamToolUpdateRequest,
 )
-from app.teams.team_tool_repository import TeamToolRepository
+from app.teams.team_tool_alert_sync import sync_team_tool_cost_alert
 from app.tools.catalogue import catalogue_tool_id_from_connected, connected_to_catalogue_map, team_id_from_connected
 from app.tools.pricing import merge_pricing_config, normalize_pricing_config, validate_pricing_model
 from app.tools.repository import ToolRepository
@@ -74,8 +75,16 @@ class TeamToolService:
         self._apply_pricing_fields(assignment, body)
         await self._apply_package_binding(assignment, body, tool)
         self._apply_subscription_fields(assignment, body)
+        self._validate_copilot_assignment(tool, assignment)
         await self._team_tools.create(assignment)
         await self._ensure_tool_on_team(team, tool.id)
+        await sync_team_tool_cost_alert(
+            self._session,
+            organization_id=user.organization_id,
+            team=team,
+            tool=tool,
+            assignment=assignment,
+        )
         await self._session.commit()
         await self._session.refresh(assignment)
         return self._to_response(assignment, tool.name)
@@ -93,6 +102,14 @@ class TeamToolService:
         self._apply_pricing_fields(assignment, body)
         await self._apply_package_binding(assignment, body, tool)
         self._apply_subscription_fields(assignment, body)
+        self._validate_copilot_assignment(tool, assignment)
+        await sync_team_tool_cost_alert(
+            self._session,
+            organization_id=user.organization_id,
+            team=team,
+            tool=tool,
+            assignment=assignment,
+        )
         await self._session.commit()
         await self._session.refresh(assignment)
         return self._to_response(assignment, tool.name)
@@ -438,6 +455,8 @@ class TeamToolService:
             assignment.monthly_budget = body.monthly_budget
         if "alert_threshold" in updates:
             assignment.alert_threshold = body.alert_threshold
+        if "alert_threshold_usd" in updates:
+            assignment.alert_threshold_usd = body.alert_threshold_usd
 
     async def _apply_package_binding(
         self,
@@ -473,21 +492,81 @@ class TeamToolService:
             if isinstance(assignment.pricing_config, dict)
             else {}
         )
+        config["plan_name"] = package.package_name
+
+        if tool.vendor == "copilot" and package.billing_type == "CREDIT_BASED":
+            model = str(config.get("model") or "per_seat")
+            assignment.pricing_model = "custom"
+            if assignment.seat_count is None:
+                assignment.seat_count = 1
+            config["seat_count"] = assignment.seat_count
+            config["model"] = model
+            if model == "per_team":
+                if config.get("flat_monthly_cost") is None and assignment.cost_per_seat is not None:
+                    config["flat_monthly_cost"] = str(assignment.cost_per_seat)
+                if config.get("cost_per_team") is None and config.get("flat_monthly_cost") is not None:
+                    config["cost_per_team"] = config["flat_monthly_cost"]
+                config.pop("cost_per_seat", None)
+                assignment.cost_per_seat = None
+            else:
+                if assignment.cost_per_seat is None and config.get("cost_per_seat") is not None:
+                    assignment.cost_per_seat = Decimal(str(config["cost_per_seat"]))
+                config["cost_per_seat"] = (
+                    str(assignment.cost_per_seat)
+                    if assignment.cost_per_seat is not None
+                    else None
+                )
+                config.pop("flat_monthly_cost", None)
+                config.pop("cost_per_team", None)
+            assignment.pricing_config = config
+            return
+
+        if tool.vendor == "copilot" and package.billing_type != "CREDIT_BASED":
+            model = str(config.get("model") or "per_seat")
+            assignment.pricing_model = "custom"
+            if assignment.seat_count is None:
+                assignment.seat_count = package.seat_limit or 1
+            config["seat_count"] = assignment.seat_count
+
+            if model == "per_team":
+                if config.get("flat_monthly_cost") is None and package.monthly_price is not None:
+                    config["flat_monthly_cost"] = str(package.monthly_price)
+                    config["cost_per_team"] = str(package.monthly_price)
+                config["model"] = "per_team"
+                assignment.pricing_config = config
+                return
+
+            if assignment.cost_per_seat is None and package.monthly_price is not None:
+                assignment.cost_per_seat = package.monthly_price
+            config["cost_per_seat"] = (
+                str(assignment.cost_per_seat)
+                if assignment.cost_per_seat is not None
+                else None
+            )
+            config.pop("flat_monthly_cost", None)
+            config.pop("cost_per_team", None)
+            config["model"] = "per_seat"
+            assignment.pricing_config = config
+            return
+
         if package.monthly_price is not None:
             config["flat_monthly_cost"] = str(package.monthly_price)
-        config["plan_name"] = package.package_name
         assignment.pricing_config = config
 
         if package.billing_type == "SEAT_BASED":
             assignment.pricing_model = "custom"
-            if package.seat_limit is not None:
+            if assignment.seat_count is None and package.seat_limit is not None:
                 assignment.seat_count = package.seat_limit
-            if package.monthly_price is not None:
+            if assignment.cost_per_seat is None and package.monthly_price is not None:
                 assignment.cost_per_seat = package.monthly_price
             config["cost_per_seat"] = (
-                str(package.monthly_price) if package.monthly_price is not None else None
+                str(assignment.cost_per_seat)
+                if assignment.cost_per_seat is not None
+                else None
             )
-            config["seat_count"] = package.seat_limit
+            config["seat_count"] = assignment.seat_count
+            config.pop("flat_monthly_cost", None)
+            config["model"] = "per_seat"
             assignment.pricing_config = config
             return
 
@@ -508,6 +587,21 @@ class TeamToolService:
             package_allowance=assignment.package_allowance,
             overage_price=assignment.overage_price,
         )
+
+    @staticmethod
+    def _validate_copilot_assignment(tool: Tool, assignment: TeamTool) -> None:
+        if tool.vendor != "copilot":
+            return
+        if assignment.package_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="GitHub Copilot requires a subscription package.",
+            )
+        if assignment.seat_count is not None and assignment.seat_count < 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Copilot seat count must be at least 1.",
+            )
 
     @staticmethod
     def _to_response(assignment: TeamTool, tool_name: str) -> TeamToolAssignmentResponse:
@@ -531,6 +625,7 @@ class TeamToolService:
             subscription_end=assignment.subscription_end,
             monthly_budget=assignment.monthly_budget,
             alert_threshold=assignment.alert_threshold,
+            alert_threshold_usd=assignment.alert_threshold_usd,
             created_at=assignment.created_at,
             updated_at=assignment.updated_at,
         )

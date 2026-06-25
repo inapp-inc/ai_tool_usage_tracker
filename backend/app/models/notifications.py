@@ -79,11 +79,12 @@ class ThresholdEvent(Base):
         ForeignKey("auth.organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
-    threshold_id: Mapped[uuid.UUID] = mapped_column(
+    threshold_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("admin.thresholds.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("admin.thresholds.id", ondelete="SET NULL"),
+        nullable=True,
     )
+    rule_name: Mapped[str] = mapped_column(String(100), nullable=False, default="Alert")
     severity: Mapped[str] = mapped_column(String(16), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     team_id: Mapped[uuid.UUID | None] = mapped_column(

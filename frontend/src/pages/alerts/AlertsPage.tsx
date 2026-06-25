@@ -266,7 +266,6 @@ export function AlertsPage() {
   const historyQuery = useQuery({
     queryKey: ["alerts", "history"],
     queryFn: fetchAlertHistory,
-    enabled: activeTab === 1,
   });
 
   const teamsQuery = useQuery({
@@ -315,6 +314,7 @@ export function AlertsPage() {
     mutationFn: deleteAlertRule,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["alerts", "rules"] });
+      await queryClient.invalidateQueries({ queryKey: ["alerts", "history"] });
       setDeleteTarget(null);
     },
   });
@@ -511,6 +511,22 @@ export function AlertsPage() {
         ),
       },
       {
+        key: "status",
+        header: "Status",
+        render: (row) => (
+          <Chip
+            size="small"
+            label={row.acknowledgedAt ? "Completed" : "Triggered"}
+            sx={{
+              fontWeight: 600,
+              fontSize: "0.6875rem",
+              backgroundColor: row.acknowledgedAt ? "#DCFCE7" : "#FEF9C3",
+              color: row.acknowledgedAt ? "#166534" : "#A16207",
+            }}
+          />
+        ),
+      },
+      {
         key: "triggeredAt",
         header: "Triggered",
         sortable: true,
@@ -565,7 +581,7 @@ export function AlertsPage() {
     navigate(newValue === 1 ? "/alerts/history" : "/alerts");
   };
 
-  const rules = rulesQuery.data ?? [];
+  const rules = (rulesQuery.data ?? []).filter((rule) => rule.status === "active");
   const history = historyQuery.data ?? [];
 
   return (

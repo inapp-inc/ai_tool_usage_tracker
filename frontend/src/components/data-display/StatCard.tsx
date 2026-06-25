@@ -153,7 +153,18 @@ export function StatCard({
         leaveTouchDelay={4000}
         slotProps={{
           tooltip: {
-            sx: { maxWidth: 320, p: 1.5 },
+            sx: {
+              maxWidth: 320,
+              p: 1.5,
+              backgroundColor: "#000",
+              color: "#fff",
+              fontWeight: 700,
+              "& .MuiTooltip-arrow": { color: "#000" },
+              "& .MuiTypography-root": {
+                color: "#fff",
+                fontWeight: 700,
+              },
+            },
           },
         }}
       >

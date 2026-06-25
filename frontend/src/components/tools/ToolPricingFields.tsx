@@ -8,12 +8,13 @@ import {
   Typography,
 } from "@mui/material";
 
-import type { PricingModel, ToolPricing } from "@/api/adapters/tools";
+import type { BillingType, PricingModel, ToolPricing, ToolProvider } from "@/api/adapters/tools";
 import { tokens } from "@/theme/palette";
 
 const MODEL_LABELS: Record<PricingModel, string> = {
   per_token: "Per token",
   per_seat: "Per seat",
+  per_team: "Per team",
   flat_fee: "Flat fee",
   hybrid: "Hybrid",
 };
@@ -30,18 +31,40 @@ interface ToolPricingFieldsProps {
   value: ToolPricing;
   onChange: (value: ToolPricing) => void;
   disabled?: boolean;
+  vendor?: ToolProvider;
+  billingType?: BillingType | null;
 }
 
 export function ToolPricingFields({
   value,
   onChange,
   disabled = false,
+  vendor,
+  billingType = null,
 }: ToolPricingFieldsProps) {
   const set = (patch: Partial<ToolPricing>) => onChange({ ...value, ...patch });
+  const isCopilot = vendor === "copilot";
+  const isCopilotCreditPackage = isCopilot && billingType === "CREDIT_BASED";
+
+  if (isCopilotCreditPackage) {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+        <Typography variant="body2" sx={{ color: tokens.textMuted }}>
+          Actual AI credit spend is calculated from billing CSV imports in Insights.
+        </Typography>
+      </Box>
+    );
+  }
+
+  if (isCopilot) {
+    return null;
+  }
 
   const showTokenFields = value.model === "per_token" || value.model === "hybrid";
   const showSeatFields = value.model === "per_seat" || value.model === "hybrid";
-  const showPackageFields = value.model === "flat_fee" || value.model === "hybrid";
+  const showTeamFields = value.model === "per_team";
+  const showPackageFields =
+    value.model === "flat_fee" || value.model === "hybrid" || value.model === "per_team";
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
@@ -115,7 +138,22 @@ export function ToolPricingFields({
         </Box>
       )}
 
-      {showPackageFields && (
+      {showTeamFields && (
+        <TextField
+          fullWidth
+          size="small"
+          label="Cost per team (USD)"
+          type="number"
+          disabled={disabled}
+          value={value.flatMonthlyCost ?? ""}
+          onChange={(event) =>
+            set({ flatMonthlyCost: parseOptionalNumber(event.target.value) })
+          }
+          helperText="Monthly cost is multiplied by the number of team members."
+        />
+      )}
+
+      {showPackageFields && value.model !== "per_team" && (
         <>
           <TextField
             fullWidth

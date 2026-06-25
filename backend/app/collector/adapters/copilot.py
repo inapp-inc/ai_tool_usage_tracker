@@ -58,6 +58,36 @@ def _require_org_id(pricing_config: dict | None) -> str:
     return org_id
 
 
+def _metrics_day_window(since: datetime, until: datetime, *, today: date | None = None) -> tuple[date, date]:
+    latest_available_day = (today or datetime.now(UTC).date()) - timedelta(days=1)
+    start_day = since.astimezone(UTC).date()
+    end_day = min(until.astimezone(UTC).date(), latest_available_day)
+    if start_day > end_day:
+        start_day = end_day
+    return start_day, end_day
+
+
+def _metrics_error_message(status_code: int, body: str) -> str:
+    detail = (body or "").strip()[:500]
+    suffix = f" Provider response: {detail}" if detail else ""
+    if status_code == 401:
+        return f"Invalid GitHub token for Copilot metrics (HTTP 401).{suffix}"
+    if status_code == 403:
+        return (
+            "Insufficient GitHub token scope or Copilot metrics policy for usage metrics "
+            f"(HTTP 403). Enable Copilot usage metrics and use an org owner/billing manager token with "
+            f"manage_billing:copilot and read:org.{suffix}"
+        )
+    if status_code == 404:
+        return f"GitHub Copilot metrics endpoint or organization was not found (HTTP 404).{suffix}"
+    if status_code == 422:
+        return (
+            "GitHub Copilot usage metrics are disabled or unavailable for this organization "
+            f"(HTTP 422). Enable Copilot usage metrics in GitHub organization settings.{suffix}"
+        )
+    return f"GitHub Copilot metrics request failed (HTTP {status_code}).{suffix}"
+
+
 class CopilotUsageAdapter:
     provider = "copilot"
 
@@ -204,10 +234,7 @@ class CopilotUsageAdapter:
 
         user_rows: list[dict] = []
         org_rows: list[dict] = []
-        start_day = since.astimezone(UTC).date()
-        end_day = min(until.astimezone(UTC).date(), datetime.now(UTC).date() - timedelta(days=1))
-        if end_day < start_day:
-            end_day = start_day
+        start_day, end_day = _metrics_day_window(since, until)
 
         day = start_day
         days_fetched = 0
@@ -254,6 +281,14 @@ class CopilotUsageAdapter:
             params={"day": day.isoformat()},
             timeout=30.0,
         )
+        log_provider_http(
+            operation="fetch_user_metrics_report",
+            method="GET",
+            url=url,
+            status_code=result.status_code,
+            response_body=result.text[:2000],
+            tool_vendor="copilot",
+        )
         if pull_dumper is not None:
             pull_dumper.write_raw_page(
                 source="copilot-user-metrics",
@@ -262,6 +297,8 @@ class CopilotUsageAdapter:
                 response_payload=result.json if isinstance(result.json, dict) else {"error": result.text[:500]},
                 status_code=result.status_code,
             )
+        if result.status_code >= 400:
+            raise ProviderValidationError(_metrics_error_message(result.status_code, result.text))
         if result.status_code != 200 or not isinstance(result.json, dict):
             return []
 
@@ -292,6 +329,14 @@ class CopilotUsageAdapter:
             params={"day": day.isoformat()},
             timeout=30.0,
         )
+        log_provider_http(
+            operation="fetch_org_metrics_report",
+            method="GET",
+            url=url,
+            status_code=result.status_code,
+            response_body=result.text[:2000],
+            tool_vendor="copilot",
+        )
         if pull_dumper is not None:
             pull_dumper.write_raw_page(
                 source="copilot-org-metrics",
@@ -300,6 +345,8 @@ class CopilotUsageAdapter:
                 response_payload=result.json if isinstance(result.json, dict) else {"error": result.text[:500]},
                 status_code=result.status_code,
             )
+        if result.status_code >= 400:
+            raise ProviderValidationError(_metrics_error_message(result.status_code, result.text))
         if result.status_code != 200 or not isinstance(result.json, dict):
             return []
 
@@ -375,10 +422,7 @@ class CopilotUsageAdapter:
         pull_dumper: CopilotPullDumper | None = None,
     ) -> list[UsageRecord]:
         records: list[UsageRecord] = []
-        start_day = since.astimezone(UTC).date()
-        end_day = min(until.astimezone(UTC).date(), datetime.now(UTC).date() - timedelta(days=1))
-        if end_day < start_day:
-            end_day = start_day
+        start_day, end_day = _metrics_day_window(since, until)
 
         day = start_day
         days_fetched = 0
@@ -428,7 +472,7 @@ class CopilotUsageAdapter:
                 status_code=result.status_code,
             )
 
-        if result.status_code in (403, 422):
+        if result.status_code in (401, 403, 404, 422):
             logger.info(
                 "Copilot user metrics unavailable for org=%s (HTTP %s — enable "
                 "'Copilot usage metrics' in GitHub org settings)",
@@ -443,7 +487,9 @@ class CopilotUsageAdapter:
                     download_status=result.status_code,
                     download_error="Metrics API unavailable — enable Copilot usage metrics in GitHub org",
                 )
-            return []
+            raise ProviderValidationError(_metrics_error_message(result.status_code, result.text))
+        if result.status_code >= 400:
+            raise ProviderValidationError(_metrics_error_message(result.status_code, result.text))
         if result.status_code != 200 or not isinstance(result.json, dict):
             if pull_dumper is not None:
                 pull_dumper.write_metrics_rows(

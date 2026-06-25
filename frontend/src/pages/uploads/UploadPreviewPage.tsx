@@ -92,12 +92,23 @@ export function UploadPreviewPage() {
       await queryClient.invalidateQueries({ queryKey: ["uploads"] });
       await queryClient.invalidateQueries({ queryKey: ["members"] });
       await queryClient.invalidateQueries({ queryKey: ["teams"] });
+      await queryClient.invalidateQueries({ queryKey: ["copilot"] });
+      await queryClient.invalidateQueries({ queryKey: ["figma"] });
+      await queryClient.invalidateQueries({ queryKey: ["insights"] });
       navigate("/uploads");
     },
   });
 
   const preview = previewQuery.data;
   const allRows = preview?.rows ?? [];
+  const isCopilotImport = Boolean(preview?.copilotSummary);
+  const isFigmaImport = Boolean(preview?.figmaSummary);
+  const isBillingImport = isCopilotImport || isFigmaImport;
+  const copilotSummary = preview?.copilotSummary ?? null;
+  const figmaSummary = preview?.figmaSummary ?? null;
+  const hasPeriodConflict = Boolean(
+    copilotSummary?.periodConflicts?.length || figmaSummary?.periodConflicts?.length,
+  );
   const allSelected =
     allRows.length > 0 && selectedRows.size === allRows.length;
   const someSelected = selectedRows.size > 0 && !allSelected;
@@ -123,7 +134,172 @@ export function UploadPreviewPage() {
   };
 
   const columns: Column<UploadPreviewRow>[] = useMemo(
-    () => [
+    () =>
+      isCopilotImport
+        ? [
+            {
+              key: "select",
+              header: "",
+              width: 48,
+              render: (row) => (
+                <Checkbox
+                  size="small"
+                  checked={selectedRows.has(row.rowIndex)}
+                  onChange={() => toggleRow(row.rowIndex)}
+                  onClick={(event) => event.stopPropagation()}
+                />
+              ),
+            },
+            {
+              key: "rowIndex",
+              header: "#",
+              render: (row) => (
+                <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                  {row.rowIndex}
+                </Typography>
+              ),
+            },
+            {
+              key: "sku",
+              header: "SKU",
+              render: (row) => String(row.mappedData?.sku ?? row.rawData?.sku ?? "—"),
+            },
+            {
+              key: "unitType",
+              header: "Unit type",
+              render: (row) =>
+                String(row.mappedData?.unit_type ?? row.rawData?.unit_type ?? "—"),
+            },
+            {
+              key: "monthlyAmount",
+              header: "Monthly amount",
+              render: (row) => {
+                const value = row.mappedData?.monthly_amount ?? row.rawData?.monthly_amount;
+                return value != null && value !== "" ? formatCost(Number(value)) : "—";
+              },
+            },
+            {
+              key: "netAmount",
+              header: "Net amount",
+              render: (row) => {
+                const value = row.mappedData?.net_amount ?? row.rawData?.net_amount;
+                return value != null && value !== "" ? formatCost(Number(value)) : "—";
+              },
+            },
+            {
+              key: "quantity",
+              header: "Quantity",
+              render: (row) =>
+                String(row.mappedData?.quantity ?? row.rawData?.quantity ?? "—"),
+            },
+            {
+              key: "notes",
+              header: "Notes",
+              render: (row) =>
+                row.errorReason ? (
+                  <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                    {row.errorReason}
+                  </Typography>
+                ) : (
+                  <IconCircleCheck size={14} color={tokens.success} />
+                ),
+            },
+          ]
+        : isFigmaImport
+          ? [
+              {
+                key: "select",
+                header: "",
+                width: 48,
+                render: (row) => (
+                  <Checkbox
+                    size="small"
+                    checked={selectedRows.has(row.rowIndex)}
+                    onChange={() => toggleRow(row.rowIndex)}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                ),
+              },
+              {
+                key: "rowIndex",
+                header: "#",
+                render: (row) => (
+                  <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                    {row.rowIndex}
+                  </Typography>
+                ),
+              },
+              {
+                key: "userName",
+                header: "User",
+                render: (row) => (
+                  <Box>
+                    <Typography variant="body2">{row.userName}</Typography>
+                    <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                      {String(row.mappedData?.user_email ?? row.userId ?? "—")}
+                    </Typography>
+                  </Box>
+                ),
+              },
+              {
+                key: "seatType",
+                header: "Seat type",
+                render: (row) =>
+                  String(row.model || row.mappedData?.seat_type || "—"),
+              },
+              {
+                key: "seatCredits",
+                header: "Seat credits",
+                render: (row) =>
+                  String(
+                    row.mappedData?.seat_credits_used ??
+                      row.rawData?.["Seat credits used"] ??
+                      "—",
+                  ),
+              },
+              {
+                key: "paidCredits",
+                header: "Paid credits",
+                render: (row) =>
+                  String(
+                    row.mappedData?.paid_credits_used ??
+                      row.rawData?.["Paid credits used"] ??
+                      "—",
+                  ),
+              },
+              {
+                key: "cost",
+                header: "Est. cost (USD)",
+                render: (row) => formatCost(row.cost),
+              },
+              {
+                key: "period",
+                header: "Usage period",
+                render: (row) => {
+                  const start =
+                    row.mappedData?.usage_period_start ?? row.rawData?.["Usage period start"];
+                  const end =
+                    row.mappedData?.usage_period_end ?? row.rawData?.["Usage period end"];
+                  if (start && end) {
+                    return `${String(start)} → ${String(end)}`;
+                  }
+                  return start ? String(start) : end ? String(end) : "—";
+                },
+              },
+              {
+                key: "notes",
+                header: "Notes",
+                render: (row) =>
+                  row.errorReason ? (
+                    <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                      {row.errorReason}
+                    </Typography>
+                  ) : (
+                    <IconCircleCheck size={14} color={tokens.success} />
+                  ),
+              },
+            ]
+          : [
       {
         key: "select",
         header: "",
@@ -194,7 +370,7 @@ export function UploadPreviewPage() {
           ),
       },
     ],
-    [selectedRows],
+    [selectedRows, isCopilotImport, isFigmaImport],
   );
 
   if (!uploadId) {
@@ -241,8 +417,9 @@ export function UploadPreviewPage() {
           </Typography>
           {preview && (
             <Typography variant="body2" sx={{ color: tokens.textMuted }}>
-              {preview.totalRows} mapped rows • {selectedRows.size} selected for
-              import
+              {isBillingImport
+                ? `${preview.totalRows} billing rows • ${selectedRows.size} selected for import`
+                : `${preview.totalRows} mapped rows • ${selectedRows.size} selected for import`}
               {preview.teamName ? (
                 <>
                   {" "}
@@ -267,7 +444,10 @@ export function UploadPreviewPage() {
             variant="contained"
             size="small"
             disabled={
-              selectedRows.size === 0 || submitMutation.isPending || !preview
+              selectedRows.size === 0 ||
+              submitMutation.isPending ||
+              !preview ||
+              hasPeriodConflict
             }
             onClick={() => submitMutation.mutate()}
             startIcon={
@@ -276,7 +456,9 @@ export function UploadPreviewPage() {
               ) : undefined
             }
           >
-            {`Import ${selectedRows.size} row${selectedRows.size === 1 ? "" : "s"}`}
+            {isBillingImport
+              ? `Import ${selectedRows.size} billing row${selectedRows.size === 1 ? "" : "s"}`
+              : `Import ${selectedRows.size} row${selectedRows.size === 1 ? "" : "s"}`}
           </Button>
         </Box>
       </Box>
@@ -287,9 +469,91 @@ export function UploadPreviewPage() {
         </Alert>
       )}
 
+      {figmaSummary && (
+        <Alert severity={hasPeriodConflict ? "warning" : "success"} sx={{ mb: 2 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+            {hasPeriodConflict
+              ? "Usage period already imported"
+              : "Figma billing totals (all mapped rows)"}
+          </Typography>
+          {hasPeriodConflict ? (
+            <Typography variant="body2">
+              {figmaSummary.periodConflicts?.map((conflict) => (
+                <span
+                  key={`${conflict.usagePeriodStart}-${conflict.usagePeriodEnd}`}
+                >
+                  Period {conflict.usagePeriodStart} to {conflict.usagePeriodEnd} exists as{" "}
+                  <strong>{conflict.existingFilename}</strong>. Delete that upload before
+                  importing again.
+                </span>
+              ))}
+            </Typography>
+          ) : (
+            <Typography variant="body2">
+              Paid credit overage: {formatCost(figmaSummary.totalPaidCost)}
+              {figmaSummary.creditsPerUsd != null && (
+                <> · ${figmaSummary.creditsPerUsd}/paid credit</>
+              )}{" "}
+              · Import overage total: {formatCost(figmaSummary.totalCost)} · {figmaSummary.userCount}{" "}
+              users ({figmaSummary.fullSeatCount} full, {figmaSummary.viewSeatCount} view). Subscription
+              is configured on the team separately.
+            </Typography>
+          )}
+        </Alert>
+      )}
+
+      {copilotSummary && (
+        <Alert severity={hasPeriodConflict ? "warning" : "success"} sx={{ mb: 2 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+            {hasPeriodConflict
+              ? "Billing period already imported"
+              : "Copilot billing totals (all mapped rows)"}
+          </Typography>
+          {hasPeriodConflict ? (
+            <Typography variant="body2">
+              {copilotSummary.periodConflicts?.map((conflict) => (
+                <span key={`${conflict.billingPeriodStart}-${conflict.billingPeriodEnd}`}>
+                  Period {conflict.billingPeriodStart} to {conflict.billingPeriodEnd} exists as{" "}
+                  <strong>{conflict.existingFilename}</strong>. Delete that upload before importing
+                  again.
+                </span>
+              ))}
+            </Typography>
+          ) : (
+            <Typography variant="body2">
+              Monthly cost limit: {formatCost(copilotSummary.monthlyCostLimit)} ·
+              Additional spend (net): {formatCost(copilotSummary.additionalCost)}
+              {copilotSummary.creditsCost > 0 && (
+                <> · AI credits (gross): {formatCost(copilotSummary.creditsCost)}</>
+              )}{" "}
+              · Total (gross): {formatCost(copilotSummary.totalCost)}
+            </Typography>
+          )}
+        </Alert>
+      )}
+
       {preview && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          {preview.teamName ? (
+          {isCopilotImport ? (
+            preview.teamName ? (
+              <>
+                Billing data from selected rows will update Copilot cost metrics for{" "}
+                <strong>{preview.teamName}</strong>. No usage events are created.
+              </>
+            ) : (
+              <>Assign a team when uploading Copilot billing CSV.</>
+            )
+          ) : isFigmaImport ? (
+            preview.teamName ? (
+              <>
+                Figma billing from selected rows will be stored for{" "}
+                <strong>{preview.teamName}</strong>. Costs use team pricing (credits per USD and
+                seat costs). No usage events are created.
+              </>
+            ) : (
+              <>Assign a team when uploading Figma billing CSV.</>
+            )
+          ) : preview.teamName ? (
             <>
               Usage and members from selected rows will be bound to{" "}
               <strong>{preview.teamName}</strong>. Platform users in the import

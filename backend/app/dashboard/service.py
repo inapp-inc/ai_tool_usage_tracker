@@ -11,6 +11,8 @@ from uuid import UUID
 from sqlalchemy import Date, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.billing.import_cost_metrics import sum_import_billing_cost
+
 from app.dashboard.scope import DashboardScope
 from app.dashboard.schemas import (
     ActiveAlertSummary,
@@ -782,7 +784,17 @@ class DashboardService:
             tool_id=tool_id,
         )
         if threshold.threshold_type == "cost_amount":
-            return totals.estimated_cost
+            cost = totals.estimated_cost
+            if threshold.team_id is not None and threshold.tool_id is not None:
+                cost += await sum_import_billing_cost(
+                    self._session,
+                    organization_id=scope.organization_id,
+                    team_id=threshold.team_id,
+                    tool_id=threshold.tool_id,
+                    from_date=month_start.date(),
+                    to_date=now.date(),
+                )
+            return cost
         if threshold.threshold_type == "package_utilization_pct":
             allowance = await self._package_allowance(scope)
             if allowance <= 0:

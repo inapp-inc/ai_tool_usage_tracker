@@ -1,12 +1,12 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   IconAlertTriangle,
-  IconBan,
   IconCheck,
   IconCircleCheck,
   IconCopy,
   IconPencil,
   IconPlus,
+  IconTrash,
 } from "@tabler/icons-react";
 import {
   Alert,
@@ -32,7 +32,7 @@ import {
   createCredential,
   fetchCredentials,
   revealCredentialSecret,
-  revokeCredential,
+  deleteCredential,
   syncScheduleLabel,
   updateCredential,
   type Credential,
@@ -40,7 +40,7 @@ import {
 } from "@/api/credentials";
 import { ApiClientError } from "@/api/client";
 import { fetchToolOptions } from "@/api/tools";
-import { providerRequiresGcpMonitoring, providerRequiresOpenAiAdminKey, providerRequiresOrganizationId } from "@/api/providers";
+import { providerRequiresAnthropicAdminKey, providerRequiresGcpMonitoring, providerRequiresOpenAiAdminKey, providerRequiresOrganizationId } from "@/api/providers";
 import { fetchTeams } from "@/api/teams";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
@@ -164,7 +164,7 @@ export function CredentialsPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copyingId, setCopyingId] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
-  const [revokeTarget, setRevokeTarget] = useState<Credential | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Credential | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const credentialsQuery = useQuery({
@@ -249,11 +249,13 @@ export function CredentialsPage() {
     },
   });
 
-  const revokeMutation = useMutation({
-    mutationFn: revokeCredential,
+  const deleteMutation = useMutation({
+    mutationFn: deleteCredential,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["credentials"] });
-      setRevokeTarget(null);
+      await queryClient.invalidateQueries({ queryKey: ["tools"] });
+      await queryClient.invalidateQueries({ queryKey: ["teams"] });
+      setDeleteTarget(null);
     },
   });
 
@@ -270,6 +272,8 @@ export function CredentialsPage() {
     !isEditMode && providerRequiresOrganizationId(selectedCatalogueTool?.provider ?? "");
   const showOpenAiAdminKeyHint =
     !isEditMode && providerRequiresOpenAiAdminKey(selectedCatalogueTool?.provider ?? "");
+  const showAnthropicAdminKeyHint =
+    !isEditMode && providerRequiresAnthropicAdminKey(selectedCatalogueTool?.provider ?? "");
   const showGcpMonitoring =
     !isEditMode && providerRequiresGcpMonitoring(selectedCatalogueTool?.provider ?? "");
 
@@ -498,9 +502,7 @@ export function CredentialsPage() {
         key: "actions",
         header: "",
         align: "right",
-        render: (row) => {
-          const inactive = row.status === "inactive";
-          return (
+        render: (row) => (
             <Box sx={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
               <IconButton
                 size="small"
@@ -531,21 +533,17 @@ export function CredentialsPage() {
               </IconButton>
               <IconButton
                 size="small"
-                aria-label={`Revoke ${row.label}`}
-                disabled={inactive}
+                aria-label={`Delete ${row.label}`}
                 onClick={(event) => {
                   event.stopPropagation();
-                  setRevokeTarget(row);
+                  setDeleteTarget(row);
                 }}
-                sx={{
-                  color: inactive ? tokens.textMuted : tokens.critical,
-                }}
+                sx={{ color: tokens.critical }}
               >
-                <IconBan size={15} />
+                <IconTrash size={15} />
               </IconButton>
             </Box>
-          );
-        },
+          ),
       },
     ],
     [copiedId, copyingId, handleCopyCredential],
@@ -901,9 +899,11 @@ export function CredentialsPage() {
                       ? saveError
                       : showOpenAiAdminKeyHint
                         ? "Paste an Organization Admin API key (starts with sk-admin-). It is verified against OpenAI organization endpoints before saving."
-                        : showGcpMonitoring
-                          ? "Paste your Gemini API key from Google AI Studio. Add GCP project + service account below to sync historical token usage."
-                          : "The key is verified with the provider before saving. Usage syncs in the background.")
+                        : showAnthropicAdminKeyHint
+                          ? "Paste an Anthropic Admin API key (starts with sk-ant-admin-). Standard Messages API keys cannot pull organization usage."
+                          : showGcpMonitoring
+                            ? "Paste your Gemini API key from Google AI Studio. Add GCP project + service account below to sync historical token usage."
+                            : "The key is verified with the provider before saving. Usage syncs in the background.")
                   }
                   sx={{ mb: 2 }}
                 />
@@ -963,16 +963,16 @@ export function CredentialsPage() {
         </SlideOver>
 
         <ConfirmDialog
-          open={revokeTarget !== null}
-          title="Revoke credential?"
-          description={`The connection "${revokeTarget?.label ?? ""}" for "${revokeTarget?.catalogueToolName ?? revokeTarget?.toolName ?? ""}" on "${revokeTarget?.teamName ?? ""}" will stop working immediately.`}
+          open={deleteTarget !== null}
+          title="Delete credential?"
+          description={`Permanently delete "${deleteTarget?.label ?? ""}" for "${deleteTarget?.catalogueToolName ?? deleteTarget?.toolName ?? ""}" on "${deleteTarget?.teamName ?? ""}"? This removes the connection and stops all sync for this team.`}
           dangerous
-          confirmLabel="Revoke"
-          loading={revokeMutation.isPending}
-          onClose={() => setRevokeTarget(null)}
+          confirmLabel="Delete"
+          loading={deleteMutation.isPending}
+          onClose={() => setDeleteTarget(null)}
           onConfirm={() => {
-            if (revokeTarget) {
-              revokeMutation.mutate(revokeTarget.id);
+            if (deleteTarget) {
+              deleteMutation.mutate(deleteTarget.id);
             }
           }}
         />

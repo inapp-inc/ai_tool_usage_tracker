@@ -1,7 +1,7 @@
 """Aggregate usage and sync metrics for team list display."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -11,13 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.admin import Team, TeamTool, Tool
 from app.models.collector import UsageEvent
 from app.teams.cost_calculator import calculate_pricing_cost
+from app.teams.copilot_billing_metrics import sum_copilot_import_cost_by_team
+from app.teams.figma_billing_metrics import sum_figma_import_cost_by_team
 from app.teams.pricing_resolution import resolve_team_tool_pricing
 from app.teams.team_tool_repository import TeamToolRepository
 from app.tools.catalogue import connected_to_catalogue_map, find_connected_for_catalogue
 from app.tools.repository import ToolRepository
 from app.usage.periods import current_month_window
-from app.usage.aggregates import sum_org_cost, sum_tokens_and_cost_by_team
+from app.usage.aggregates import sum_tokens_and_cost_by_team
 from app.usage.cost import usage_event_effective_cost_sql
+
+ALL_TIME_FROM = datetime(1970, 1, 1, tzinfo=UTC)
+ALL_TIME_TO = datetime(2099, 12, 31, 23, 59, 59, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -41,11 +46,14 @@ class TeamMetricsLoader:
         *,
         from_dt: datetime | None = None,
         to_dt: datetime | None = None,
+        all_time: bool = False,
     ) -> dict[UUID, TeamMetrics]:
         if not teams:
             return {}
 
-        if from_dt is None or to_dt is None:
+        if all_time:
+            from_dt, to_dt = ALL_TIME_FROM, ALL_TIME_TO
+        elif from_dt is None or to_dt is None:
             from_dt, to_dt = current_month_window()
 
         team_ids = [team.id for team in teams]
@@ -79,10 +87,26 @@ class TeamMetricsLoader:
             from_dt,
             to_dt,
         )
+        copilot_import_cost = await sum_copilot_import_cost_by_team(
+            self._session,
+            organization_id,
+            team_ids,
+            None if all_time else from_dt,
+            None if all_time else to_dt,
+        )
+        figma_import_cost = await sum_figma_import_cost_by_team(
+            self._session,
+            organization_id,
+            team_ids,
+            None if all_time else from_dt,
+            None if all_time else to_dt,
+        )
 
         metrics: dict[UUID, TeamMetrics] = {}
         for team in teams:
             tokens_used, total_cost = usage_by_team.get(team.id, (0, Decimal("0")))
+            total_cost += copilot_import_cost.get(team.id, Decimal("0"))
+            total_cost += figma_import_cost.get(team.id, Decimal("0"))
             pricing_total = Decimal("0")
 
             for tool_id in team_tool_ids.get(team.id, set()):
@@ -107,6 +131,7 @@ class TeamMetricsLoader:
                 )
 
             pricing_total += unscoped_cost.get(team.id, Decimal("0"))
+            pricing_total += figma_import_cost.get(team.id, Decimal("0"))
             last_synced_at = self._last_synced_at(
                 team,
                 team_tool_ids.get(team.id, set()),

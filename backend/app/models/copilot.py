@@ -102,3 +102,46 @@ class CopilotSeat(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class CopilotBillingImport(Base):
+    __tablename__ = "billing_imports"
+    __table_args__ = {"schema": "copilot"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("auth.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    team_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("admin.teams.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tool_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("admin.tools.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    upload_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("ingestion.uploads.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    package_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("admin.tool_packages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    billing_period_start: Mapped[date | None] = mapped_column(Date)
+    billing_period_end: Mapped[date | None] = mapped_column(Date)
+    sku: Mapped[str] = mapped_column(String(64), nullable=False)
+    monthly_cost_limit: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))
+    additional_cost: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))
+    total_cost: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))
+    seat_count: Mapped[int | None] = mapped_column(Integer)
+    raw_summary: Mapped[dict | None] = mapped_column(JSONB)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

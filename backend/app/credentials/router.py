@@ -156,7 +156,7 @@ async def revoke_credential(
     await record_audit_event(
         recorder,
         actor=current_user,
-        action="credential.revoke",
+        action="credential.delete",
         resource_type="credential",
         request=request,
         resource_id=credential_id,

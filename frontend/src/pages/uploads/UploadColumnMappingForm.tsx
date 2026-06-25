@@ -27,22 +27,39 @@ const FIELD_HINTS: Record<string, string> = {
   tokens: "Total tokens (if not split in/out)",
   cost: "Cost or spend amount",
   timestamp: "When the usage occurred",
+  sku: "GitHub billing SKU (e.g. copilot_for_business)",
+  unit_type: "Billing unit type (ai_credits or user-months)",
+  monthly_amount: "Monthly cost limit from GitHub invoice",
+  net_amount: "Net charge for additional usage or credits",
+  quantity: "Seat count or credit quantity",
+  billing_period_start: "Billing period start date",
+  billing_period_end: "Billing period end date",
+  user_login: "GitHub user login (optional)",
+  user_id: "Figma user ID",
+  user_email: "User email address",
+  user_name: "User display name",
+  seat_type: "Seat type (full or view)",
+  seat_credits_used: "Seat credits consumed",
+  paid_credits_used: "Paid credits consumed",
+  last_activity: "Last activity timestamp",
+  usage_period_start: "Usage period start date",
+  usage_period_end: "Usage period end date",
 };
 
 export function buildInitialColumnMapping(
   suggested: UploadColumnMapping,
   saved: UploadColumnMapping | null,
 ): UploadColumnMapping {
-  return {
-    email: saved?.email ?? suggested.email ?? null,
-    cost: saved?.cost ?? suggested.cost ?? null,
-    model: saved?.model ?? suggested.model ?? null,
-    input_tokens: saved?.input_tokens ?? suggested.input_tokens ?? null,
-    output_tokens: saved?.output_tokens ?? suggested.output_tokens ?? null,
-    tokens: saved?.tokens ?? suggested.tokens ?? null,
-    timestamp: saved?.timestamp ?? suggested.timestamp ?? null,
-    tool: saved?.tool ?? suggested.tool ?? null,
-  };
+  const keys = new Set([
+    ...Object.keys(suggested),
+    ...(saved ? Object.keys(saved) : []),
+  ]) as Set<keyof UploadColumnMapping>;
+
+  const merged = {} as UploadColumnMapping;
+  for (const key of keys) {
+    merged[key] = saved?.[key] ?? suggested[key] ?? null;
+  }
+  return merged;
 }
 
 interface UploadColumnMappingFormProps {
@@ -252,6 +269,17 @@ export function UploadColumnMappingForm({
   );
 }
 
-export function isColumnMappingReady(mapping: UploadColumnMapping): boolean {
+export function isColumnMappingReady(
+  mapping: UploadColumnMapping,
+  fields?: UploadMappingField[],
+): boolean {
+  if (fields && fields.length > 0) {
+    const required = fields.filter((field) => field.required);
+    if (required.length > 0) {
+      return required.every((field) =>
+        Boolean(mapping[field.key as keyof UploadColumnMapping]),
+      );
+    }
+  }
   return Object.values(mapping).some((value) => Boolean(value));
 }

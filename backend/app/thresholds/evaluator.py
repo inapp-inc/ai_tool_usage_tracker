@@ -53,6 +53,7 @@ class ThresholdEvaluator:
         event = await self._events.create(
             organization_id=threshold.organization_id,
             threshold_id=threshold.id,
+            rule_name=threshold.name,
             severity=threshold.severity,
             message=message,
             team_id=threshold.team_id,
@@ -63,8 +64,9 @@ class ThresholdEvaluator:
             event=event,
             current_value=str(current),
         )
+        threshold.active = False
         logger.info(
-            "Threshold breach | org=%s threshold=%s notifications=%s",
+            "Threshold breach | org=%s threshold=%s notifications=%s deactivated=true",
             threshold.organization_id,
             threshold.id,
             count,

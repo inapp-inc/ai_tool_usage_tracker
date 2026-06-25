@@ -218,6 +218,8 @@ async def fetch_provider_snapshot(
         package_allowance=package_allowance,
         pricing_config=merged_config,
         api_endpoint=api_endpoint,
+        since=since,
+        until=until,
     )
 
 

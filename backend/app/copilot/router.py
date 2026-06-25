@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
 from app.copilot.schemas import (
+    CopilotBillingInsightsResponse,
+    CopilotBillingPeriodUsersResponse,
     CopilotCostReportRow,
     CopilotInsightsResponse,
     CopilotOverviewResponse,
@@ -101,6 +103,61 @@ async def copilot_user_detail(
     if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
     return detail
+
+
+@router.get("/billing-insights", response_model=CopilotBillingInsightsResponse)
+async def copilot_billing_insights(
+    team_id: UUID,
+    tool_id: UUID,
+    from_dt: datetime = Query(alias="from"),
+    to_dt: datetime = Query(alias="to"),
+    current_user: User = Depends(require_permission("insights", "read")),
+    session: AsyncSession = Depends(get_session),
+    service: CopilotAnalyticsService = Depends(get_copilot_service),
+) -> CopilotBillingInsightsResponse:
+    await _assert_team_access(session, current_user, team_id)
+    return await service.get_billing_insights(
+        team_id=team_id,
+        tool_id=tool_id,
+        from_date=_parse_date(from_dt),
+        to_date=_parse_date(to_dt),
+    )
+
+
+@router.get("/billing-day-users", response_model=CopilotBillingPeriodUsersResponse)
+async def copilot_billing_day_users(
+    team_id: UUID,
+    tool_id: UUID,
+    on_date: date,
+    current_user: User = Depends(require_permission("insights", "read")),
+    session: AsyncSession = Depends(get_session),
+    service: CopilotAnalyticsService = Depends(get_copilot_service),
+) -> CopilotBillingPeriodUsersResponse:
+    await _assert_team_access(session, current_user, team_id)
+    return await service.get_billing_day_users(
+        team_id=team_id,
+        tool_id=tool_id,
+        on_date=on_date,
+    )
+
+
+@router.get("/billing-period-users", response_model=CopilotBillingPeriodUsersResponse)
+async def copilot_billing_period_users(
+    team_id: UUID,
+    tool_id: UUID,
+    period_start: date | None = None,
+    period_end: date | None = None,
+    current_user: User = Depends(require_permission("insights", "read")),
+    session: AsyncSession = Depends(get_session),
+    service: CopilotAnalyticsService = Depends(get_copilot_service),
+) -> CopilotBillingPeriodUsersResponse:
+    await _assert_team_access(session, current_user, team_id)
+    return await service.get_billing_period_users(
+        team_id=team_id,
+        tool_id=tool_id,
+        period_start=period_start,
+        period_end=period_end,
+    )
 
 
 @router.get("/insights", response_model=CopilotInsightsResponse)

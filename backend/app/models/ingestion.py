@@ -1,9 +1,9 @@
 """Ingestion upload ORM models."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, func, text
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,6 +52,8 @@ class Upload(Base):
     detected_headers: Mapped[list | None] = mapped_column(JSONB)
     column_mapping: Mapped[dict | None] = mapped_column(JSONB)
     committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    billing_period_start: Mapped[date | None] = mapped_column(Date)
+    billing_period_end: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -119,6 +119,7 @@ class TeamToolAssignmentResponse(BaseModel):
     subscription_end: date | None = None
     monthly_budget: Decimal | None = None
     alert_threshold: Decimal | None = None
+    alert_threshold_usd: Decimal | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -139,6 +140,7 @@ class TeamToolAssignRequest(BaseModel):
     subscription_end: date | None = None
     monthly_budget: Decimal | None = Field(default=None, ge=0)
     alert_threshold: Decimal | None = Field(default=None, ge=0, le=100)
+    alert_threshold_usd: Decimal | None = Field(default=None, ge=0)
 
 
 class TeamToolUpdateRequest(BaseModel):
@@ -156,6 +158,7 @@ class TeamToolUpdateRequest(BaseModel):
     subscription_end: date | None = None
     monthly_budget: Decimal | None = Field(default=None, ge=0)
     alert_threshold: Decimal | None = Field(default=None, ge=0, le=100)
+    alert_threshold_usd: Decimal | None = Field(default=None, ge=0)
 
 
 class TeamToolAssignmentListResponse(BaseModel):

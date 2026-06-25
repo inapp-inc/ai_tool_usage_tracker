@@ -288,13 +288,17 @@ class CredentialService:
         collector = await self._get_collector(tool.id)
         return self._to_response(tool, primary_team, collector)
 
-    async def revoke_credential(self, organization_id: UUID, credential_id: UUID) -> None:
+    async def delete_credential(self, organization_id: UUID, credential_id: UUID) -> None:
         tool = await self._require_connected_tool(organization_id, credential_id)
-        tool.active = False
         collector = await self._get_collector(tool.id)
         if collector is not None:
-            collector.active = False
+            await self._session.delete(collector)
+        await self._tools.delete(tool)
         await self._session.commit()
+
+    async def revoke_credential(self, organization_id: UUID, credential_id: UUID) -> None:
+        """Permanently remove a credential connection."""
+        await self.delete_credential(organization_id, credential_id)
 
     async def reveal_secret(self, organization_id: UUID, credential_id: UUID) -> str:
         tool = await self._require_connected_tool(organization_id, credential_id)

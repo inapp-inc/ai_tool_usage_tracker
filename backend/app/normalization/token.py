@@ -116,16 +116,45 @@ def map_openai_usage(
 
 
 def map_anthropic_usage(row: dict[str, Any], *, fallback_at: datetime) -> NormalizedTokenEvent | None:
-    ts = row.get("timestamp")
-    raw_ms = _int(ts) if ts is not None else None
-    occurred_at = _ms_to_datetime(raw_ms, fallback_at)
-    user_email = row.get("userEmail") or row.get("user_email")
+    ts = row.get("timestamp") or row.get("starting_at")
+    raw_ms = _int(ts) if ts is not None and str(ts).isdigit() else None
+    if raw_ms is None and isinstance(ts, str) and ts.strip():
+        try:
+            occurred_at = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(UTC)
+        except ValueError:
+            occurred_at = _ms_to_datetime(raw_ms, fallback_at)
+    else:
+        occurred_at = _ms_to_datetime(raw_ms, fallback_at)
+
+    user_email = (
+        row.get("userEmail")
+        or row.get("user_email")
+        or row.get("account_id")
+        or row.get("api_key_id")
+    )
     if not user_email:
         return None
 
+    cache_creation = row.get("cache_creation") if isinstance(row.get("cache_creation"), dict) else {}
+    cache_write = _int(row.get("cache_write_tokens")) or (
+        _int(cache_creation.get("ephemeral_1h_input_tokens"))
+        + _int(cache_creation.get("ephemeral_5m_input_tokens"))
+    )
+    cache_read = _int(row.get("cache_read_input_tokens"))
+    uncached = _int(row.get("uncached_input_tokens"))
     input_tokens = _int(row.get("input_tokens"))
+    if input_tokens == 0 and (uncached or cache_read or cache_write):
+        input_tokens = uncached
+    elif input_tokens == 0:
+        input_tokens = uncached + cache_read + cache_write
     output_tokens = _int(row.get("output_tokens"))
+    if input_tokens == 0 and output_tokens == 0:
+        return None
+
     model = str(row.get("model") or "claude")
+    vendor_event_id = str(
+        row.get("vendor_event_id") or f"anthropic-{int(occurred_at.timestamp())}-{user_email}"
+    )
 
     event = NormalizedTokenEvent(
         source="Claude",
@@ -136,10 +165,14 @@ def map_anthropic_usage(row: dict[str, Any], *, fallback_at: datetime) -> Normal
         kind="message",
         api_input_tokens=input_tokens,
         api_output_tokens=output_tokens,
+        api_cache_write_tokens=cache_write or None,
+        api_cache_read_tokens=cache_read or None,
         parsed_input_tokens=input_tokens,
         parsed_output_tokens=output_tokens,
-        parsed_total_tokens=input_tokens + output_tokens,
-        vendor_event_id=f"anthropic-{raw_ms}-{user_email}",
+        parsed_cache_write_tokens=cache_write,
+        parsed_cache_read_tokens=cache_read,
+        parsed_total_tokens=_sum_tokens(input_tokens, output_tokens, cache_write, cache_read),
+        vendor_event_id=vendor_event_id,
         raw_payload=row,
     )
     return apply_token_cost_from_pricing(

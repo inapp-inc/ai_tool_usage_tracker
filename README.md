@@ -14,7 +14,7 @@ Centralized platform for monitoring AI tool consumption, costs, and adoption acr
 |---------|---------------|---------|
 | `postgres` | `postgres:15-alpine` | PostgreSQL 15 (host port **5433** → container 5432) |
 | `api` | `backend/Dockerfile` | FastAPI + Alembic migrations on startup + **in-process token collector scheduler** |
-| `frontend-dev` | `node:20-alpine` | Vite dev server on **5173** (starts with default `docker compose up`) |
+| `frontend-dev` | `node:20-alpine` | Vite dev server on **5173** (profile **`dev`** only) |
 | `frontend` | `frontend/Dockerfile` | Production SPA gateway (profile **`prod`** only — `/aitool/` on **4501**) |
 
 The API container runs scheduled token pulls (APScheduler). Configure pull interval from the frontend via `POST/PATCH /api/v1/collectors` (`pull_interval_minutes`).
@@ -31,10 +31,10 @@ OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collecto
 
    Edit `.env` and replace placeholder values. At minimum, set `POSTGRES_PASSWORD`.
 
-2. Start the full local stack (postgres + api + frontend):
+2. Start the local stack (postgres + api + Vite dev server):
 
    ```bash
-   docker compose up --build -d
+   docker compose --profile dev up --build -d
    ```
 
    Open **http://localhost:5173** (Vite dev server).
@@ -54,8 +54,8 @@ OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collecto
    **If you see migration errors** such as `Can't locate revision identified by '007_role_permissions'`, reset the database volume:
 
    ```bash
-   docker compose down -v
-   docker compose up --build -d
+   docker compose --profile dev down -v
+   docker compose --profile dev up --build -d
    ```
 
 3. Verify services:
@@ -100,10 +100,10 @@ OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collecto
 
 ### Frontend development
 
-**Docker (default — starts with `docker compose up -d`):**
+**Docker (profile `dev`):**
 
 ```bash
-docker compose up --build -d
+docker compose --profile dev up --build -d
 ```
 
 Open http://localhost:5173 — API at http://localhost:8000/api/v1.
@@ -127,8 +127,8 @@ npm run dev
 ```bash
 docker compose down
 docker compose down -v          # destructive — removes volumes
-docker compose logs -f api frontend-dev
-docker compose up --build -d
+docker compose --profile dev logs -f api frontend-dev
+docker compose --profile dev up --build -d
 ```
 
 ## Server deployment

@@ -1,4 +1,5 @@
 import { apiRequest } from "./client";
+import type { ToolProvider } from "./adapters/tools";
 import {
   mapApiTeamToolAssignment,
   toTeamToolAssignApiBody,
@@ -12,9 +13,14 @@ export type { TeamToolAssignBody, TeamToolAssignment, TeamToolPackageBinding };
 
 export { emptyTeamToolPackageBinding } from "./adapters/teamTools";
 
-export async function fetchTeamTools(teamId: string): Promise<TeamToolAssignment[]> {
+export async function fetchTeamTools(
+  teamId: string,
+  providerByToolId?: Record<string, ToolProvider>,
+): Promise<TeamToolAssignment[]> {
   const rows = await apiRequest<ApiTeamToolAssignment[]>(`/teams/${teamId}/tools`);
-  return rows.map(mapApiTeamToolAssignment);
+  return rows.map((row) =>
+    mapApiTeamToolAssignment(row, providerByToolId?.[row.tool_id]),
+  );
 }
 
 export async function fetchTeamToolAssignment(

@@ -1,6 +1,6 @@
 """Pydantic schemas for Uploads API."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -32,6 +32,9 @@ class UploadResponse(BaseModel):
     unmatched_rows: int | None = None
     error_message: str | None = None
     uploaded_by_name: str | None = None
+    tool_name: str | None = None
+    billing_period_start: date | None = None
+    billing_period_end: date | None = None
     created_at: datetime
     completed_at: datetime | None = None
 
@@ -65,10 +68,13 @@ class UploadPreviewResponse(BaseModel):
     filename: str
     team_id: UUID | None = None
     team_name: str | None = None
+    tool_id: UUID | None = None
     total_rows: int
     matched_rows: int
     unmatched_rows: int
     rows: list[ParsedUsageRowResponse]
+    copilot_summary: dict[str, Any] | None = None
+    figma_summary: dict[str, Any] | None = None
 
 
 class UploadCommitRequest(BaseModel):
@@ -85,6 +91,23 @@ class UploadColumnMappingRequest(BaseModel):
     tokens: str | None = None
     timestamp: str | None = None
     tool: str | None = None
+    sku: str | None = None
+    unit_type: str | None = None
+    monthly_amount: str | None = None
+    net_amount: str | None = None
+    quantity: str | None = None
+    billing_period_start: str | None = None
+    billing_period_end: str | None = None
+    user_login: str | None = None
+    user_id: str | None = None
+    user_email: str | None = None
+    user_name: str | None = None
+    seat_type: str | None = None
+    seat_credits_used: str | None = None
+    paid_credits_used: str | None = None
+    last_activity: str | None = None
+    usage_period_start: str | None = None
+    usage_period_end: str | None = None
 
 
 class UploadMappingField(BaseModel):

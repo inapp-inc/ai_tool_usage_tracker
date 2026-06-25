@@ -16,7 +16,6 @@ import { tokens } from "@/theme/palette";
 
 const ROUTE_TITLES: Record<string, string> = {
   "/insights": "Insights",
-  "/insights/copilot": "Copilot Analytics",
   "/alerts": "Alerts",
   "/uploads": "Uploads",
   "/admin/tools": "Tools",

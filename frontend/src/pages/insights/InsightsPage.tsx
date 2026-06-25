@@ -90,6 +90,7 @@ import {
 } from "@/api/reports";
 import { fetchCredentials, type Credential } from "@/api/credentials";
 import { fetchTeams, type Team } from "@/api/teams";
+import { fetchTools } from "@/api/tools";
 import {
   fetchDailyBreakdown,
   fetchDailyUsage,
@@ -106,12 +107,19 @@ import { SkeletonCard } from "@/components/data-display/SkeletonCard";
 import { StatCard } from "@/components/data-display/StatCard";
 import { StatusBadge } from "@/components/data-display/StatusBadge";
 import { TeamDetailSlideOver } from "@/components/insights/TeamDetailSlideOver";
+import { CopilotBillingInsightsPanel } from "@/components/insights/CopilotBillingInsightsPanel";
+import { FigmaBillingInsightsPanel } from "@/components/insights/FigmaBillingInsightsPanel";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { PeriodSelector } from "@/components/inputs/PeriodSelector";
 import { SlideOver } from "@/components/layout/SlideOver";
 import type { DateRange } from "@/types";
 import { tokens } from "@/theme/palette";
+import {
+  insightsChartTooltipItemStyle,
+  insightsChartTooltipLabelStyle,
+  insightsChartTooltipStyle,
+} from "@/components/insights/chartTooltipStyles";
 import {
   formatCost,
   formatPercent,
@@ -304,7 +312,7 @@ function resolveDefaultInsightsFilters(
 function TokenStatTooltip({ stats }: { stats: DashboardStats }) {
   if (!stats.breakdownAvailable) {
     return (
-      <Typography variant="caption" sx={{ display: "block" }}>
+      <Typography variant="caption" sx={{ display: "block", color: "#fff", fontWeight: 700 }}>
         Cursor breakdown not applicable for this tool, or re-sync Cursor to populate
         included vs billable data.
       </Typography>
@@ -313,20 +321,26 @@ function TokenStatTooltip({ stats }: { stats: DashboardStats }) {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-      <Typography variant="caption">Total tokens: {formatTokens(stats.totalTokens)}</Typography>
-      <Typography variant="caption">
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
+        Total tokens: {formatTokens(stats.totalTokens)}
+      </Typography>
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
         Included in plan: {formatTokens(stats.includedTokens ?? 0)}
       </Typography>
-      <Typography variant="caption">
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
         Billable: {formatTokens(stats.billableTokens ?? 0)}
       </Typography>
       <Divider sx={{ my: 0.5, borderColor: "rgba(255,255,255,0.2)" }} />
-      <Typography variant="caption">Input: {formatTokens(stats.inputTokens ?? 0)}</Typography>
-      <Typography variant="caption">Output: {formatTokens(stats.outputTokens ?? 0)}</Typography>
-      <Typography variant="caption">
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
+        Input: {formatTokens(stats.inputTokens ?? 0)}
+      </Typography>
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
+        Output: {formatTokens(stats.outputTokens ?? 0)}
+      </Typography>
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
         Cache write: {formatTokens(stats.cacheWriteTokens ?? 0)}
       </Typography>
-      <Typography variant="caption">
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
         Cache read: {formatTokens(stats.cacheReadTokens ?? 0)}
       </Typography>
     </Box>
@@ -336,7 +350,7 @@ function TokenStatTooltip({ stats }: { stats: DashboardStats }) {
 function CostStatTooltip({ stats }: { stats: DashboardStats }) {
   if (!stats.breakdownAvailable) {
     return (
-      <Typography variant="caption" sx={{ display: "block" }}>
+      <Typography variant="caption" sx={{ display: "block", color: "#fff", fontWeight: 700 }}>
         Cursor breakdown not applicable for this tool.
       </Typography>
     );
@@ -349,21 +363,23 @@ function CostStatTooltip({ stats }: { stats: DashboardStats }) {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-      <Typography variant="caption">
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
         Total cost: {formatCost(stats.totalCost)}
       </Typography>
-      <Typography variant="caption">
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
         Included in plan: {formatCost(stats.includedCost ?? 0)}
       </Typography>
-      <Typography variant="caption">
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
         Additional billable: {formatCost(stats.billableCost ?? 0)}
       </Typography>
       <Divider sx={{ my: 0.5, borderColor: "rgba(255,255,255,0.2)" }} />
-      <Typography variant="caption">
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
         Package allowance: {formatCost(stats.packageAllowance ?? 0)}
       </Typography>
-      <Typography variant="caption">Allowance used: {allowanceUsed}</Typography>
-      <Typography variant="caption">
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
+        Allowance used: {allowanceUsed}
+      </Typography>
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
         Overage (billable): {formatCost(stats.overageCost ?? 0)}
       </Typography>
     </Box>
@@ -649,6 +665,11 @@ export function InsightsPage() {
     queryFn: fetchToolOptions,
   });
 
+  const catalogToolsQuery = useQuery({
+    queryKey: ["tools", "catalog"],
+    queryFn: () => fetchTools(),
+  });
+
   const credentialsQuery = useQuery({
     queryKey: ["credentials"],
     queryFn: fetchCredentials,
@@ -814,6 +835,12 @@ export function InsightsPage() {
 
   const teams = teamsQuery.data ?? EMPTY_TEAMS;
   const toolOptions = toolOptionsQuery.data ?? [];
+  const isCopilotTool =
+    catalogToolsQuery.data?.find((tool) => tool.id === toolId)?.provider === "copilot" ||
+    toolOptions.find((tool) => tool.id === toolId)?.provider === "copilot";
+  const isFigmaTool =
+    catalogToolsQuery.data?.find((tool) => tool.id === toolId)?.provider === "figma" ||
+    toolOptions.find((tool) => tool.id === toolId)?.provider === "figma";
   const credentials = credentialsQuery.data ?? [];
 
   const drilldownAssignedToolIds = useMemo(() => {
@@ -1220,12 +1247,14 @@ export function InsightsPage() {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <PeriodSelector
-        value={filters.period}
-        onChange={(period) =>
-          setFilters((prev) => ({ ...prev, period }))
-        }
-      />
+      {!isFigmaTool && (
+        <PeriodSelector
+          value={filters.period}
+          onChange={(period) =>
+            setFilters((prev) => ({ ...prev, period }))
+          }
+        />
+      )}
 
       <Box sx={{ display: "flex", gap: 2, mb: 0, alignItems: "center" }}>
         <FormControl size="small" sx={{ width: 180 }}>
@@ -1283,6 +1312,17 @@ export function InsightsPage() {
         )}
       </Box>
 
+      {isCopilotTool && insightsFiltersReady ? (
+        <CopilotBillingInsightsPanel
+          teamId={teamId}
+          toolId={toolId}
+          from={from}
+          to={to}
+        />
+      ) : isFigmaTool && insightsFiltersReady ? (
+        <FigmaBillingInsightsPanel teamId={teamId} toolId={toolId} />
+      ) : (
+        <>
       <Box
         sx={{
           display: "grid",
@@ -1417,11 +1457,9 @@ export function InsightsPage() {
                       ? [formatTokens(value as number), "Tokens"]
                       : [formatCost(value as number), "Cost"]
                   }
-                  contentStyle={{
-                    fontSize: 12,
-                    border: `0.5px solid ${tokens.border}`,
-                    borderRadius: 8,
-                  }}
+                  contentStyle={insightsChartTooltipStyle}
+                  labelStyle={insightsChartTooltipLabelStyle}
+                  itemStyle={insightsChartTooltipItemStyle}
                 />
                 {dateDrilldown.dateLabel && (
                   <ReferenceLine
@@ -1613,6 +1651,8 @@ export function InsightsPage() {
             emptyDescription="Generate your first report to export usage data."
           />
         </Box>
+      )}
+        </>
       )}
 
       <SlideOver
@@ -2256,11 +2296,9 @@ function TeamCostChart({ data }: { data: TeamCostDataPoint[] }) {
         />
         <Tooltip
           formatter={(value) => [formatCost(value as number), "Cost"]}
-          contentStyle={{
-            fontSize: 12,
-            border: `0.5px solid ${tokens.border}`,
-            borderRadius: 8,
-          }}
+          contentStyle={insightsChartTooltipStyle}
+          labelStyle={insightsChartTooltipLabelStyle}
+          itemStyle={insightsChartTooltipItemStyle}
         />
         <Bar
           dataKey="cost"

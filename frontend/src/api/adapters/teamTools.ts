@@ -16,6 +16,8 @@ export interface TeamToolPackageBinding {
   subscriptionEnd: string | null;
   monthlyBudget: number | null;
   alertThreshold: number | null;
+  alertThresholdUsd: number | null;
+  billingType: string | null;
 }
 
 export interface ApiTeamToolAssignment {
@@ -37,6 +39,7 @@ export interface ApiTeamToolAssignment {
   subscription_end?: string | null;
   monthly_budget?: number | string | null;
   alert_threshold?: number | string | null;
+  alert_threshold_usd?: number | string | null;
   created_at: string;
   updated_at: string;
 }
@@ -66,16 +69,40 @@ export function emptyTeamToolPackageBinding(): TeamToolPackageBinding {
     subscriptionEnd: null,
     monthlyBudget: null,
     alertThreshold: null,
+    alertThresholdUsd: null,
+    billingType: null,
   };
 }
 
-function packageFromApi(api: ApiTeamToolAssignment): TeamToolPackageBinding {
+function isCopilotCreditPlan(planName: string | null | undefined): boolean {
+  return (planName ?? "").toLowerCase().includes("credit");
+}
+
+function packageFromApi(
+  api: ApiTeamToolAssignment,
+  provider?: ToolProvider,
+): TeamToolPackageBinding {
+  const pricing = pricingFromTeamToolAssignment(api, provider);
+  let billingType: string | null = null;
+  if (provider === "copilot") {
+    billingType = isCopilotCreditPlan(api.plan_name) ? "CREDIT_BASED" : "SEAT_BASED";
+  } else if (pricing.model === "per_seat") {
+    billingType = "SEAT_BASED";
+  } else if (
+    api.package_id &&
+    pricing.includedTokens == null &&
+    pricing.model === "flat_fee"
+  ) {
+    billingType = "CREDIT_BASED";
+  }
   return {
     packageId: api.package_id ?? null,
     subscriptionStart: api.subscription_start ?? null,
     subscriptionEnd: api.subscription_end ?? null,
     monthlyBudget: toNullableNumber(api.monthly_budget),
     alertThreshold: toNullableNumber(api.alert_threshold),
+    alertThresholdUsd: toNullableNumber(api.alert_threshold_usd),
+    billingType,
   };
 }
 
@@ -89,6 +116,7 @@ function packageToApiFields(
     subscription_end: pkg.subscriptionEnd || null,
     monthly_budget: pkg.monthlyBudget,
     alert_threshold: pkg.alertThreshold,
+    alert_threshold_usd: pkg.alertThresholdUsd,
   };
 }
 
@@ -105,33 +133,93 @@ function inferPricingModel(apiModel: string | null): PricingModel {
   return "per_token";
 }
 
-export function pricingFromTeamToolAssignment(api: ApiTeamToolAssignment): ToolPricing {
+export function pricingFromTeamToolAssignment(
+  api: ApiTeamToolAssignment,
+  provider?: ToolProvider,
+): ToolPricing {
   const config = api.pricing_config ?? {};
   const frontendModel =
     (config.model as PricingModel | undefined) ??
     inferPricingModel(api.pricing_model);
 
-  return normalizePricing({
+  let pricing = normalizePricing({
     model: frontendModel,
     inputCostPer1K: toNullableNumber(config.input_cost_per_1k ?? api.token_price),
     outputCostPer1K: toNullableNumber(config.output_cost_per_1k ?? api.output_token_price),
     costPerSeat: toNullableNumber(config.cost_per_seat ?? api.cost_per_seat),
     seatCount: toNullableNumber(config.seat_count ?? api.seat_count),
-    flatMonthlyCost: toNullableNumber(config.flat_monthly_cost),
+    flatMonthlyCost: toNullableNumber(
+      config.cost_per_team ?? config.flat_monthly_cost,
+    ),
     planName: api.plan_name ?? (config.plan_name == null ? null : String(config.plan_name)),
     includedTokens: toNullableNumber(api.package_allowance ?? config.included_tokens),
     overageRate: toNullableNumber(api.overage_price ?? config.overage_rate),
+    viewSeatCostUsd: toNullableNumber(config.view_seat_cost_usd),
+    creditsPerUsd: toNullableNumber(config.credits_per_usd ?? config.credit_amount),
+    includedCreditsPerSeat: toNullableNumber(config.included_credits_per_seat),
   });
+
+  if (
+    provider === "copilot" &&
+    !isCopilotCreditPlan(pricing.planName) &&
+    pricing.model === "per_team" &&
+    pricing.flatMonthlyCost == null &&
+    pricing.costPerSeat != null
+  ) {
+    pricing = normalizePricing({
+      ...pricing,
+      flatMonthlyCost: pricing.costPerSeat,
+      costPerSeat: null,
+    });
+  }
+
+  if (
+    provider === "copilot" &&
+    !isCopilotCreditPlan(pricing.planName) &&
+    pricing.model === "per_seat" &&
+    pricing.costPerSeat == null &&
+    pricing.flatMonthlyCost != null
+  ) {
+    pricing = normalizePricing({
+      ...pricing,
+      costPerSeat: pricing.flatMonthlyCost,
+      flatMonthlyCost: null,
+    });
+  }
+
+  if (
+    provider === "copilot" &&
+    isCopilotCreditPlan(pricing.planName) &&
+    pricing.model === "flat_fee"
+  ) {
+    pricing = normalizePricing({
+      ...pricing,
+      model: "per_seat",
+      seatCount: pricing.seatCount ?? 1,
+    });
+  }
+
+  if (
+    provider === "copilot" &&
+    pricing.seatCount == null
+  ) {
+    pricing = normalizePricing({ ...pricing, seatCount: 1 });
+  }
+
+  return pricing;
 }
 
-export function mapApiTeamToolAssignment(api: ApiTeamToolAssignment): TeamToolAssignment {
+export function mapApiTeamToolAssignment(
+  api: ApiTeamToolAssignment,
+  provider?: ToolProvider,
+): TeamToolAssignment {
   return {
     id: api.id,
     teamId: api.team_id,
     toolId: api.tool_id,
     toolName: api.tool_name,
-    pricing: pricingFromTeamToolAssignment(api),
-    package: packageFromApi(api),
+    pricing: pricingFromTeamToolAssignment(api, provider),
+    package: packageFromApi(api, provider),
     createdAt: api.created_at,
     updatedAt: api.updated_at,
   };

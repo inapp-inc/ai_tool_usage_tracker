@@ -163,20 +163,32 @@ class ThresholdService:
         if not events:
             return ThresholdEventListResponse(data=[], meta=PaginationMeta(has_more=False))
 
-        threshold_ids = {event.threshold_id for event in events}
+        threshold_ids = {
+            event.threshold_id for event in events if event.threshold_id is not None
+        }
         thresholds = await self._thresholds.list_by_organization(organization_id)
         threshold_map = {row.id: row for row in thresholds if row.id in threshold_ids}
 
         if team_ids is not None:
             team_id_set = set(team_ids)
-            events = [
-                e for e in events
-                if (e.team_id and e.team_id in team_id_set)
-                or (
-                    e.threshold_id in threshold_map
-                    and threshold_map[e.threshold_id].team_id in team_id_set
+
+            def _event_visible(event: ThresholdEvent) -> bool:
+                if event.team_id is not None and event.team_id in team_id_set:
+                    return True
+                threshold = (
+                    threshold_map.get(event.threshold_id)
+                    if event.threshold_id is not None
+                    else None
                 )
-            ]
+                if threshold is None:
+                    return event.team_id is None or (
+                        event.team_id is not None and event.team_id in team_id_set
+                    )
+                if threshold.team_id is None:
+                    return True
+                return threshold.team_id in team_id_set
+
+            events = [event for event in events if _event_visible(event)]
             if not events:
                 return ThresholdEventListResponse(data=[], meta=PaginationMeta(has_more=False))
 
@@ -188,19 +200,21 @@ class ThresholdService:
         user_names = await self._acknowledger_names(events)
         data: list[ThresholdEventResponse] = []
         for event in events:
-            threshold = threshold_map.get(event.threshold_id)
-            if threshold is None:
-                continue
+            threshold = (
+                threshold_map.get(event.threshold_id)
+                if event.threshold_id is not None
+                else None
+            )
             team_name = None
             if event.team_id:
                 team_name = team_names.get(event.team_id)
-            elif threshold.team_id:
+            elif threshold and threshold.team_id:
                 team_name = team_names.get(threshold.team_id)
             data.append(
                 ThresholdEventResponse(
                     id=event.id,
-                    rule_id=threshold.id,
-                    rule_name=threshold.name,
+                    rule_id=event.threshold_id,
+                    rule_name=event.rule_name,
                     severity=event.severity,  # type: ignore[arg-type]
                     message=event.message,
                     team_name=team_name,
@@ -225,12 +239,25 @@ class ThresholdService:
                 detail="Alert event not found.",
             )
         if managed_team_ids is not None:
-            threshold_row = await self._thresholds.get_by_id(event.threshold_id, organization_id)
+            thresholds = await self._thresholds.list_by_organization(organization_id)
+            threshold_map = {row.id: row for row in thresholds}
+            threshold_row = (
+                threshold_map.get(event.threshold_id)
+                if event.threshold_id is not None
+                else None
+            )
             in_scope = (
-                threshold_row is not None
-                and (
-                    (event.team_id and event.team_id in managed_team_ids)
-                    or (threshold_row.team_id and threshold_row.team_id in managed_team_ids)
+                (event.team_id is not None and event.team_id in managed_team_ids)
+                or (
+                    threshold_row is not None
+                    and (
+                        threshold_row.team_id is None
+                        or threshold_row.team_id in managed_team_ids
+                    )
+                )
+                or (
+                    threshold_row is None
+                    and (event.team_id is None or event.team_id in managed_team_ids)
                 )
             )
             if not in_scope:
@@ -249,13 +276,20 @@ class ThresholdService:
         await self._session.commit()
         await self._session.refresh(event)
 
-        threshold = await self._require_threshold(organization_id, event.threshold_id)
-        team_name = await self._resolve_team_name(organization_id, event.team_id or threshold.team_id)
+        threshold = (
+            await self._thresholds.get_by_id(event.threshold_id, organization_id)
+            if event.threshold_id is not None
+            else None
+        )
+        team_name = await self._resolve_team_name(
+            organization_id,
+            event.team_id or (threshold.team_id if threshold else None),
+        )
         display_name = user.display_name.strip() if user.display_name else user.email
         return ThresholdEventResponse(
             id=event.id,
-            rule_id=threshold.id,
-            rule_name=threshold.name,
+            rule_id=event.threshold_id,
+            rule_name=event.rule_name,
             severity=event.severity,  # type: ignore[arg-type]
             message=event.message,
             team_name=team_name,

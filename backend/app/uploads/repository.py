@@ -1,6 +1,6 @@
 """Upload data access."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -13,8 +13,16 @@ class UploadRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_by_organization(self, organization_id: UUID) -> list[Upload]:
-        result = await self._session.execute(
+    async def list_by_organization(
+        self,
+        organization_id: UUID,
+        *,
+        team_id: UUID | None = None,
+        tool_id: UUID | None = None,
+        period_from: date | None = None,
+        period_to: date | None = None,
+    ) -> list[Upload]:
+        stmt = (
             select(Upload)
             .where(
                 Upload.organization_id == organization_id,
@@ -22,6 +30,20 @@ class UploadRepository:
             )
             .order_by(Upload.created_at.desc())
         )
+        if team_id is not None:
+            stmt = stmt.where(Upload.team_id == team_id)
+        if tool_id is not None:
+            stmt = stmt.where(Upload.tool_id == tool_id)
+        if period_from is not None or period_to is not None:
+            stmt = stmt.where(
+                Upload.billing_period_start.isnot(None),
+                Upload.billing_period_end.isnot(None),
+            )
+            if period_from is not None:
+                stmt = stmt.where(Upload.billing_period_end >= period_from)
+            if period_to is not None:
+                stmt = stmt.where(Upload.billing_period_start <= period_to)
+        result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
     async def get_by_id(self, upload_id: UUID, organization_id: UUID) -> Upload | None:

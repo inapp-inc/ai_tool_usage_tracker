@@ -137,9 +137,25 @@ export function CopilotDashboardPage() {
           <CircularProgress />
         </Box>
       ) : overviewQuery.isError ? (
-        <Alert severity="error">Unable to load Copilot analytics. Sync Copilot credentials first.</Alert>
+        <Alert severity="error">
+          Unable to load Copilot analytics. Configure a team package and import billing CSV.
+        </Alert>
       ) : overview ? (
         <>
+          {overview.data_source === "import" && (
+            <Alert severity="info">
+              Cost metrics are from your latest GitHub Copilot billing CSV import.
+            </Alert>
+          )}
+          {overview.budget_alert_triggered && (
+            <Alert severity="warning">
+              Copilot spend has reached your USD alert threshold
+              {overview.alert_threshold_usd != null
+                ? ` ($${Number(overview.alert_threshold_usd).toFixed(2)})`
+                : ""}
+              .
+            </Alert>
+          )}
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6} md={3}>
               <MetricCard label="Total seats" value={String(overview.total_seats)} />
@@ -156,9 +172,35 @@ export function CopilotDashboardPage() {
             <Grid item xs={12} sm={6} md={3}>
               <MetricCard
                 label="Monthly cost"
-                value={`$${Number(overview.monthly_cost).toFixed(0)}`}
+                value={`$${Number(overview.monthly_cost).toFixed(2)}`}
               />
             </Grid>
+            {overview.monthly_cost_limit != null && (
+              <Grid item xs={12} sm={6} md={3}>
+                <MetricCard
+                  label="Monthly cost limit"
+                  value={`$${Number(overview.monthly_cost_limit).toFixed(2)}`}
+                  sub="From billing CSV (ai_credits)"
+                />
+              </Grid>
+            )}
+            {overview.additional_cost != null && (
+              <Grid item xs={12} sm={6} md={3}>
+                <MetricCard
+                  label="Additional cost"
+                  value={`$${Number(overview.additional_cost).toFixed(2)}`}
+                  sub="Seats + AI credits overage"
+                />
+              </Grid>
+            )}
+            {overview.budget_remaining != null && (
+              <Grid item xs={12} sm={6} md={3}>
+                <MetricCard
+                  label="Budget remaining"
+                  value={`$${Number(overview.budget_remaining).toFixed(2)}`}
+                />
+              </Grid>
+            )}
             <Grid item xs={12} sm={6} md={3}>
               <MetricCard
                 label="Seat utilization"

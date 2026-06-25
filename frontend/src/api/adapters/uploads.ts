@@ -1,6 +1,8 @@
 /** Maps OpenAPI Upload responses to frontend UploadRecord / UploadPreview. */
 
 import type {
+  CopilotImportSummary,
+  FigmaImportSummary,
   UploadColumnMapping,
   UploadFormat,
   UploadMapping,
@@ -14,6 +16,9 @@ export interface ApiUpload {
   team_id?: string | null;
   tool_id?: string | null;
   team_name?: string | null;
+  tool_name?: string | null;
+  billing_period_start?: string | null;
+  billing_period_end?: string | null;
   filename: string;
   detected_format?: string | null;
   size_bytes: number;
@@ -51,15 +56,58 @@ export interface ApiParsedUsageRow {
   mapped_data?: Record<string, unknown>;
 }
 
+export interface ApiCopilotImportSummary {
+  monthly_cost_limit: number;
+  additional_cost: number;
+  credits_cost?: number;
+  total_cost: number;
+  period_conflicts?: Array<{
+    billing_period_start: string;
+    billing_period_end: string;
+    existing_filename: string;
+    existing_upload_id: string;
+  }>;
+  sku_breakdown?: Array<{
+    sku: string;
+    billing_period_start: string | null;
+    billing_period_end: string | null;
+    monthly_cost_limit: number;
+    additional_cost: number;
+    total_cost: number;
+    seat_count: number;
+    row_count: number;
+  }>;
+}
+
+export interface ApiFigmaImportSummary {
+  total_seat_cost: number;
+  total_paid_cost: number;
+  total_cost: number;
+  full_seat_count: number;
+  view_seat_count: number;
+  user_count: number;
+  period_count: number;
+  credits_per_usd?: number | null;
+  period_conflicts?: Array<{
+    usage_period_start: string;
+    usage_period_end: string;
+    existing_filename: string;
+    existing_upload_id: string;
+  }>;
+}
+
 export interface ApiUploadPreview {
   upload_id: string;
   filename: string;
   team_id?: string | null;
   team_name?: string | null;
+  tool_id?: string | null;
   total_rows: number;
   matched_rows: number;
   unmatched_rows: number;
   rows: ApiParsedUsageRow[];
+  copilot_summary?: ApiCopilotImportSummary | null;
+  figma_summary?: ApiFigmaImportSummary | null;
 }
 
 export interface ApiUploadMappingField {
@@ -121,9 +169,67 @@ export function mapApiUpload(api: ApiUpload): UploadRecord {
     uploadedByName: api.uploaded_by_name ?? "—",
     teamId: api.team_id ?? null,
     teamName: api.team_name ?? null,
+    toolId: api.tool_id ?? null,
+    toolName: api.tool_name ?? null,
+    billingPeriodStart: api.billing_period_start ?? null,
+    billingPeriodEnd: api.billing_period_end ?? null,
     fileSizeKb: Math.max(1, Math.round(api.size_bytes / 1024)),
     createdAt: api.created_at,
     processedAt: api.completed_at ?? null,
+  };
+}
+
+function mapCopilotSummary(
+  summary: ApiCopilotImportSummary | null | undefined,
+): CopilotImportSummary | null {
+  if (!summary) {
+    return null;
+  }
+  return {
+    monthlyCostLimit: summary.monthly_cost_limit,
+    additionalCost: summary.additional_cost,
+    creditsCost: summary.credits_cost ?? 0,
+    totalCost: summary.total_cost,
+    periodConflicts: (summary.period_conflicts ?? []).map((row) => ({
+      billingPeriodStart: row.billing_period_start,
+      billingPeriodEnd: row.billing_period_end,
+      existingFilename: row.existing_filename,
+      existingUploadId: row.existing_upload_id,
+    })),
+    skuBreakdown: (summary.sku_breakdown ?? []).map((row) => ({
+      sku: row.sku,
+      billingPeriodStart: row.billing_period_start,
+      billingPeriodEnd: row.billing_period_end,
+      monthlyCostLimit: row.monthly_cost_limit,
+      additionalCost: row.additional_cost,
+      totalCost: row.total_cost,
+      seatCount: row.seat_count,
+      rowCount: row.row_count,
+    })),
+  };
+}
+
+function mapFigmaSummary(
+  summary: ApiFigmaImportSummary | null | undefined,
+): FigmaImportSummary | null {
+  if (!summary) {
+    return null;
+  }
+  return {
+    totalSeatCost: summary.total_seat_cost,
+    totalPaidCost: summary.total_paid_cost,
+    totalCost: summary.total_cost,
+    fullSeatCount: summary.full_seat_count,
+    viewSeatCount: summary.view_seat_count,
+    userCount: summary.user_count,
+    periodCount: summary.period_count,
+    creditsPerUsd: summary.credits_per_usd ?? null,
+    periodConflicts: (summary.period_conflicts ?? []).map((row) => ({
+      usagePeriodStart: row.usage_period_start,
+      usagePeriodEnd: row.usage_period_end,
+      existingFilename: row.existing_filename,
+      existingUploadId: row.existing_upload_id,
+    })),
   };
 }
 
@@ -133,10 +239,13 @@ export function mapApiUploadPreview(api: ApiUploadPreview): UploadPreview {
     fileName: api.filename,
     teamId: api.team_id ?? null,
     teamName: api.team_name ?? null,
+    toolId: api.tool_id ?? null,
     totalRows: api.total_rows,
     validRows: api.matched_rows,
     errorRows: api.unmatched_rows,
     rows: api.rows.map(mapApiPreviewRow),
+    copilotSummary: mapCopilotSummary(api.copilot_summary),
+    figmaSummary: mapFigmaSummary(api.figma_summary),
   };
 }
 

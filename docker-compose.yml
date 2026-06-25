@@ -2,8 +2,9 @@ name: ai-tool-tracker
 
 
 
-# Stack: PostgreSQL + API + Vite frontend (default local dev on :5173).
-# Production SPA gateway: docker compose --profile prod up frontend (port FRONTEND_PORT).
+# Stack: PostgreSQL + API + optional frontend.
+# Local dev UI:  docker compose --profile dev up -d
+# Production SPA: docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d
 
 
 services:
@@ -203,6 +204,8 @@ services:
 
 
   frontend-dev:
+
+    profiles: [dev]
 
     image: node:20-alpine
 

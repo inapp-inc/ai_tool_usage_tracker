@@ -11,7 +11,7 @@ export type ToolProvider =
   | "figma"
   | "custom";
 
-export type PricingModel = "per_token" | "per_seat" | "flat_fee" | "hybrid";
+export type PricingModel = "per_token" | "per_seat" | "flat_fee" | "hybrid" | "per_team";
 
 /** OpenAPI pricing_model enum */
 export type ApiPricingModel = "flat_token" | "package_with_overage" | "custom";
@@ -28,6 +28,12 @@ export interface ToolPricing {
   overageRate: number | null;
   organizationId: string | null;
   parentSlug: string | null;
+  /** Figma: monthly view/collab seat cost (USD). */
+  viewSeatCostUsd?: number | null;
+  /** Figma: USD per paid credit (e.g. 0.03 from $30 per 1000 credits). Stored as credits_per_usd. */
+  creditsPerUsd?: number | null;
+  /** Figma: AI credits included per paid seat in the subscription package. */
+  includedCreditsPerSeat?: number | null;
 }
 
 import type { ToolIntegrationConfig } from "@/types/integrationConfig";
@@ -90,6 +96,7 @@ export interface ApiPricingConfig {
   cost_per_seat?: number | null;
   seat_count?: number | null;
   flat_monthly_cost?: number | null;
+  cost_per_team?: number | null;
   plan_name?: string | null;
   included_tokens?: number | null;
   overage_rate?: number | null;
@@ -249,19 +256,91 @@ export function packageAllowanceFromPackage(pkg: ToolPackage): number | null {
   return null;
 }
 
-export function pricingFromPackage(pkg: ToolPackage): Partial<ToolPricing> {
+export function defaultCopilotPricingModel(pkg: ToolPackage): PricingModel {
+  const name = pkg.packageName.toLowerCase();
+  if (name.includes("credit")) {
+    return "per_seat";
+  }
+  if (name.includes("business")) {
+    return "per_seat";
+  }
+  if (pkg.billingType === "LICENSE_BASED") {
+    return "per_team";
+  }
+  if (name.includes("enterprise")) {
+    return "per_team";
+  }
+  if (pkg.billingType === "SEAT_BASED") {
+    return "per_seat";
+  }
+  if (pkg.billingType === "CREDIT_BASED") {
+    return "per_seat";
+  }
+  return "per_team";
+}
+
+export function pricingFromPackage(
+  pkg: ToolPackage,
+  vendor?: ToolProvider,
+): Partial<ToolPricing> {
+  if (vendor === "copilot" && pkg.billingType === "CREDIT_BASED") {
+    return {
+      planName: pkg.packageName,
+      model: "per_seat",
+      costPerSeat: null,
+      seatCount: 1,
+      flatMonthlyCost: null,
+      includedTokens: null,
+      overageRate: null,
+    };
+  }
+  if (vendor === "copilot" && pkg.billingType !== "CREDIT_BASED") {
+    const model = defaultCopilotPricingModel(pkg);
+    if (model === "per_team") {
+      return {
+        planName: pkg.packageName,
+        model: "per_team",
+        flatMonthlyCost: pkg.monthlyPrice,
+        seatCount: pkg.seatLimit ?? 1,
+        costPerSeat: null,
+        includedTokens: null,
+        overageRate: null,
+      };
+    }
+    return {
+      planName: pkg.packageName,
+      model: "per_seat",
+      costPerSeat: pkg.monthlyPrice,
+      seatCount: pkg.seatLimit ?? 1,
+      flatMonthlyCost: null,
+      includedTokens: null,
+      overageRate: null,
+    };
+  }
+  if (pkg.billingType === "SEAT_BASED") {
+    return {
+      planName: pkg.packageName,
+      model: "per_seat",
+      costPerSeat: pkg.monthlyPrice,
+      seatCount: pkg.seatLimit ?? 1,
+      flatMonthlyCost: null,
+      includedTokens: null,
+      overageRate: null,
+    };
+  }
+  if (pkg.billingType === "CREDIT_BASED") {
+    return {
+      planName: pkg.packageName,
+      model: "flat_fee",
+      flatMonthlyCost: null,
+      includedTokens: null,
+      overageRate: null,
+    };
+  }
   const patch: Partial<ToolPricing> = {
     planName: pkg.packageName,
     flatMonthlyCost: pkg.monthlyPrice,
   };
-  if (pkg.billingType === "SEAT_BASED") {
-    return {
-      ...patch,
-      model: "per_seat",
-      costPerSeat: pkg.monthlyPrice,
-      seatCount: pkg.seatLimit,
-    };
-  }
   const allowance = packageAllowanceFromPackage(pkg);
   return {
     ...patch,
@@ -276,11 +355,28 @@ const VENDOR_TO_PROVIDER: Record<string, ToolProvider> = {
   google: "google",
   azure_openai: "azure_openai",
   copilot: "copilot",
+  github_copilot: "copilot",
+  github: "copilot",
   bedrock: "bedrock",
   custom: "custom",
   cursor: "cursor",
   figma: "figma",
 };
+
+export function isCopilotProvider(provider: ToolProvider | string | null | undefined): boolean {
+  if (!provider) {
+    return false;
+  }
+  const normalized = provider.trim().toLowerCase().replace(/\s+/g, "_");
+  return normalized === "copilot" || normalized === "github_copilot" || normalized === "github";
+}
+
+export function isFigmaProvider(provider: ToolProvider | string | null | undefined): boolean {
+  if (!provider) {
+    return false;
+  }
+  return provider.trim().toLowerCase().replace(/\s+/g, "_") === "figma";
+}
 
 export function emptyToolPricing(): ToolPricing {
   return {
@@ -295,6 +391,9 @@ export function emptyToolPricing(): ToolPricing {
     overageRate: null,
     organizationId: null,
     parentSlug: null,
+    viewSeatCostUsd: null,
+    creditsPerUsd: null,
+    includedCreditsPerSeat: null,
   };
 }
 
@@ -388,6 +487,9 @@ export function normalizePricing(pricing: ToolPricing): ToolPricing {
       typeof pricing.parentSlug === "string" && pricing.parentSlug.trim()
         ? pricing.parentSlug.trim()
         : null,
+    viewSeatCostUsd: toNullableNumber(pricing.viewSeatCostUsd),
+    creditsPerUsd: toNullableNumber(pricing.creditsPerUsd),
+    includedCreditsPerSeat: toNullableNumber(pricing.includedCreditsPerSeat),
   };
 }
 
@@ -409,6 +511,8 @@ function packagePricingConfig(
     model,
     provider_slug: providerSlug,
     flat_monthly_cost: pricing.flatMonthlyCost,
+    cost_per_team:
+      model === "per_team" ? pricing.flatMonthlyCost : null,
     plan_name: pricing.planName,
     included_tokens: pricing.includedTokens,
     overage_rate: pricing.overageRate,
@@ -418,6 +522,10 @@ function packagePricingConfig(
     seat_count: pricing.seatCount,
     organization_id: pricing.organizationId,
     parent_slug: pricing.parentSlug,
+    view_seat_cost_usd: pricing.viewSeatCostUsd,
+    credits_per_usd: pricing.creditsPerUsd,
+    credit_amount: pricing.creditsPerUsd,
+    included_credits_per_seat: pricing.includedCreditsPerSeat,
   };
 }
 
@@ -522,6 +630,32 @@ export function pricingToApiFields(
         pricing_config: packagePricingConfig(normalized, providerSlug, model),
       },
       normalized,
+    );
+  }
+
+  if (normalized.model === "per_seat") {
+    return withExplicitPackageFields(
+      {
+        pricing_model: "custom",
+        token_price: 0,
+        package_allowance: null,
+        overage_price: null,
+        pricing_config: packagePricingConfig(normalized, providerSlug, "per_seat"),
+      },
+      { ...normalized, includedTokens: null, overageRate: null },
+    );
+  }
+
+  if (normalized.model === "per_team") {
+    return withExplicitPackageFields(
+      {
+        pricing_model: "custom",
+        token_price: 0,
+        package_allowance: null,
+        overage_price: null,
+        pricing_config: packagePricingConfig(normalized, providerSlug, "per_team"),
+      },
+      { ...normalized, costPerSeat: null, includedTokens: null, overageRate: null },
     );
   }
 

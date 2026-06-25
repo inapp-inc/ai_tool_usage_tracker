@@ -105,6 +105,34 @@ def test_normalize_openai_admin_token_strips_wrappers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_validate_api_key_rejects_users_only_access() -> None:
+    from unittest.mock import AsyncMock, patch
+
+    from app.collector.adapters.http_utils import HttpResult
+
+    adapter = OpenAIUsageAdapter()
+    forbidden = HttpResult(status_code=403, text='{"error":"Forbidden"}', json={"error": "Forbidden"})
+    users_ok = HttpResult(status_code=200, text='{"data":[]}', json={"data": []})
+
+    async def fake_get_with_detail(url, *, headers=None, params=None, timeout=20.0):
+        del headers, params, timeout
+        if "organization/users" in url:
+            return users_ok
+        return forbidden
+
+    with patch(
+        "app.collector.adapters.openai.get_with_detail",
+        new=AsyncMock(side_effect=fake_get_with_detail),
+    ):
+        with patch(
+            "app.collector.adapters.openai.OPENAI_MODELS_URL",
+            "https://api.openai.com/v1/models",
+        ):
+            with pytest.raises(ProviderValidationError, match="usage or costs"):
+                await adapter.validate_api_key("sk-admin-valid-key-123456789012345678901234567890")
+
+
+@pytest.mark.asyncio
 async def test_openai_fetch_usage_paginates_and_parses() -> None:
     from unittest.mock import AsyncMock, patch
 

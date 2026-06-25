@@ -11,12 +11,14 @@ from app.tools.billing_types import BillingType, billing_type_for_vendor
 @dataclass(frozen=True)
 class PackageSeed:
     package_name: str
+    billing_type: BillingType | None = None
     monthly_price: Decimal | None = None
     yearly_price: Decimal | None = None
     token_limit: int | None = None
     request_limit: int | None = None
     seat_limit: int | None = None
     credit_limit: Decimal | None = None
+    sku: str | None = None
 
 
 VENDOR_PACKAGES: dict[str, tuple[PackageSeed, ...]] = {
@@ -32,9 +34,26 @@ VENDOR_PACKAGES: dict[str, tuple[PackageSeed, ...]] = {
         PackageSeed("Enterprise"),
     ),
     "copilot": (
-        PackageSeed("Individual", monthly_price=Decimal("10"), seat_limit=1),
-        PackageSeed("Business", monthly_price=Decimal("19"), seat_limit=1),
-        PackageSeed("Enterprise"),
+        PackageSeed(
+            "Copilot Business",
+            billing_type="SEAT_BASED",
+            monthly_price=Decimal("19"),
+            seat_limit=1,
+            sku="copilot_for_business",
+        ),
+        PackageSeed(
+            "Copilot Enterprise",
+            billing_type="SEAT_BASED",
+            monthly_price=Decimal("39"),
+            seat_limit=1,
+            sku="copilot_for_business",
+        ),
+        PackageSeed(
+            "Copilot AI Credits",
+            billing_type="CREDIT_BASED",
+            credit_limit=Decimal("0"),
+            sku="copilot_ai_credit",
+        ),
     ),
     "figma": (
         PackageSeed("Starter", seat_limit=3),

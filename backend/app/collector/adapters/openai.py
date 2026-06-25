@@ -35,6 +35,7 @@ _OPENAI_USAGE_ENDPOINTS: tuple[tuple[str, str], ...] = (
 )
 
 _MAX_USAGE_PAGES = 50
+_USAGE_VALIDATION_PROBES = frozenset({"organization/usage/completions", "organization/costs"})
 
 _ORG_ADMIN_HINT = (
     "OpenAI organization endpoints require an Admin API key (not a project API key). "
@@ -187,6 +188,7 @@ class OpenAIUsageAdapter:
         headers = {"Authorization": f"Bearer {api_token}"}
         now = datetime.now(UTC)
         probe_results: list[tuple[str, int, str, dict | list | None]] = []
+        non_usage_probe_ok = False
 
         for probe_name, url, params in _openai_validation_probes(now):
             result = await get_with_detail(url, headers=headers, params=params)
@@ -200,10 +202,19 @@ class OpenAIUsageAdapter:
             )
             probe_results.append((probe_name, result.status_code, result.text, result.json))
             if result.status_code == 200:
-                logger.info("OpenAI Admin API key authorized via %s", probe_name)
-                return
+                if probe_name in _USAGE_VALIDATION_PROBES:
+                    logger.info("OpenAI Admin API key authorized via %s", probe_name)
+                    return
+                non_usage_probe_ok = True
 
         statuses = {status for _, status, _, _ in probe_results}
+        if non_usage_probe_ok and 403 in statuses:
+            raise ProviderValidationError(
+                "This Admin API key can access organization members or projects but not "
+                "usage or costs (HTTP 403). Ensure the key has usage read access "
+                "(api.usage.read) at platform.openai.com → Organization → Admin keys."
+            )
+
         if statuses == {401}:
             raise ProviderValidationError(
                 "Invalid or expired OpenAI Admin API key (HTTP 401). "
@@ -245,11 +256,14 @@ class OpenAIUsageAdapter:
         api_token: str,
         *,
         package_allowance: int | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
         **_kwargs: object,
     ) -> ProviderSnapshot:
-        until = datetime.now(UTC)
-        since = until - timedelta(days=30)
-        records = await self.fetch_usage(api_token, since=since, until=until)
+        token = normalize_openai_admin_token(api_token)
+        until = until or datetime.now(UTC)
+        since = since or (until - timedelta(days=30))
+        records = await self.fetch_usage(token, since=since, until=until)
         tokens_used = sum(record.total_tokens for record in records)
         total_cost = sum((record.estimated_cost for record in records), Decimal("0"))
         balance = None
@@ -262,14 +276,15 @@ class OpenAIUsageAdapter:
             total_cost=total_cost,
             input_cost_per_1k=Decimal("0.005"),
             output_cost_per_1k=Decimal("0.015"),
-            member_count=len(await self.fetch_members(api_token)),
+            member_count=len(await self.fetch_members(token)),
         )
 
     async def fetch_members(self, api_token: str, **_kwargs: object) -> list[ProviderMember]:
-        members = await self._fetch_org_users(api_token)
+        token = normalize_openai_admin_token(api_token)
+        members = await self._fetch_org_users(token)
         if members:
             return members
-        return await self._fetch_members_from_usage(api_token)
+        return await self._fetch_members_from_usage(token)
 
     async def _fetch_org_users(self, api_token: str) -> list[ProviderMember]:
         headers = {"Authorization": f"Bearer {api_token}"}
@@ -352,8 +367,9 @@ class OpenAIUsageAdapter:
         until: datetime,
         openai_pull_dumper: object | None = None,
     ) -> list[UsageRecord]:
-        headers = {"Authorization": f"Bearer {api_token}"}
-        user_id_map = await self._fetch_user_id_map(api_token)
+        token = normalize_openai_admin_token(api_token)
+        headers = {"Authorization": f"Bearer {token}"}
+        user_id_map = await self._fetch_user_id_map(token)
         records: list[UsageRecord] = []
         seen_event_ids: set[str] = set()
 

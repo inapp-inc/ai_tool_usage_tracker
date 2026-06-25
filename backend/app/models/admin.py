@@ -91,6 +91,7 @@ class TeamTool(Base):
     subscription_end: Mapped[date | None] = mapped_column(Date)
     monthly_budget: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     alert_threshold: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    alert_threshold_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

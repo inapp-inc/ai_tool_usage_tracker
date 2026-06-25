@@ -44,6 +44,7 @@ class TeamService:
         metrics = await TeamMetricsLoader(self._session).load_for_teams(
             user.organization_id,
             rows,
+            all_time=True,
         )
         responses: list[TeamResponse] = []
         for row in rows:
@@ -67,6 +68,7 @@ class TeamService:
         metrics_map = await TeamMetricsLoader(self._session).load_for_teams(
             user.organization_id,
             [team],
+            all_time=True,
         )
         return self._to_response(
             team,

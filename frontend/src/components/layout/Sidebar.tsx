@@ -45,13 +45,6 @@ interface NavItem {
           roles: "all",
           resource: "insights",
         },
-        {
-          label: "Copilot Analytics",
-          icon: IconLayoutDashboard,
-          path: "/insights/copilot",
-          roles: "all",
-          resource: "insights",
-        },
       ],
     },
     {

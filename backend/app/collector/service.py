@@ -34,6 +34,8 @@ from app.tools.catalogue import catalogue_tool_id_from_connected, team_id_from_c
 
 logger = logging.getLogger(__name__)
 
+SYNC_LOOKBACK_DAYS = 30
+
 
 def _to_collector_response(config: CollectorConfig) -> CollectorResponse:
     plain = decrypt_token(config.api_token_ciphertext)
@@ -168,7 +170,7 @@ class CollectorService:
 
         try:
             until = until or datetime.now(UTC)
-            since = since or (until - timedelta(minutes=config.pull_interval_minutes))
+            since = since or await self._resolve_pull_since(config, until)
             pull_dumper = None
             copilot_pull_dumper = None
             openai_pull_dumper = None
@@ -487,6 +489,38 @@ class CollectorService:
             return None
         tool = await self._session.get(Tool, config.tool_id)
         return tool.organization_id if tool is not None else None
+
+    async def _resolve_pull_since(self, config: CollectorConfig, until: datetime) -> datetime:
+        """First pull uses lookback window; later pulls overlap from last stored event."""
+        lookback_start = until - timedelta(days=SYNC_LOOKBACK_DAYS)
+        interval_start = until - timedelta(minutes=config.pull_interval_minutes)
+        if config.tool_id is None:
+            return max(lookback_start, interval_start)
+
+        tool = await self._session.get(Tool, config.tool_id)
+        if tool is None:
+            return max(lookback_start, interval_start)
+
+        tool_ids = {tool.id}
+        catalogue_id = catalogue_tool_id_from_connected(tool)
+        if catalogue_id is not None:
+            tool_ids.add(catalogue_id)
+
+        result = await self._session.execute(
+            select(func.max(UsageEvent.occurred_at)).where(
+                UsageEvent.provider == config.provider,
+                UsageEvent.tool_id.in_(tool_ids),
+            )
+        )
+        latest = result.scalar_one_or_none()
+        if latest is None:
+            return lookback_start
+
+        overlap = timedelta(hours=1)
+        incremental_since = latest - overlap
+        if incremental_since.tzinfo is None:
+            incremental_since = incremental_since.replace(tzinfo=UTC)
+        return max(incremental_since, lookback_start)
 
     async def _resolve_team_id_for_tool(self, tool: Tool) -> UUID | None:
         team_id = team_id_from_connected(tool)
