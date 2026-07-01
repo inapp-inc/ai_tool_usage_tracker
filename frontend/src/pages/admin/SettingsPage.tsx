@@ -35,7 +35,6 @@ import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
 import { RolesPage } from "@/pages/settings/RolesPage";
 import { useToast } from "@/hooks/useToast";
-import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 
 const createSchema = z.object({
@@ -426,7 +425,7 @@ export function SettingsPage() {
 
   return (
     <RoleGuard
-      roles={[Role.SuperAdmin]}
+      resource="settings"
       fallback={
         <EmptyState
           title="Access denied"

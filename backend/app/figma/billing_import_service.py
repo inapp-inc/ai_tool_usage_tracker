@@ -126,36 +126,42 @@ class FigmaBillingImportService:
         pricing = figma_pricing_from_assignment(assignment)
 
         valid_rows: list[FigmaBillingRow] = []
-        row_costs: list[tuple[Decimal, Decimal, Decimal]] = []
+        valid_indexes: list[int] = []
         for index in row_indexes:
             if index < 0 or index >= len(billing_rows):
                 continue
             row = billing_rows[index]
             if row.error_reason is not None:
                 continue
+            valid_rows.append(row)
+            valid_indexes.append(index)
+
+        from app.figma.billing_import import apply_subscription_usage_periods
+
+        apply_subscription_usage_periods(
+            valid_rows,
+            assignment.subscription_start if assignment else None,
+        )
+
+        row_costs: list[tuple[Decimal, Decimal, Decimal]] = []
+        grouped_rows: dict[
+            tuple[date | None, date | None],
+            list[tuple[FigmaBillingRow, tuple[Decimal, Decimal, Decimal], uuid.UUID | None]],
+        ] = {}
+        for row, index in zip(valid_rows, valid_indexes, strict=True):
             seat_cost, paid_cost, total = calculate_figma_row_costs(
                 seat_type=row.seat_type,
                 seat_credits_used=row.seat_credits_used,
                 paid_credits_used=row.paid_credits_used,
                 pricing=pricing,
             )
-            valid_rows.append(row)
-            row_costs.append((seat_cost, paid_cost, total))
-
-        aggregates = aggregate_figma_billing_rows(valid_rows, row_costs=row_costs)
-        grouped_rows: dict[tuple[date | None, date | None], list[tuple[FigmaBillingRow, tuple[Decimal, Decimal, Decimal], uuid.UUID | None]]] = {}
-        cost_index = 0
-        for index in row_indexes:
-            if index < 0 or index >= len(billing_rows):
-                continue
-            row = billing_rows[index]
-            if row.error_reason is not None:
-                continue
+            costs = (seat_cost, paid_cost, total)
+            row_costs.append(costs)
             key = (row.usage_period_start, row.usage_period_end)
-            costs = row_costs[cost_index]
             matched = matched_user_ids.get(index)
             grouped_rows.setdefault(key, []).append((row, costs, matched))
-            cost_index += 1
+
+        aggregates = aggregate_figma_billing_rows(valid_rows, row_costs=row_costs)
 
         ingested = 0
         for aggregate in aggregates:

@@ -42,6 +42,33 @@ class CostOverviewWidget(BaseModel):
     last_updated_at: datetime
 
 
+class OrganizationCostSummary(BaseModel):
+    """Organization-wide cost rollup from team pricing totals and additional billable spend."""
+
+    tools_cost: Decimal = Field(
+        description="Sum of team tools pricing (package/subscription amounts configured per team)."
+    )
+    additional_billable_cost: Decimal = Field(
+        description="Spend beyond team tools pricing (imports, overage, unscoped usage)."
+    )
+    total_cost: Decimal = Field(description="Tools cost + additional billable cost.")
+    team_count: int = 0
+    connected_tool_count: int = 0
+
+
+class OrganizationCostBreakdownItem(BaseModel):
+    organization_id: UUID
+    organization_name: str
+    tools_cost: Decimal
+    additional_billable_cost: Decimal
+    total_cost: Decimal
+    connected_tool_count: int = 0
+
+
+class OrganizationCostBreakdownResponse(BaseModel):
+    data: list[OrganizationCostBreakdownItem]
+
+
 class UsageByToolItem(BaseModel):
     tool_id: UUID
     tool_name: str
@@ -98,6 +125,9 @@ class TrendPoint(BaseModel):
     period_start: datetime
     total_tokens: int
     estimated_cost: Decimal | None = None
+    included_cost: Decimal | None = None
+    billable_cost: Decimal | None = None
+    breakdown_available: bool = False
 
 
 class TrendsResponse(BaseModel):

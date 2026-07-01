@@ -76,12 +76,12 @@ OpenSpec: [openspec/changes/token-collector-mvp](openspec/changes/token-collecto
    | Variable | Local default |
    |----------|----------------|
    | `SUPER_ADMIN_EMAIL` | `admin@example.com` |
-   | `SUPER_ADMIN_PASSWORD` | `change_me_dev_only` |
+   | `SUPER_ADMIN_PASSWORD` | `123456789` |
 
    ```bash
    curl -X POST http://localhost:8000/api/v1/auth/login \
      -H "Content-Type: application/json" \
-     -d "{\"email\":\"admin@example.com\",\"password\":\"change_me_dev_only\"}"
+     -d "{\"email\":\"admin@example.com\",\"password\":\"123456789\"}"
 
    curl http://localhost:8000/api/v1/auth/me \
      -H "Authorization: Bearer <access_token>"

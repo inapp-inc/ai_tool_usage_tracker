@@ -25,7 +25,7 @@ def system_role_permissions(role_name: str) -> dict[str, PermRow]:
     """Return permission rows for a system role name."""
     deny = {resource: _deny() for resource in VALID_RESOURCES}
 
-    if role_name == "super_admin":
+    if role_name in ("super_admin", "org_admin"):
         return {resource: _full() for resource in VALID_RESOURCES}
 
     if role_name == "team_admin":

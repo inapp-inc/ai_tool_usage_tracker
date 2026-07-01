@@ -5,14 +5,17 @@ from decimal import Decimal
 
 from app.figma.billing_import import (
     aggregate_figma_billing_rows,
+    apply_subscription_usage_periods,
     parse_figma_billing_csv,
     suggest_figma_column_mapping,
 )
 from app.figma.pricing import (
+    FigmaImportPeriodSlice,
     FigmaTeamPricing,
     calculate_figma_row_costs,
     figma_configured_subscription,
     figma_paid_credit_cost,
+    figma_split_costs_from_import_slices,
 )
 
 FIGMA_CSV = """User ID,User name,User email,Seat type,Seat credits used,Paid credits used,Last activity,Usage period start,Usage period end
@@ -52,6 +55,14 @@ def test_parse_figma_csv_keeps_all_users_in_period() -> None:
     assert all(row.usage_period_end == date(2026, 6, 17) for row in valid)
     assert valid[0].seat_type == "full"
     assert valid[1].seat_type == "view"
+
+
+def test_apply_subscription_usage_periods_anchors_to_cycle() -> None:
+    result = parse_figma_billing_csv(FIGMA_CSV, column_mapping=MAPPING)
+    valid = [row for row in result.rows if row.error_reason is None]
+    apply_subscription_usage_periods(valid, date(2026, 1, 14))
+    assert all(row.usage_period_start == date(2026, 5, 14) for row in valid)
+    assert all(row.usage_period_end == date(2026, 6, 13) for row in valid)
 
 
 def test_calculate_figma_row_costs_with_credits_per_usd() -> None:
@@ -113,3 +124,41 @@ def test_aggregate_figma_billing_rows_counts_seat_types() -> None:
     assert aggregates[0].view_seat_count == 1
     # 50 + 10 paid credits × $0.03 = $1.80
     assert aggregates[0].total_paid_cost == Decimal("1.8")
+
+
+def test_figma_split_costs_dedupes_subscription_within_billing_cycle() -> None:
+    pricing = FigmaTeamPricing(
+        full_seat_cost_usd=Decimal("55"),
+        view_seat_cost_usd=None,
+        credits_per_usd=Decimal("0.03"),
+        included_credits_per_seat=Decimal("3500"),
+        configured_seat_count=11,
+    )
+    slices = [
+        FigmaImportPeriodSlice(
+            usage_period_start=date(2026, 4, 1),
+            usage_period_end=date(2026, 4, 30),
+            full_seat_count=3,
+            view_seat_count=0,
+            paid_cost_usd=Decimal("3"),
+            paid_credits=Decimal("100"),
+        ),
+        FigmaImportPeriodSlice(
+            usage_period_start=date(2026, 3, 14),
+            usage_period_end=date(2026, 4, 13),
+            full_seat_count=3,
+            view_seat_count=0,
+            paid_cost_usd=Decimal("0.6"),
+            paid_credits=Decimal("20"),
+        ),
+    ]
+
+    subscription, additional, merged = figma_split_costs_from_import_slices(
+        slices,
+        pricing,
+        date(2026, 1, 14),
+    )
+
+    assert subscription == Decimal("605")
+    assert additional == Decimal("3.6")
+    assert len(merged) == 1

@@ -98,6 +98,22 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function copilotConfiguredSubscriptionFromAssignment(
+  assignment: TeamToolAssignment | null,
+): number {
+  if (!assignment) {
+    return 0;
+  }
+  const { model, costPerSeat, flatMonthlyCost, seatCount } = assignment.pricing;
+  if (seatCount == null) {
+    return 0;
+  }
+  if (model === "per_team") {
+    return flatMonthlyCost != null ? flatMonthlyCost * seatCount : 0;
+  }
+  return costPerSeat != null ? costPerSeat * seatCount : 0;
+}
+
 function CopilotTeamToolSummary({
   insights,
   assignment,
@@ -105,11 +121,13 @@ function CopilotTeamToolSummary({
   insights: CopilotBillingInsights;
   assignment: TeamToolAssignment | null;
 }) {
-  const totalCost = Number(insights.total_cost ?? 0);
-  const subscriptionLimit = Number(
-    insights.monthly_cost_limit ?? insights.configured_monthly_cost ?? 0,
-  );
+  const configuredSubscription = copilotConfiguredSubscriptionFromAssignment(assignment);
+  const subscriptionLimit =
+    configuredSubscription > 0
+      ? configuredSubscription
+      : Number(insights.monthly_cost_limit ?? insights.configured_monthly_cost ?? 0);
   const additionalCost = Number(insights.additional_cost ?? 0);
+  const totalCost = subscriptionLimit + additionalCost;
   const quantities = insights.quantities;
   const pkg = assignment?.package;
 
@@ -127,7 +145,7 @@ function CopilotTeamToolSummary({
         >
           Imported billing (all periods)
         </Typography>
-        {!insights.has_import && !insights.has_config ? (
+        {!insights.has_import && !insights.has_config && subscriptionLimit <= 0 ? (
           <Alert severity="info">
             Configure Copilot on this team, then import billing CSV in Uploads to see costs
             here.
@@ -136,10 +154,10 @@ function CopilotTeamToolSummary({
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1.5 }}>
             <UsageStat
               label="Total cost"
-              value={insights.has_import || subscriptionLimit > 0 ? formatCost(totalCost) : "—"}
+              value={subscriptionLimit > 0 || additionalCost > 0 ? formatCost(totalCost) : "—"}
             />
             <UsageStat
-              label="Subscription limit"
+              label="Subscription (configured)"
               value={subscriptionLimit > 0 ? formatCost(subscriptionLimit) : "—"}
             />
             <UsageStat
@@ -269,6 +287,19 @@ function CopilotTeamToolSummary({
   );
 }
 
+function figmaConfiguredSubscriptionFromAssignment(
+  assignment: TeamToolAssignment | null,
+): number {
+  if (!assignment) {
+    return 0;
+  }
+  const { costPerSeat, seatCount } = assignment.pricing;
+  if (costPerSeat == null || seatCount == null) {
+    return 0;
+  }
+  return costPerSeat * seatCount;
+}
+
 function FigmaTeamToolSummary({
   insights,
   assignment,
@@ -276,20 +307,18 @@ function FigmaTeamToolSummary({
   insights: FigmaBillingInsights;
   assignment: TeamToolAssignment | null;
 }) {
+  const configuredSubscription = figmaConfiguredSubscriptionFromAssignment(assignment);
   const subscriptionTotal =
-    insights.configured_seat_cost != null
-      ? Number(insights.configured_seat_cost)
-      : Number(insights.seat_cost ?? 0);
+    configuredSubscription > 0
+      ? configuredSubscription
+      : Number(insights.seat_cost ?? insights.configured_seat_cost ?? 0);
   const paidCredits = Number(insights.credits?.total_paid_credits_used ?? 0);
-  const usdPerCredit =
-    insights.credits_per_usd != null ? Number(insights.credits_per_usd) : null;
+  const creditsPerUsd = assignment?.pricing.creditsPerUsd ?? null;
   const additionalCost =
-    usdPerCredit != null && paidCredits > 0
-      ? paidCredits * usdPerCredit
+    creditsPerUsd != null && paidCredits > 0
+      ? paidCredits * creditsPerUsd
       : Number(insights.paid_cost ?? 0);
-  const displayTotal = insights.has_import
-    ? subscriptionTotal + additionalCost
-    : subscriptionTotal;
+  const displayTotal = subscriptionTotal + additionalCost;
   const pkg = assignment?.package;
 
   return (

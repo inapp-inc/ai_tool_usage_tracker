@@ -47,6 +47,11 @@ Stack:
 
 Quick start (Linux):
   1. ./scripts/deploy-docker.sh ai-tools-token-tracker.zip
+     (or: bash scripts/deploy-docker.sh ai-tools-token-tracker.zip)
+
+If deploy fails with: /usr/bin/env: 'bash\r': No such file or directory
+  bash scripts/fix-line-endings.sh
+  bash scripts/deploy-docker.sh ai-tools-token-tracker.zip
 
 Manual start:
   1. Copy deploy/.env.example to .env and update secrets/passwords
@@ -68,8 +73,26 @@ Useful commands:
   docker compose --profile prod down -v   (reset database)
 DEPLOY
 
+# Ensure Unix LF line endings in shell scripts before packaging (Windows-safe).
+while IFS= read -r -d '' script; do
+  sed -i 's/\r$//' "$script" 2>/dev/null || sed -i '' 's/\r$//' "$script"
+done < <(find "$ROOT_DIR" -name '*.sh' -type f -print0)
+
 rm -f "$ROOT_DIR/Dockerfile"
 rm -f "$ARCHIVE_PATH"
+
+# Stamp package metadata (verify on server: cat PACKAGE_BUILD.txt after unzip).
+SIDEBAR="$ROOT_DIR/frontend/src/components/layout/Sidebar.tsx"
+SIDEBAR_STAMP="missing"
+if [[ -f "$SIDEBAR" ]]; then
+  SIDEBAR_STAMP="$(date -u -r "$SIDEBAR" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || stat -c '%y' "$SIDEBAR" 2>/dev/null || echo unknown)"
+fi
+cat > "$ROOT_DIR/PACKAGE_BUILD.txt" <<META
+Packaged at (UTC): $(date -u '+%Y-%m-%dT%H:%M:%SZ')
+frontend/src/components/layout/Sidebar.tsx last modified: $SIDEBAR_STAMP
+Note: frontend/dist is excluded; server rebuilds SPA on deploy (docker compose build frontend).
+META
+
 (
   cd "$ROOT_DIR"
   zip -r "$ARCHIVE_PATH" . \

@@ -7,13 +7,16 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
-from app.core.permissions import require_permission
+from app.core.org_scope import get_operating_org_scope, OperatingOrgScope
+from app.core.permissions import require_permission, require_super_admin
 from app.dashboard.schemas import (
     ActiveAlertsResponse,
     ActiveCountsWidget,
     CostOverviewWidget,
     DailyBreakdownResponse,
     MyUsageResponse,
+    OrganizationCostBreakdownResponse,
+    OrganizationCostSummary,
     TokenUsageWidget,
     TopConsumersResponse,
     TrendGranularityApi,
@@ -25,6 +28,7 @@ from app.dashboard.scope import resolve_dashboard_scope
 from app.dashboard.service import DashboardService
 from app.db.session import get_session
 from app.models.auth import User
+from app.teams.metrics import ALL_TIME_FROM, ALL_TIME_TO
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -46,10 +50,16 @@ async def get_dashboard_tokens(
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
     current_user: User = Depends(require_permission("insights", "read")),
+    org_scope: OperatingOrgScope = Depends(get_operating_org_scope),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> TokenUsageWidget:
-    scope = await resolve_dashboard_scope(session, current_user, team_id=team_id)
+    scope = await resolve_dashboard_scope(
+        session,
+        current_user,
+        team_id=team_id,
+        org_scope=org_scope,
+    )
     return await service.get_tokens(
         scope,
         _parse_datetime(from_dt),
@@ -66,10 +76,16 @@ async def get_dashboard_cost(
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
     current_user: User = Depends(require_permission("insights", "read")),
+    org_scope: OperatingOrgScope = Depends(get_operating_org_scope),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> CostOverviewWidget:
-    scope = await resolve_dashboard_scope(session, current_user, team_id=team_id)
+    scope = await resolve_dashboard_scope(
+        session,
+        current_user,
+        team_id=team_id,
+        org_scope=org_scope,
+    )
     return await service.get_cost(
         scope,
         _parse_datetime(from_dt),
@@ -79,14 +95,59 @@ async def get_dashboard_cost(
     )
 
 
+@router.get("/organization-costs", response_model=OrganizationCostSummary)
+async def get_dashboard_organization_costs(
+    from_dt: datetime = Query(alias="from"),
+    to_dt: datetime = Query(alias="to"),
+    team_id: UUID | None = None,
+    current_user: User = Depends(require_permission("insights", "read")),
+    org_scope: OperatingOrgScope = Depends(get_operating_org_scope),
+    session: AsyncSession = Depends(get_session),
+    service: DashboardService = Depends(get_dashboard_service),
+) -> OrganizationCostSummary:
+    scope = await resolve_dashboard_scope(
+        session,
+        current_user,
+        team_id=team_id,
+        org_scope=org_scope,
+    )
+    return await service.get_organization_cost_summary(
+        scope,
+        _parse_datetime(from_dt),
+        _parse_datetime(to_dt),
+    )
+
+
+@router.get("/organization-costs/breakdown", response_model=OrganizationCostBreakdownResponse)
+async def get_dashboard_organization_cost_breakdown(
+    all_time: bool = Query(False),
+    from_dt: datetime | None = Query(None, alias="from"),
+    to_dt: datetime | None = Query(None, alias="to"),
+    _current_user: User = Depends(require_super_admin()),
+    service: DashboardService = Depends(get_dashboard_service),
+) -> OrganizationCostBreakdownResponse:
+    if all_time:
+        window_from, window_to = ALL_TIME_FROM, ALL_TIME_TO
+    else:
+        window_from = _parse_datetime(from_dt)  # type: ignore[arg-type]
+        window_to = _parse_datetime(to_dt)  # type: ignore[arg-type]
+    return await service.get_organization_cost_breakdown(window_from, window_to)
+
+
 @router.get("/active-counts", response_model=ActiveCountsWidget)
 async def get_dashboard_active_counts(
     team_id: UUID | None = None,
     current_user: User = Depends(require_permission("insights", "read")),
+    org_scope: OperatingOrgScope = Depends(get_operating_org_scope),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> ActiveCountsWidget:
-    scope = await resolve_dashboard_scope(session, current_user, team_id=team_id)
+    scope = await resolve_dashboard_scope(
+        session,
+        current_user,
+        team_id=team_id,
+        org_scope=org_scope,
+    )
     return await service.get_active_counts(scope, team_id=team_id)
 
 
@@ -96,10 +157,16 @@ async def get_dashboard_usage_by_tool(
     to_dt: datetime = Query(alias="to"),
     team_id: UUID | None = None,
     current_user: User = Depends(require_permission("insights", "read")),
+    org_scope: OperatingOrgScope = Depends(get_operating_org_scope),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> UsageByToolResponse:
-    scope = await resolve_dashboard_scope(session, current_user, team_id=team_id)
+    scope = await resolve_dashboard_scope(
+        session,
+        current_user,
+        team_id=team_id,
+        org_scope=org_scope,
+    )
     return await service.get_usage_by_tool(
         scope,
         _parse_datetime(from_dt),
@@ -115,10 +182,16 @@ async def get_dashboard_usage_by_team(
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
     current_user: User = Depends(require_permission("insights", "read")),
+    org_scope: OperatingOrgScope = Depends(get_operating_org_scope),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> UsageByTeamResponse:
-    scope = await resolve_dashboard_scope(session, current_user, team_id=team_id)
+    scope = await resolve_dashboard_scope(
+        session,
+        current_user,
+        team_id=team_id,
+        org_scope=org_scope,
+    )
     return await service.get_usage_by_team(
         scope,
         _parse_datetime(from_dt),
@@ -136,10 +209,16 @@ async def get_dashboard_top_consumers(
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
     current_user: User = Depends(require_permission("insights", "read")),
+    org_scope: OperatingOrgScope = Depends(get_operating_org_scope),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> TopConsumersResponse:
-    scope = await resolve_dashboard_scope(session, current_user, team_id=team_id)
+    scope = await resolve_dashboard_scope(
+        session,
+        current_user,
+        team_id=team_id,
+        org_scope=org_scope,
+    )
     return await service.get_top_consumers(
         scope,
         _parse_datetime(from_dt),
@@ -156,10 +235,16 @@ async def get_dashboard_alerts(
     team_id: UUID | None = None,
     limit: int = Query(default=10, ge=1, le=50),
     current_user: User = Depends(require_permission("insights", "read")),
+    org_scope: OperatingOrgScope = Depends(get_operating_org_scope),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> ActiveAlertsResponse:
-    scope = await resolve_dashboard_scope(session, current_user, team_id=team_id)
+    scope = await resolve_dashboard_scope(
+        session,
+        current_user,
+        team_id=team_id,
+        org_scope=org_scope,
+    )
     return await service.get_alerts(scope, team_id=team_id, limit=limit)
 
 
@@ -171,10 +256,16 @@ async def get_dashboard_trends(
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
     current_user: User = Depends(require_permission("insights", "read")),
+    org_scope: OperatingOrgScope = Depends(get_operating_org_scope),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> TrendsResponse:
-    scope = await resolve_dashboard_scope(session, current_user, team_id=team_id)
+    scope = await resolve_dashboard_scope(
+        session,
+        current_user,
+        team_id=team_id,
+        org_scope=org_scope,
+    )
     return await service.get_trends(
         scope,
         _parse_datetime(from_dt),
@@ -210,10 +301,16 @@ async def get_dashboard_daily_breakdown(
     team_id: UUID | None = None,
     tool_id: UUID | None = None,
     current_user: User = Depends(require_permission("insights", "read")),
+    org_scope: OperatingOrgScope = Depends(get_operating_org_scope),
     session: AsyncSession = Depends(get_session),
     service: DashboardService = Depends(get_dashboard_service),
 ) -> DailyBreakdownResponse:
-    scope = await resolve_dashboard_scope(session, current_user, team_id=team_id)
+    scope = await resolve_dashboard_scope(
+        session,
+        current_user,
+        team_id=team_id,
+        org_scope=org_scope,
+    )
     return await service.get_daily_breakdown(
         scope,
         _parse_datetime(date),

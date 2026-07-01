@@ -29,6 +29,7 @@ import { emptyTeamToolPackageBinding, emptyTeamToolPricing } from "@/api/adapter
 import type { TeamToolPackageBinding } from "@/api/adapters/teamTools";
 import type { ToolPricing, ToolProvider } from "@/api/adapters/tools";
 import { fetchTools, normalizePricing } from "@/api/tools";
+import { ApiClientError } from "@/api/client";
 import { syncTeamToolAssignments, fetchTeamTools } from "@/api/teamTools";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
@@ -39,7 +40,6 @@ import { SlideOver } from "@/components/layout/SlideOver";
 import { TeamToolPackageSelector } from "@/components/teams/TeamToolPackageSelector";
 import { TeamToolDetailSlideOver } from "@/components/teams/TeamToolDetailSlideOver";
 import { ToolPricingFields } from "@/components/tools/ToolPricingFields";
-import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { formatCost, formatRelativeTime, formatTokens } from "@/utils/formatters";
 import {
@@ -50,6 +50,9 @@ import {
   updateTeam,
   type Team,
 } from "@/api/teams";
+import { useAuthStore } from "@/stores/authStore";
+import { useOrgScopeStore } from "@/stores/orgScopeStore";
+import { Role } from "@/types";
 import { useToast } from "@/hooks/useToast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -149,6 +152,8 @@ function TeamToolsCell({
 export function TeamsPage() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const isSuperAdmin = useAuthStore((s) => s.user?.platformRole === Role.SuperAdmin);
+  const selectedOrganizationId = useOrgScopeStore((s) => s.selectedOrganizationId);
   const [slideOver, setSlideOver] = useState<SlideOverState>({
     open: false,
     team: null,
@@ -193,14 +198,34 @@ export function TeamsPage() {
     return map;
   }, [catalogToolsQuery.data]);
 
-  const toolOptions = useMemo(
-    () =>
-      (catalogToolsQuery.data ?? []).map((tool) => ({
-        id: tool.id,
-        name: tool.name,
-      })),
-    [catalogToolsQuery.data],
-  );
+  const organizationCosts = useMemo(() => {
+    const teams = teamsQuery.data ?? [];
+    const toolsCost = teams.reduce((sum, team) => sum + team.pricingTotal, 0);
+    const totalCost = teams.reduce((sum, team) => sum + team.totalCost, 0);
+    const additionalBillable = Math.max(totalCost - toolsCost, 0);
+    return {
+      toolsCost,
+      additionalBillableCost: additionalBillable,
+      totalCost: toolsCost + additionalBillable,
+      teamCount: teams.length,
+    };
+  }, [teamsQuery.data]);
+
+  const toolOptions = useMemo(() => {
+    const scopedTools = (catalogToolsQuery.data ?? []).filter((tool) => {
+      if (!isSuperAdmin) {
+        return true;
+      }
+      if (!selectedOrganizationId) {
+        return false;
+      }
+      return tool.organizationId === selectedOrganizationId;
+    });
+    return scopedTools.map((tool) => ({
+      id: tool.id,
+      name: tool.name,
+    }));
+  }, [catalogToolsQuery.data, isSuperAdmin, selectedOrganizationId]);
 
   const createMutation = useMutation({
     mutationFn: createTeam,
@@ -322,6 +347,7 @@ export function TeamsPage() {
           queryClient.invalidateQueries({ queryKey: ["team-tool-assignment"] }),
           queryClient.invalidateQueries({ queryKey: ["team-tool-usage"] }),
           queryClient.invalidateQueries({ queryKey: ["team-tool-copilot-billing"] }),
+          queryClient.invalidateQueries({ queryKey: ["team-tool-figma-billing"] }),
         ]);
 
         if (result.syncedCount === 0 && result.failedCount === 0) {
@@ -412,18 +438,33 @@ export function TeamsPage() {
       },
       {
         key: "pricingTotal",
-        header: "Pricing total",
+        header: "Tools cost",
         sortable: true,
         render: (row) => (
-          <Typography variant="body2">{formatCost(row.pricingTotal)}</Typography>
+          <Tooltip title="Configured subscription and package pricing (fixed team setup)">
+            <Typography variant="body2">{formatCost(row.pricingTotal)}</Typography>
+          </Tooltip>
         ),
+      },
+      {
+        key: "additionalBillable",
+        header: "Billable",
+        sortable: true,
+        render: (row) => {
+          const additional = Math.max(row.totalCost - row.pricingTotal, 0);
+          return (
+            <Tooltip title="Paid credits and usage beyond configured tools pricing (e.g. Figma paid credits × USD rate)">
+              <Typography variant="body2">{formatCost(additional)}</Typography>
+            </Tooltip>
+          );
+        },
       },
       {
         key: "totalCost",
         header: "Total cost",
         sortable: true,
         render: (row) => (
-          <Tooltip title="All-time usage cost plus imported Copilot billing">
+          <Tooltip title="Tools cost + additional billable (usage + imported billing)">
             <Typography variant="body2">{formatCost(row.totalCost)}</Typography>
           </Tooltip>
         ),
@@ -509,6 +550,19 @@ export function TeamsPage() {
   const onSubmit = async (data: FormValues) => {
     setSaveError(null);
 
+    for (const toolId of data.toolIds) {
+      const provider = providerByToolId.get(toolId);
+      if (
+        (provider === "figma" || provider === "copilot") &&
+        !toolPackageById[toolId]?.packageId
+      ) {
+        setSaveError(
+          `Select a subscription package for ${toolNameById.get(toolId) ?? "each assigned tool"}.`,
+        );
+        return;
+      }
+    }
+
     const assignments = data.toolIds.map((toolId) => ({
       toolId,
       pricing: toolPricingById[toolId] ?? emptyTeamToolPricing(),
@@ -531,14 +585,18 @@ export function TeamsPage() {
 
       await queryClient.invalidateQueries({ queryKey: ["teams"] });
       setSlideOver({ open: false, team: null });
-    } catch {
-      setSaveError("Could not save team tool assignments. Please try again.");
+    } catch (error) {
+      const detail =
+        error instanceof ApiClientError
+          ? error.apiError.detail
+          : "Could not save team tool assignments. Please try again.";
+      setSaveError(detail);
     }
   };
 
   return (
     <RoleGuard
-      roles={[Role.SuperAdmin]}
+      resource="teams"
       fallback={
         <EmptyState
           title="Access denied"
@@ -575,6 +633,46 @@ export function TeamsPage() {
             New Team
           </Button>
         </Box>
+
+        {(teamsQuery.data?.length ?? 0) > 0 && (
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              gap: 2,
+              mb: 3,
+              p: 2,
+              borderRadius: "8px",
+              border: `0.5px solid ${tokens.border}`,
+              backgroundColor: tokens.bgPaper,
+            }}
+          >
+            <Box>
+              <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                Organization total cost
+              </Typography>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                {formatCost(organizationCosts.totalCost)}
+              </Typography>
+            </Box>
+            <Box>
+              <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                Total tools cost
+              </Typography>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                {formatCost(organizationCosts.toolsCost)}
+              </Typography>
+            </Box>
+            <Box>
+              <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                Billable cost
+              </Typography>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                {formatCost(organizationCosts.additionalBillableCost)}
+              </Typography>
+            </Box>
+          </Box>
+        )}
 
         {teamsQuery.isError && (
           <Alert severity="error" sx={{ mb: 2 }}>
@@ -737,7 +835,9 @@ export function TeamsPage() {
                         <FormHelperText error>{errors.toolIds.message}</FormHelperText>
                       ) : (
                         <FormHelperText>
-                          Select tools this team uses, then configure pricing for each below
+                          {isSuperAdmin && !selectedOrganizationId
+                            ? "Select a customer organization in the top bar to choose tools"
+                            : "Select tools this team uses, then configure pricing for each below"}
                         </FormHelperText>
                       )}
                     </FormControl>
@@ -793,7 +893,9 @@ export function TeamsPage() {
                         disabled={assignmentsLoading || savePending}
                         teamMemberCount={slideOver.team?.memberCount ?? 0}
                       />
-                      {providerByToolId.get(toolId) !== "copilot" && (
+                      {providerByToolId.get(toolId) !== "copilot" &&
+                        providerByToolId.get(toolId) !== "cursor" &&
+                        providerByToolId.get(toolId) !== "figma" && (
                       <ToolPricingFields
                         value={toolPricingById[toolId] ?? emptyTeamToolPricing()}
                         vendor={providerByToolId.get(toolId)}

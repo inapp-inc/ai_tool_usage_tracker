@@ -15,7 +15,11 @@ from app.copilot.billing_totals import (
     totals_from_upload_ids,
 )
 from app.copilot.user_matching import build_team_copilot_user_lookup, match_copilot_user_login
-from app.copilot.billing_import import extract_row_amounts
+from app.copilot.billing_import import (
+    compute_copilot_billed_total,
+    compute_copilot_cost_split,
+    extract_row_amounts,
+)
 from app.copilot.schemas import (
     CopilotBillingCostTrendPoint,
     CopilotBillingInsightsResponse,
@@ -187,21 +191,27 @@ class CopilotAnalyticsService:
             if billing_import.upload_id is not None
         ]
         parsed_totals = await totals_from_upload_ids(self._session, upload_ids)
-        if parsed_totals.gross_total == 0 and rows:
-            parsed_totals.gross_total = sum(
+
+        subscription, additional_cost, total_cost = compute_copilot_cost_split(
+            parsed_totals.net_total,
+            configured_subscription if configured_subscription > 0 else None,
+            credits_gross=parsed_totals.credits_gross,
+        )
+        credits_cost = parsed_totals.credits_gross
+        if total_cost == 0 and rows:
+            total_cost = sum(
                 (billing_import.total_cost for billing_import, _upload in rows),
                 Decimal("0"),
             )
-
-        additional_cost = parsed_totals.net_total
-        credits_cost = parsed_totals.credits_gross
-        total_cost = parsed_totals.gross_total
         seat_count = 0
         periods: list[CopilotBillingPeriodRow] = []
 
         for billing_import, upload in rows:
             raw_summary = billing_import.raw_summary if isinstance(billing_import.raw_summary, dict) else {}
             row_credits = Decimal(str(raw_summary.get("credits_cost") or 0))
+            row_additional = billing_import.additional_cost
+            if row_additional <= 0 and row_credits > 0:
+                row_additional = row_credits
             if billing_import.seat_count:
                 seat_count = max(seat_count, billing_import.seat_count)
             period_subscription = (
@@ -209,13 +219,10 @@ class CopilotAnalyticsService:
                 if billing_import.sku == "copilot_for_business"
                 else Decimal("0")
             )
-            period_gross = parsed_totals.gross_by_sku_period.get(
-                (
-                    billing_import.sku,
-                    billing_import.billing_period_start,
-                    billing_import.billing_period_end,
-                ),
-                billing_import.total_cost,
+            period_total = compute_copilot_billed_total(
+                monthly_cost_limit=period_subscription,
+                additional_cost=row_additional,
+                credits_cost=Decimal("0") if row_additional > 0 else row_credits,
             )
             periods.append(
                 CopilotBillingPeriodRow(
@@ -223,16 +230,16 @@ class CopilotAnalyticsService:
                     billing_period_end=billing_import.billing_period_end,
                     sku=billing_import.sku,
                     monthly_cost_limit=period_subscription,
-                    additional_cost=billing_import.additional_cost,
+                    additional_cost=row_additional,
                     credits_cost=row_credits,
-                    total_cost=period_gross,
+                    total_cost=period_total,
                     seat_count=billing_import.seat_count,
                     upload_filename=upload.filename if upload else None,
                     imported_at=billing_import.imported_at,
                 )
             )
 
-        monthly_cost_limit = configured_subscription if configured_subscription > 0 else None
+        monthly_cost_limit = subscription if subscription > 0 else None
 
         monthly_budget = assignment.monthly_budget if assignment else None
         alert_threshold_usd = assignment.alert_threshold_usd if assignment else None
@@ -245,7 +252,7 @@ class CopilotAnalyticsService:
 
         insights = self._billing_insights(
             total_cost=total_cost,
-            monthly_cost_limit=configured_subscription,
+            monthly_cost_limit=subscription,
             additional_cost=additional_cost,
             credits_cost=credits_cost,
             seat_count=seat_count,
@@ -693,7 +700,17 @@ class CopilotAnalyticsService:
         return _BillingPeriodTotals(
             monthly_cost_limit=sum((row.monthly_cost_limit for row in period_rows), Decimal("0")),
             additional_cost=sum((row.additional_cost for row in period_rows), Decimal("0")),
-            total_cost=sum((row.total_cost for row in period_rows), Decimal("0")),
+            total_cost=compute_copilot_billed_total(
+                monthly_cost_limit=sum((row.monthly_cost_limit for row in period_rows), Decimal("0")),
+                additional_cost=sum((row.additional_cost for row in period_rows), Decimal("0")),
+                credits_cost=sum(
+                    (
+                        Decimal(str((row.raw_summary or {}).get("credits_cost") or 0))
+                        for row in period_rows
+                    ),
+                    Decimal("0"),
+                ),
+            ),
         )
 
     async def _latest_billing_import(
@@ -1225,7 +1242,10 @@ class CopilotAnalyticsService:
             CopilotInsight(
                 kind="billing_total",
                 title="Imported billing total",
-                message=f"Total gross amount from billing CSV is ${total_cost:.2f} USD.",
+                message=(
+                    f"Total billed cost is ${total_cost:.2f} USD "
+                    f"(subscription limit + additional spend)."
+                ),
                 severity="info",
             )
         )
@@ -1263,7 +1283,10 @@ class CopilotAnalyticsService:
                 CopilotInsight(
                     kind="additional_cost",
                     title="Additional spend",
-                    message=f"Imported net amount total is ${additional_cost:.2f} USD.",
+                    message=(
+                        f"Imported net spend beyond the subscription limit is "
+                        f"${additional_cost:.2f} USD."
+                    ),
                     severity="info",
                 )
             )

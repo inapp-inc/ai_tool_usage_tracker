@@ -25,6 +25,8 @@ import { currentMonthUtcRange } from "@/utils/periods";
 interface PeriodSelectorProps {
   value: DateRange;
   onChange: (range: DateRange) => void;
+  /** portal: render in top bar slot (default). inline: render in place. */
+  variant?: "portal" | "inline";
 }
 
 type PresetKey = "today" | "7d" | "30d" | "90d" | "month" | "custom";
@@ -74,7 +76,11 @@ function toInputDate(iso: string): string {
   return format(parseISO(iso), "yyyy-MM-dd");
 }
 
-export function PeriodSelector({ value, onChange }: PeriodSelectorProps) {
+export function PeriodSelector({
+  value,
+  onChange,
+  variant = "portal",
+}: PeriodSelectorProps) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [selectedPreset, setSelectedPreset] = useState<PresetKey>("month");
   const [customFrom, setCustomFrom] = useState(() => toInputDate(value.from));
@@ -82,8 +88,16 @@ export function PeriodSelector({ value, onChange }: PeriodSelectorProps) {
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
-    setPortalTarget(document.getElementById("topbar-period-slot"));
-  }, []);
+    if (variant === "inline") {
+      return;
+    }
+    const updateTarget = () => {
+      setPortalTarget(document.getElementById("topbar-period-slot"));
+    };
+    updateTarget();
+    window.addEventListener("resize", updateTarget);
+    return () => window.removeEventListener("resize", updateTarget);
+  }, [variant]);
 
   useEffect(() => {
     setCustomFrom(toInputDate(value.from));
@@ -109,10 +123,6 @@ export function PeriodSelector({ value, onChange }: PeriodSelectorProps) {
     onChange(toDateRange(from, to));
     setAnchorEl(null);
   };
-
-  if (!portalTarget) {
-    return null;
-  }
 
   const button = (
     <>
@@ -203,6 +213,14 @@ export function PeriodSelector({ value, onChange }: PeriodSelectorProps) {
       </Popover>
     </>
   );
+
+  if (variant === "inline") {
+    return button;
+  }
+
+  if (!portalTarget) {
+    return button;
+  }
 
   return createPortal(button, portalTarget);
 }

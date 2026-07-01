@@ -29,6 +29,9 @@ import {
   type RoleRecord,
 } from "@/api/roles";
 import { RoleGuard } from "@/components/auth/RoleGuard";
+import { useAuthStore } from "@/stores/authStore";
+import { useOrgScopeStore } from "@/stores/orgScopeStore";
+import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 
 const RESOURCE_LABELS: Record<string, string> = {
@@ -57,9 +60,12 @@ function formatRoleLabel(name: string): string {
 
 export function RolesPage() {
   const queryClient = useQueryClient();
+  const isSuperAdmin = useAuthStore((s) => s.user?.platformRole === Role.SuperAdmin);
+  const selectedOrganizationId = useOrgScopeStore((s) => s.selectedOrganizationId);
   const [matrix, setMatrix] = useState<Record<string, PermissionRow[]>>({});
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [loadPermissionsError, setLoadPermissionsError] = useState<string | null>(null);
   const [newRoleOpen, setNewRoleOpen] = useState(false);
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleDescription, setNewRoleDescription] = useState("");
@@ -67,24 +73,42 @@ export function RolesPage() {
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const rolesQuery = useQuery({
-    queryKey: ["roles"],
-    queryFn: fetchRoles,
+    queryKey: ["roles", isSuperAdmin ? selectedOrganizationId ?? "platform" : "tenant"],
+    queryFn: () => fetchRoles(isSuperAdmin ? selectedOrganizationId : undefined),
   });
 
   const roles = rolesQuery.data ?? [];
 
   useEffect(() => {
-    if (roles.length === 0) return;
+    if (roles.length === 0) {
+      setMatrix({});
+      return;
+    }
 
+    let cancelled = false;
     void (async () => {
-      const entries = await Promise.all(
-        roles.map(async (role) => {
-          const perms = await fetchRolePermissions(role.id);
-          return [role.id, perms] as const;
-        }),
-      );
-      setMatrix(Object.fromEntries(entries));
+      try {
+        const entries = await Promise.all(
+          roles.map(async (role) => {
+            const perms = await fetchRolePermissions(role.id);
+            return [role.id, perms] as const;
+          }),
+        );
+        if (!cancelled) {
+          setMatrix(Object.fromEntries(entries));
+          setLoadPermissionsError(null);
+        }
+      } catch {
+        if (!cancelled) {
+          setMatrix({});
+          setLoadPermissionsError("Failed to load role permissions.");
+        }
+      }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [roles]);
 
   const saveMutation = useMutation({
@@ -223,6 +247,12 @@ export function RolesPage() {
           </Alert>
         )}
 
+        {loadPermissionsError && (
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setLoadPermissionsError(null)}>
+            {loadPermissionsError}
+          </Alert>
+        )}
+
         {saveError && (
           <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSaveError(null)}>
             {saveError}
@@ -254,6 +284,7 @@ export function RolesPage() {
                     <TableCell>{RESOURCE_LABELS[resource]}</TableCell>
                     {sortedRoles.map((role) => {
                       const row = matrix[role.id]?.find((p) => p.resource === resource);
+                      const locked = role.name === "super_admin";
                       return (
                         <TableCell key={`${role.id}-${resource}`} align="center">
                           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, alignItems: "center" }}>
@@ -262,6 +293,7 @@ export function RolesPage() {
                               <Switch
                                 size="small"
                                 checked={Boolean(row?.can_read)}
+                                disabled={locked}
                                 onChange={(e) =>
                                   handleToggle(role, resource, "can_read", e.target.checked)
                                 }
@@ -272,6 +304,7 @@ export function RolesPage() {
                               <Switch
                                 size="small"
                                 checked={Boolean(row?.can_write)}
+                                disabled={locked}
                                 onChange={(e) =>
                                   handleToggle(role, resource, "can_write", e.target.checked)
                                 }

@@ -174,7 +174,10 @@ export function UploadPreviewPage() {
               key: "monthlyAmount",
               header: "Monthly amount",
               render: (row) => {
-                const value = row.mappedData?.monthly_amount ?? row.rawData?.monthly_amount;
+                const value =
+                  row.mappedData?.monthly_amount ??
+                  row.rawData?.monthly_amount ??
+                  row.rawData?.applied_cost_per_quantity;
                 return value != null && value !== "" ? formatCost(Number(value)) : "—";
               },
             },

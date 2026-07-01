@@ -24,7 +24,7 @@ class UserResponse(BaseModel):
     organization_id: UUID
     email: EmailStr
     display_name: str | None = None
-    role: Role
+    role: str
     role_id: UUID | None = None
     role_name: str | None = None
     active: bool
@@ -46,6 +46,8 @@ class UserCreateRequest(BaseModel):
     role_id: UUID | None = None
     password: str | None = Field(default=None, min_length=8, max_length=128)
     team_ids: list[UUID] = Field(default_factory=list)
+    organization_id: UUID | None = None
+    organization_name: str | None = Field(default=None, max_length=200)
 
 
 class UserUpdateRequest(BaseModel):

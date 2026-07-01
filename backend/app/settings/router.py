@@ -18,7 +18,7 @@ from app.settings.service import ProviderService
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
-ADMIN_ROLES = frozenset({"super_admin"})
+ADMIN_ROLES = frozenset({"super_admin", "org_admin"})
 
 
 def get_provider_service(session: AsyncSession = Depends(get_session)) -> ProviderService:

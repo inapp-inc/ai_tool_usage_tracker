@@ -42,7 +42,6 @@ import { StatusBadge } from "@/components/data-display/StatusBadge";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
-import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { useToast } from "@/hooks/useToast";
 import {
@@ -422,7 +421,7 @@ export function ToolsPage() {
 
   return (
     <RoleGuard
-      roles={[Role.SuperAdmin]}
+      resource="tools"
       fallback={
         <EmptyState
           title="Access denied"

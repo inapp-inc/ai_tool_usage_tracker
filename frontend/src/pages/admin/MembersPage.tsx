@@ -29,12 +29,11 @@ import {
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
-import {
-  fetchMembers,
+import { fetchMembers,
   fetchMembersByTeam,
   inviteMember,
   removeMember,
@@ -42,8 +41,10 @@ import {
   type InviteMemberResult,
   type Member,
 } from "@/api/members";
+import { fetchOrganizations } from "@/api/organizations";
 import { fetchRoles } from "@/api/roles";
 import { fetchTeams } from "@/api/teams";
+import { formatRoleLabel, isOrgAdminRoleId, isOrgWideRoleName, roleRequiresTeamAssignment } from "@/api/adapters/formatRoleLabel";
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { StatusBadge } from "@/components/data-display/StatusBadge";
@@ -52,17 +53,22 @@ import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
 import { Role } from "@/types";
 import { useAuthStore } from "@/stores/authStore";
+import { useOrgScopeStore } from "@/stores/orgScopeStore";
+import { tenantScopeKey } from "@/lib/tenantScope";
 import { tokens } from "@/theme/palette";
 import { formatRelativeTime } from "@/utils/formatters";
 
-const schema = z.object({
+const baseSchema = z.object({
   name: z.string().min(1, "Name is required").max(100),
   email: z.string().email("Enter a valid email"),
   roleId: z.string().min(1, "Role is required"),
-  teamIds: z.array(z.string()).min(1, "Assign at least one team"),
+  password: z.string().optional(),
+  teamIds: z.array(z.string()),
+  organizationId: z.string().optional(),
+  organizationName: z.string().optional(),
 });
 
-type FormValues = z.infer<typeof schema>;
+type FormValues = z.infer<typeof baseSchema>;
 
 interface SlideOverState {
   open: boolean;
@@ -74,17 +80,15 @@ const ROLE_CHIP_COLORS: Record<
   { background: string; color: string }
 > = {
   [Role.SuperAdmin]: { background: "#EDE9FE", color: "#7C3AED" },
+  [Role.OrgAdmin]: { background: "#F5F3FF", color: "#5B21B6" },
   [Role.TeamAdmin]: { background: "#EFF6FF", color: "#2563EB" },
   [Role.FinanceViewer]: { background: "#ECFDF5", color: "#059669" },
   [Role.TeamMember]: { background: tokens.bgDefault, color: tokens.textMuted },
   [Role.Auditor]: { background: "#FFF7ED", color: "#C2410C" },
 };
 
-function formatRoleLabel(role: Role | string): string {
-  return String(role)
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+function formatRoleLabelFromEnum(role: Role | string): string {
+  return formatRoleLabel(String(role));
 }
 
 function getInitials(name: string): string {
@@ -101,7 +105,7 @@ function RoleChip({ role }: { role: Role }) {
   return (
     <Chip
       size="small"
-      label={formatRoleLabel(role)}
+      label={formatRoleLabelFromEnum(role)}
       sx={{
         backgroundColor: colors.background,
         color: colors.color,
@@ -116,6 +120,13 @@ export function MembersPage() {
   const queryClient = useQueryClient();
   const currentUser = useAuthStore((s) => s.user);
   const isSuperAdmin = currentUser?.platformRole === Role.SuperAdmin;
+  const isOrgAdmin = currentUser?.platformRole === Role.OrgAdmin;
+  const isPlatformOrg =
+    currentUser?.organizationSlug === "platform" ||
+    currentUser?.organizationSlug === "default";
+  const selectedOrganizationId = useOrgScopeStore((s) => s.selectedOrganizationId);
+  const setSelectedOrganizationId = useOrgScopeStore((s) => s.setSelectedOrganizationId);
+  const canManageRoles = isSuperAdmin || isOrgAdmin;
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState("");
   const [slideOver, setSlideOver] = useState<SlideOverState>({
@@ -130,23 +141,27 @@ export function MembersPage() {
   const invitedFilter = searchParams.get("filter") === "invited";
   const filterValue = teamFilter || (invitedFilter ? "__invited__" : "");
 
-  const teamsQuery = useQuery({
-    queryKey: ["teams"],
-    queryFn: fetchTeams,
+  const orgScopeKey = tenantScopeKey(currentUser, selectedOrganizationId);
+  const tenantAdminRequiresOrg = isSuperAdmin && !selectedOrganizationId;
+
+  const organizationsQuery = useQuery({
+    queryKey: ["organizations"],
+    queryFn: fetchOrganizations,
+    enabled: isSuperAdmin,
   });
 
-  const rolesQuery = useQuery({
-    queryKey: ["roles"],
-    queryFn: fetchRoles,
-    enabled: isSuperAdmin,
+  const teamsQuery = useQuery({
+    queryKey: ["teams", orgScopeKey],
+    queryFn: fetchTeams,
+    enabled: !tenantAdminRequiresOrg,
   });
 
   const membersQuery = useQuery({
     queryKey: teamFilter
-      ? ["members", "team", teamFilter]
+      ? ["members", "team", teamFilter, orgScopeKey]
       : invitedFilter
-        ? ["members", "invited"]
-        : ["members", "all"],
+        ? ["members", "invited", orgScopeKey]
+        : ["members", "all", orgScopeKey],
     queryFn: () => {
       if (teamFilter) {
         return fetchMembersByTeam(teamFilter);
@@ -156,12 +171,19 @@ export function MembersPage() {
       }
       return fetchMembers("all");
     },
+    enabled: !tenantAdminRequiresOrg,
   });
 
   const createMutation = useMutation({
     mutationFn: inviteMember,
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["members"] });
+      await queryClient.invalidateQueries({ queryKey: ["organizations"] });
+      await queryClient.invalidateQueries({ queryKey: ["teams"] });
+      await queryClient.invalidateQueries({ queryKey: ["roles"] });
+      if (result.organizationId) {
+        setSelectedOrganizationId(result.organizationId);
+      }
       setSlideOver({ open: false, member: null });
       if (result.temporaryPassword) {
         setInviteResult(result);
@@ -200,18 +222,87 @@ export function MembersPage() {
     control,
     handleSubmit,
     reset,
+    setValue,
+    setError,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(
+      baseSchema.superRefine((data, ctx) => {
+        if (data.password && data.password.length > 0 && data.password.length < 8) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Password must be at least 8 characters",
+            path: ["password"],
+          });
+        }
+      }),
+    ),
     defaultValues: {
       name: "",
       email: "",
       roleId: "",
+      password: "",
       teamIds: [],
+      organizationId: "",
+      organizationName: "",
     },
   });
 
-  const availableRoles = rolesQuery.data ?? [];
+  const watchedRoleId = useWatch({ control, name: "roleId" }) ?? "";
+  const watchedOrganizationId = useWatch({ control, name: "organizationId" }) ?? "";
+  const inviteTargetOrgId = isSuperAdmin
+    ? watchedOrganizationId || selectedOrganizationId || ""
+    : "";
+
+  const rolesQuery = useQuery({
+    queryKey: ["roles", inviteTargetOrgId || orgScopeKey, slideOver.open ? "invite" : "idle"],
+    queryFn: () =>
+      fetchRoles(isSuperAdmin ? inviteTargetOrgId || selectedOrganizationId : undefined),
+    enabled: canManageRoles && slideOver.open,
+  });
+
+  const availableRoles = useMemo(() => {
+    let roles = rolesQuery.data ?? [];
+    roles = roles.filter((role) => {
+      if (!isSuperAdmin && role.name === Role.SuperAdmin) {
+        return false;
+      }
+      if (!isSuperAdmin && isPlatformOrg && role.name === Role.OrgAdmin) {
+        return false;
+      }
+      return true;
+    });
+    if (isSuperAdmin && !isEditMode && !roles.some((role) => role.name === Role.OrgAdmin)) {
+      roles = [
+        {
+          id: Role.OrgAdmin,
+          name: Role.OrgAdmin,
+          description: "Organization administrator",
+          is_system: true,
+          created_at: "",
+        },
+        ...roles,
+      ];
+    }
+    return roles;
+  }, [isSuperAdmin, isPlatformOrg, isEditMode, rolesQuery.data]);
+
+  const isOrgAdminRoleSelected = useMemo(
+    () => isOrgAdminRoleId(watchedRoleId, availableRoles),
+    [availableRoles, watchedRoleId],
+  );
+  const needsInviteOrgSelection =
+    isSuperAdmin &&
+    !isEditMode &&
+    !selectedOrganizationId &&
+    !watchedOrganizationId &&
+    !isOrgAdminRoleSelected;
+  const needsOrgNameForOrgAdmin =
+    isSuperAdmin && !isEditMode && isOrgAdminRoleSelected && !inviteTargetOrgId;
+
+  const showTeamSelection = roleRequiresTeamAssignment(watchedRoleId, availableRoles);
+  const isEditingSuperAdmin =
+    isEditMode && slideOver.member?.platformRole === Role.SuperAdmin;
   const teamAdminRoleOptions = useMemo(
     () => [Role.TeamMember, Role.TeamAdmin],
     [],
@@ -222,9 +313,17 @@ export function MembersPage() {
       reset({
         name: "",
         email: "",
-        roleId: availableRoles.find((r) => r.name === "team_member")?.id ?? "",
-        teamIds: teamFilter ? [teamFilter] : [],
+        roleId: "",
+        password: "",
+        teamIds: [],
+        organizationId: selectedOrganizationId ?? "",
+        organizationName: "",
       });
+    }
+  }, [reset, selectedOrganizationId, slideOver.open]);
+
+  useEffect(() => {
+    if (!slideOver.open) {
       return;
     }
 
@@ -236,19 +335,31 @@ export function MembersPage() {
         name: slideOver.member.name,
         email: slideOver.member.email,
         roleId: matchedRoleId ?? slideOver.member.platformRole,
+        password: "",
         teamIds: slideOver.member.teams.map((team) => team.id),
       });
       return;
     }
 
+    const defaultRoleId =
+      availableRoles.find((r) => r.name === "team_member")?.id ?? Role.TeamMember;
     reset({
       name: "",
       email: "",
-      roleId:
-        availableRoles.find((r) => r.name === "team_member")?.id ?? Role.TeamMember,
+      roleId: defaultRoleId,
+      password: "",
       teamIds: teamFilter ? [teamFilter] : [],
+      organizationId: selectedOrganizationId ?? "",
+      organizationName: "",
     });
-  }, [reset, slideOver, teamFilter, availableRoles]);
+  }, [reset, slideOver.open, slideOver.member, teamFilter, availableRoles, selectedOrganizationId]);
+
+  const inviteTargetOrgName = useMemo(() => {
+    if (!inviteTargetOrgId) {
+      return null;
+    }
+    return (organizationsQuery.data ?? []).find((org) => org.id === inviteTargetOrgId)?.name ?? null;
+  }, [inviteTargetOrgId, organizationsQuery.data]);
 
   const filteredMembers = useMemo(() => {
     const members = membersQuery.data ?? [];
@@ -264,6 +375,12 @@ export function MembersPage() {
   }, [membersQuery.data, search]);
 
   const teams = teamsQuery.data ?? [];
+  const inviteTeams = useMemo(() => {
+    if (!isSuperAdmin || !inviteTargetOrgId) {
+      return teams;
+    }
+    return teams.filter((team) => team.organizationId === inviteTargetOrgId);
+  }, [inviteTargetOrgId, isSuperAdmin, teams]);
   const activeTeam = teams.find((team) => team.id === teamFilter);
 
   const columns: Column<Member>[] = useMemo(
@@ -367,7 +484,7 @@ export function MembersPage() {
         align: "right",
         render: (row) => (
           <Box sx={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-            {row.source === "platform" && (
+            {row.source === "platform" && row.platformRole !== Role.SuperAdmin && (
               <>
                 <IconButton
                   size="small"
@@ -414,13 +531,40 @@ export function MembersPage() {
   };
 
   const onSubmit = (data: FormValues) => {
+    const isOrgAdminInvite = isSuperAdmin && !isEditMode && isOrgAdminRoleSelected;
+
+    if (needsOrgNameForOrgAdmin && !data.organizationName?.trim()) {
+      setError("organizationName", {
+        type: "manual",
+        message: "Organization name is required for Organization Admin",
+      });
+      return;
+    }
+
+    if (
+      isSuperAdmin &&
+      !isEditMode &&
+      !isOrgAdminInvite &&
+      !selectedOrganizationId &&
+      !data.organizationId?.trim()
+    ) {
+      setValue("organizationId", "", { shouldValidate: true });
+      return;
+    }
+
+    const teamIds = showTeamSelection ? data.teamIds : [];
+    if (showTeamSelection && teamIds.length === 0) {
+      setValue("teamIds", [], { shouldValidate: true });
+      return;
+    }
+
     const isRoleUuid = /^[0-9a-f-]{36}$/i.test(data.roleId);
     const updateBody = isRoleUuid
-      ? { name: data.name, roleId: data.roleId, teamIds: data.teamIds }
+      ? { name: data.name, roleId: data.roleId, teamIds }
       : {
           name: data.name,
           platformRole: data.roleId as Role,
-          teamIds: data.teamIds,
+          teamIds,
         };
 
     if (isEditMode && slideOver.member) {
@@ -431,13 +575,39 @@ export function MembersPage() {
       return;
     }
 
+    const organizationId = data.organizationId?.trim() || selectedOrganizationId || undefined;
+    const organizationName =
+      isOrgAdminInvite && !organizationId ? data.organizationName?.trim() : undefined;
+
+    if (isOrgAdminInvite && !isRoleUuid) {
+      createMutation.mutate({
+        name: data.name,
+        email: data.email,
+        platformRole: Role.OrgAdmin,
+        password: data.password?.trim() || undefined,
+        teamIds: [],
+        organizationId,
+        organizationName,
+      });
+      return;
+    }
+
     const createBody = isRoleUuid
-      ? { name: data.name, email: data.email, roleId: data.roleId, teamIds: data.teamIds }
+      ? {
+          name: data.name,
+          email: data.email,
+          roleId: data.roleId,
+          password: data.password?.trim() || undefined,
+          teamIds,
+          organizationId,
+        }
       : {
           name: data.name,
           email: data.email,
           platformRole: data.roleId as Role,
-          teamIds: data.teamIds,
+          password: data.password?.trim() || undefined,
+          teamIds,
+          organizationId,
         };
 
     createMutation.mutate(createBody);
@@ -454,6 +624,12 @@ export function MembersPage() {
       }
     >
       <Box>
+        {tenantAdminRequiresOrg && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Select a customer organization in the header to manage members for that
+            tenant only. Without a selection, member lists combine all organizations.
+          </Alert>
+        )}
         <Box
           sx={{
             display: "flex",
@@ -475,13 +651,13 @@ export function MembersPage() {
             </Typography>
           </Box>
           <Button
-            variant="contained"
-            size="small"
-            startIcon={<IconPlus size={15} />}
-            onClick={() => setSlideOver({ open: true, member: null })}
-          >
-            Invite Member
-          </Button>
+              variant="contained"
+              size="small"
+              startIcon={<IconPlus size={15} />}
+              onClick={() => setSlideOver({ open: true, member: null })}
+            >
+              Invite Member
+            </Button>
         </Box>
 
         <Box sx={{ display: "flex", gap: 2, mb: 2 }}>
@@ -542,8 +718,10 @@ export function MembersPage() {
           title={isEditMode ? "Edit Member" : "Invite Member"}
           subtitle={
             isEditMode
-              ? "Update role and team assignments"
-              : "They'll receive an email with login instructions"
+              ? isEditingSuperAdmin
+                ? "Super Admin accounts cannot be modified"
+                : "Update role and team assignments"
+              : "Set login credentials and role"
           }
           footer={
             <>
@@ -557,7 +735,7 @@ export function MembersPage() {
               <Button
                 variant="contained"
                 onClick={handleSubmit(onSubmit)}
-                disabled={savePending}
+                disabled={savePending || isEditingSuperAdmin}
                 startIcon={
                   savePending ? (
                     <CircularProgress size={14} color="inherit" />
@@ -594,24 +772,119 @@ export function MembersPage() {
               helperText={errors.email?.message}
             />
 
+            {needsOrgNameForOrgAdmin && (
+              <TextField
+                {...register("organizationName")}
+                fullWidth
+                label="Organization name"
+                size="small"
+                error={Boolean(errors.organizationName)}
+                helperText={
+                  errors.organizationName?.message ??
+                  "Creates a new customer organization if this name does not exist"
+                }
+              />
+            )}
+
+            {needsInviteOrgSelection && (
+              <Controller
+                name="organizationId"
+                control={control}
+                rules={{ required: "Select an organization" }}
+                render={({ field }) => (
+                  <FormControl fullWidth size="small" error={Boolean(errors.organizationId)}>
+                    <InputLabel id="member-org-label">Organization</InputLabel>
+                    <Select
+                      {...field}
+                      labelId="member-org-label"
+                      label="Organization"
+                      value={field.value ?? ""}
+                      onChange={(event) => {
+                        field.onChange(event.target.value);
+                        setValue("roleId", "", { shouldValidate: true });
+                        setValue("teamIds", [], { shouldValidate: true });
+                      }}
+                    >
+                      {(organizationsQuery.data ?? []).map((org) => (
+                        <MenuItem key={org.id} value={org.id}>
+                          {org.name}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    <Typography variant="caption" sx={{ color: tokens.textMuted, mt: 0.5 }}>
+                      Choose the customer organization, or select one from the header first.
+                    </Typography>
+                  </FormControl>
+                )}
+              />
+            )}
+
+            {isSuperAdmin && !isEditMode && isOrgAdminRoleSelected && inviteTargetOrgName && (
+              <Alert severity="info">
+                Inviting Organization Admin into {inviteTargetOrgName}. Select a different
+                organization from the header to change the target.
+              </Alert>
+            )}
+
+            {isSuperAdmin && !isEditMode && needsOrgNameForOrgAdmin && (
+              <Alert severity="info">
+                Enter the customer organization name. A new tenant is created automatically if
+                the name does not already exist.
+              </Alert>
+            )}
+
+            {isSuperAdmin && !isEditMode && inviteTargetOrgName && !isOrgAdminRoleSelected && !needsInviteOrgSelection && (
+              <Alert severity="info">
+                Inviting into {inviteTargetOrgName}. Change organization from the header dropdown
+                if needed.
+              </Alert>
+            )}
+
+            {isPlatformOrg && !isSuperAdmin && !isEditMode && (
+              <Alert severity="info">
+                Organization Admin accounts belong to a customer organization. On this platform
+                account, invite Team Admin or Team Member roles.
+              </Alert>
+            )}
+
             <Controller
               name="roleId"
               control={control}
               render={({ field }) => (
                 <FormControl fullWidth size="small">
                   <InputLabel id="member-role-label">Platform role</InputLabel>
-                  {isSuperAdmin ? (
+                  {canManageRoles ? (
                     <Select
                       {...field}
                       labelId="member-role-label"
                       label="Platform role"
-                      disabled={availableRoles.length === 0}
+                      disabled={
+                        isEditingSuperAdmin ||
+                        rolesQuery.isLoading ||
+                        (!rolesQuery.isLoading && availableRoles.length === 0)
+                      }
+                      onChange={(event) => {
+                        const nextRoleId = event.target.value as string;
+                        field.onChange(nextRoleId);
+                        if (!roleRequiresTeamAssignment(nextRoleId, availableRoles)) {
+                          setValue("teamIds", [], { shouldValidate: true });
+                        }
+                        if (isOrgAdminRoleId(nextRoleId, availableRoles)) {
+                          setValue("organizationId", "", { shouldValidate: true });
+                        }
+                      }}
                     >
-                      {availableRoles.map((role) => (
-                        <MenuItem key={role.id} value={role.id}>
-                          {formatRoleLabel(role.name)}
+                      {rolesQuery.isLoading ? (
+                        <MenuItem value="" disabled>
+                          Loading roles…
                         </MenuItem>
-                      ))}
+                      ) : (
+                        availableRoles.map((role) => (
+                          <MenuItem key={role.id} value={role.id}>
+                            {formatRoleLabel(role.name)}
+                          </MenuItem>
+                        ))
+                      )}
                     </Select>
                   ) : (
                     <Select
@@ -621,12 +894,16 @@ export function MembersPage() {
                       onChange={(event) => {
                         const roleName = event.target.value;
                         const matched = availableRoles.find((r) => r.name === roleName);
-                        field.onChange(matched?.id ?? roleName);
+                        const nextRoleId = matched?.id ?? roleName;
+                        field.onChange(nextRoleId);
+                        if (isOrgWideRoleName(roleName)) {
+                          setValue("teamIds", [], { shouldValidate: true });
+                        }
                       }}
                     >
                       {teamAdminRoleOptions.map((role) => (
                         <MenuItem key={role} value={role}>
-                          {formatRoleLabel(role)}
+                          {formatRoleLabelFromEnum(role)}
                         </MenuItem>
                       ))}
                     </Select>
@@ -635,38 +912,57 @@ export function MembersPage() {
               )}
             />
 
-            <Controller
-              name="teamIds"
-              control={control}
-              render={({ field }) => (
-                <FormControl fullWidth size="small" error={Boolean(errors.teamIds)}>
-                  <InputLabel id="member-teams-label">Teams</InputLabel>
-                  <Select
-                    {...field}
-                    labelId="member-teams-label"
-                    label="Teams"
-                    multiple
-                    renderValue={(selected) =>
-                      (selected as string[])
-                        .map((id) => teams.find((t) => t.id === id)?.name ?? id)
-                        .join(", ")
-                    }
-                  >
-                    {teams.map((team) => (
-                      <MenuItem key={team.id} value={team.id}>
-                        <Checkbox checked={(field.value as string[]).includes(team.id)} />
-                        <ListItemText primary={team.name} />
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {errors.teamIds && (
-                    <Typography variant="caption" sx={{ color: "error.main", mt: 0.5 }}>
-                      {errors.teamIds.message}
-                    </Typography>
-                  )}
-                </FormControl>
-              )}
-            />
+            {!isEditMode && (
+              <TextField
+                {...register("password")}
+                fullWidth
+                label="Password"
+                size="small"
+                type="password"
+                autoComplete="new-password"
+                error={Boolean(errors.password)}
+                helperText={
+                  errors.password?.message ??
+                  "Optional — leave blank to generate a temporary password"
+                }
+              />
+            )}
+
+            {showTeamSelection && (
+              <Controller
+                name="teamIds"
+                control={control}
+                render={({ field }) => (
+                  <FormControl fullWidth size="small" error={Boolean(errors.teamIds)}>
+                    <InputLabel id="member-teams-label">Teams</InputLabel>
+                    <Select
+                      {...field}
+                      labelId="member-teams-label"
+                      label="Teams"
+                      multiple
+                      disabled={isEditingSuperAdmin}
+                      renderValue={(selected) =>
+                        (selected as string[])
+                          .map((id) => inviteTeams.find((t) => t.id === id)?.name ?? id)
+                          .join(", ")
+                      }
+                    >
+                      {inviteTeams.map((team) => (
+                        <MenuItem key={team.id} value={team.id}>
+                          <Checkbox checked={(field.value as string[]).includes(team.id)} />
+                          <ListItemText primary={team.name} />
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    {errors.teamIds && (
+                      <Typography variant="caption" sx={{ color: "error.main", mt: 0.5 }}>
+                        {errors.teamIds.message}
+                      </Typography>
+                    )}
+                  </FormControl>
+                )}
+              />
+            )}
           </Box>
         </SlideOver>
 

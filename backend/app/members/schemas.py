@@ -6,8 +6,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.auth.schemas import Role
-
 MemberSource = Literal["platform", "tool", "upload"]
 MembersView = Literal["all", "invited"]
 
@@ -22,7 +20,7 @@ class MemberResponse(BaseModel):
     user_id: UUID | None = None
     email: str
     display_name: str | None = None
-    role: Role | None = None
+    role: str | None = None
     active: bool | None = None
     last_login_at: datetime | None = None
     created_at: datetime | None = None

@@ -9,6 +9,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.admin import Team
 from app.models.auth import User
+from app.core.org_scope import OperatingOrgScope, organization_ids_for_scope
 from app.teams.deletion import remove_team_from_report_jobs
 from app.teams.membership_repository import TeamMembershipRepository
 from app.teams.metrics import TeamMetrics, TeamMetricsLoader
@@ -39,17 +40,29 @@ class TeamService:
         user: User,
         *,
         active: bool | None = None,
+        scope: OperatingOrgScope | None = None,
     ) -> TeamListResponse:
-        rows = await self._teams.list_by_organization(user.organization_id, active=active)
-        metrics = await TeamMetricsLoader(self._session).load_for_teams(
-            user.organization_id,
-            rows,
-            all_time=True,
-        )
+        org_ids = await self._organization_ids_for_scope(user, scope)
+        if len(org_ids) == 1:
+            rows = await self._teams.list_by_organization(org_ids[0], active=active)
+        else:
+            rows = await self._teams.list_for_organizations(org_ids, active=active)
+
+        metrics_by_org: dict[UUID, dict] = {}
+        for org_id in org_ids:
+            org_teams = [row for row in rows if row.organization_id == org_id]
+            if not org_teams:
+                continue
+            metrics_by_org[org_id] = await TeamMetricsLoader(self._session).load_for_teams(
+                org_id,
+                org_teams,
+                all_time=True,
+            )
+
         responses: list[TeamResponse] = []
         for row in rows:
-            member_count = len(await self._collect_team_members(user.organization_id, row))
-            team_metrics = metrics.get(row.id)
+            member_count = len(await self._collect_team_members(row.organization_id, row))
+            team_metrics = metrics_by_org.get(row.organization_id, {}).get(row.id)
             responses.append(
                 self._to_response(
                     row,
@@ -62,11 +75,71 @@ class TeamService:
             meta=PaginationMeta(has_more=False),
         )
 
-    async def get_team(self, user: User, team_id: UUID) -> TeamResponse:
-        team = await self._require_team(user.organization_id, team_id)
-        member_count = len(await self._collect_team_members(user.organization_id, team))
+    async def create_team_for_org(
+        self,
+        user: User,
+        organization_id: UUID,
+        body: TeamCreateRequest,
+    ) -> TeamResponse:
+        return await self._create_team_in_org(user, organization_id, body)
+
+    async def _organization_ids_for_scope(
+        self,
+        user: User,
+        scope: OperatingOrgScope | None,
+    ) -> list[UUID]:
+        if scope is None:
+            return [user.organization_id]
+        return await organization_ids_for_scope(self._session, scope)
+
+    async def create_team(
+        self,
+        user: User,
+        body: TeamCreateRequest,
+        *,
+        scope: OperatingOrgScope | None = None,
+    ) -> TeamResponse:
+        if scope is not None and scope.is_super_admin:
+            org_id = scope.require_single_org()
+            return await self._create_team_in_org(user, org_id, body)
+        return await self._create_team_in_org(user, user.organization_id, body)
+
+    async def _create_team_in_org(
+        self,
+        user: User,
+        organization_id: UUID,
+        body: TeamCreateRequest,
+    ) -> TeamResponse:
+        existing = await self._teams.get_by_name(organization_id, body.name)
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A team with this name already exists in the organization.",
+            )
+
+        team = await self._teams.create(
+            organization_id=organization_id,
+            name=body.name,
+            description=body.description,
+            token_budget=body.token_budget,
+            cost_budget=body.cost_budget,
+            tool_ids=body.tool_ids,
+        )
+        await self._session.commit()
+        await self._session.refresh(team)
+        return self._to_response(team, member_count=0)
+
+    async def get_team(
+        self,
+        user: User,
+        team_id: UUID,
+        *,
+        scope: OperatingOrgScope | None = None,
+    ) -> TeamResponse:
+        team = await self._require_team_for_user(user, team_id, scope=scope)
+        member_count = len(await self._collect_team_members(team.organization_id, team))
         metrics_map = await TeamMetricsLoader(self._session).load_for_teams(
-            user.organization_id,
+            team.organization_id,
             [team],
             all_time=True,
         )
@@ -198,38 +271,47 @@ class TeamService:
             )
         await self._session.commit()
 
-    async def create_team(self, user: User, body: TeamCreateRequest) -> TeamResponse:
-        existing = await self._teams.get_by_name(user.organization_id, body.name)
-        if existing is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A team with this name already exists in the organization.",
-            )
+    async def _require_team_for_user(
+        self,
+        user: User,
+        team_id: UUID,
+        *,
+        scope: OperatingOrgScope | None = None,
+    ) -> Team:
+        if scope is not None and scope.is_super_admin:
+            team = await self._teams.get_by_id_unscoped(team_id)
+            if team is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Team not found.",
+                )
+            return team
+        return await self._require_team(user.organization_id, team_id)
 
-        team = await self._teams.create(
-            organization_id=user.organization_id,
-            name=body.name,
-            description=body.description,
-            token_budget=body.token_budget,
-            cost_budget=body.cost_budget,
-            tool_ids=body.tool_ids,
-        )
-        await self._session.commit()
-        await self._session.refresh(team)
-        return self._to_response(team, member_count=0)
+    async def _require_team(self, organization_id: UUID, team_id: UUID) -> Team:
+        team = await self._teams.get_by_id(team_id, organization_id)
+        if team is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Team not found.",
+            )
+        return team
 
     async def update_team(
         self,
         user: User,
         team_id: UUID,
         body: TeamUpdateRequest,
+        *,
+        scope: OperatingOrgScope | None = None,
     ) -> TeamResponse:
-        team = await self._require_team(user.organization_id, team_id)
+        team = await self._require_team_for_user(user, team_id, scope=scope)
+        org_id = team.organization_id
         updates = body.model_fields_set
 
         if "name" in updates and body.name is not None:
             if body.name.strip().lower() != team.name.lower():
-                duplicate = await self._teams.get_by_name(user.organization_id, body.name)
+                duplicate = await self._teams.get_by_name(org_id, body.name)
                 if duplicate is not None and duplicate.id != team.id:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
@@ -255,14 +337,20 @@ class TeamService:
 
         await self._session.commit()
         await self._session.refresh(team)
-        member_count = len(await self._collect_team_members(user.organization_id, team))
+        member_count = len(await self._collect_team_members(org_id, team))
         return self._to_response(team, member_count=member_count)
 
-    async def delete_team(self, user: User, team_id: UUID) -> None:
-        team = await self._require_team(user.organization_id, team_id)
+    async def delete_team(
+        self,
+        user: User,
+        team_id: UUID,
+        *,
+        scope: OperatingOrgScope | None = None,
+    ) -> None:
+        team = await self._require_team_for_user(user, team_id, scope=scope)
         await remove_team_from_report_jobs(
             self._session,
-            organization_id=user.organization_id,
+            organization_id=team.organization_id,
             team_id=team.id,
         )
         await self._teams.delete(team)

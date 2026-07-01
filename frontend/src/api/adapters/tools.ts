@@ -47,6 +47,7 @@ export type BillingType =
 
 export interface AiTool {
   id: string;
+  organizationId: string;
   name: string;
   provider: ToolProvider;
   billingType: BillingType;
@@ -571,6 +572,7 @@ function mapIntegrationConfig(
 export function mapApiTool(api: ApiTool): AiTool {
   return {
     id: api.id,
+    organizationId: api.organization_id,
     name: api.name,
     provider: providerFromVendor(api.vendor, api.pricing_config),
     billingType: billingTypeFromApi(api.billing_type),

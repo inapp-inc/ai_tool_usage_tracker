@@ -101,6 +101,7 @@ class AuthService:
                 detail="Not authenticated.",
             )
         team_ids = await self._memberships.active_team_ids_for_user(user.id)
+        org = user.organization
         return UserProfile(
             id=user.id,
             email=user.email,
@@ -109,6 +110,8 @@ class AuthService:
             role_id=user.role_id,
             role_name=user.role_name,
             organization_id=user.organization_id,
+            organization_name=org.name if org is not None else None,
+            organization_slug=org.slug if org is not None else None,
             team_ids=team_ids,
         )
 
@@ -139,6 +142,7 @@ class AuthService:
 
 _SYSTEM_ROLE_NAMES = [
     "super_admin",
+    "org_admin",
     "team_admin",
     "finance_viewer",
     "auditor",
@@ -153,7 +157,12 @@ async def _ensure_system_roles(session: AsyncSession, organization_id: UUID) -> 
     """
     from app.core.role_seed_data import system_role_permissions
     from app.models.roles import Role, RolePermission
+    from app.organizations.service import is_platform_organization
     from sqlalchemy import select
+
+    org_repo = OrganizationRepository(session)
+    org = await org_repo.get_by_id(organization_id)
+    platform_org = org is not None and is_platform_organization(org)
 
     existing = await session.execute(
         select(Role.name).where(Role.organization_id == organization_id)
@@ -161,6 +170,8 @@ async def _ensure_system_roles(session: AsyncSession, organization_id: UUID) -> 
     existing_names = {row[0] for row in existing}
 
     for role_name in _SYSTEM_ROLE_NAMES:
+        if platform_org and role_name == "org_admin":
+            continue
         if role_name in existing_names:
             continue
 
@@ -187,6 +198,43 @@ async def _ensure_system_roles(session: AsyncSession, organization_id: UUID) -> 
     await session.flush()
 
 
+async def ensure_org_admin_permissions(session: AsyncSession) -> None:
+    """Ensure org_admin system roles have full org permissions in every organization."""
+    from app.core.role_seed_data import system_role_permissions
+    from app.models.roles import Role, RolePermission
+    from sqlalchemy import select
+
+    result = await session.execute(select(Role).where(Role.name == "org_admin"))
+    roles = list(result.scalars().all())
+    if not roles:
+        return
+
+    perms = system_role_permissions("org_admin")
+    for role in roles:
+        existing = await session.execute(
+            select(RolePermission).where(RolePermission.role_id == role.id)
+        )
+        by_resource = {row.resource: row for row in existing.scalars().all()}
+        for resource, (can_read, can_write, team_scoped) in perms.items():
+            row = by_resource.get(resource)
+            if row is None:
+                session.add(
+                    RolePermission(
+                        role_id=role.id,
+                        resource=resource,
+                        can_read=can_read,
+                        can_write=can_write,
+                        team_scoped=team_scoped,
+                    )
+                )
+            else:
+                row.can_read = can_read
+                row.can_write = can_write
+                row.team_scoped = team_scoped
+
+    await session.flush()
+
+
 async def seed_super_admin_if_empty(
     session: AsyncSession, settings: Settings | None = None
 ) -> bool:
@@ -199,7 +247,7 @@ async def seed_super_admin_if_empty(
     org_repo = OrganizationRepository(session)
     org = await org_repo.get_first()
     if org is None:
-        org = await org_repo.create(name="Default Organization", slug="default")
+        org = await org_repo.create(name="Platform Administration", slug="platform")
         from app.tools.builtin_seed import sync_org_builtin_catalogue_tools
 
         await sync_org_builtin_catalogue_tools(session, org.id)
@@ -259,6 +307,14 @@ async def seed_dev_admin(session: AsyncSession, settings: Settings | None = None
     org = await org_repo.get_first()
     if org is not None:
         await _ensure_system_roles(session, org.id)
+        from app.organizations.service import ensure_platform_organization, ensure_tenant_isolation
+
+        await ensure_platform_organization(session)
+        await ensure_tenant_isolation(session)
+        await ensure_org_admin_permissions(session)
+        from app.organizations.service import remove_platform_org_admin_role
+
+        await remove_platform_org_admin_role(session)
         await session.commit()
 
     if cfg.sync_super_admin_credentials:

@@ -6,6 +6,7 @@ set -euo pipefail
 #
 # Usage:
 #   ./scripts/deploy-docker.sh [archive-path]
+#   bash scripts/deploy-docker.sh [archive-path]   # if you see bash\r shebang errors
 #
 # Environment overrides:
 #   DEPLOY_ROOT=/var/www/ai-tool-tracker
@@ -95,6 +96,23 @@ set_env_value() {
   fi
 }
 
+# Strip Windows CRLF from shell scripts (fixes: /usr/bin/env: 'bash\r': No such file or directory).
+normalize_shell_scripts() {
+  local root="$1"
+  local fixed=0
+  while IFS= read -r -d '' script; do
+    if grep -q $'\r' "$script" 2>/dev/null; then
+      sed -i 's/\r$//' "$script"
+      chmod +x "$script" 2>/dev/null || true
+      echo "Normalized CRLF line endings: $script"
+      fixed=$((fixed + 1))
+    fi
+  done < <(find "$root" -name '*.sh' -type f -print0 2>/dev/null)
+  if [[ "$fixed" -gt 0 ]]; then
+    echo "Fixed $fixed shell script(s) with Windows line endings."
+  fi
+}
+
 is_port_free() {
   local port="$1"
   if command -v ss >/dev/null 2>&1; then
@@ -171,6 +189,9 @@ compose_prod() {
 }
 
 build_images() {
+  export CACHEBUST="$(date -u +%Y%m%d%H%M%S)"
+  echo "Frontend build id (CACHEBUST): $CACHEBUST"
+
   if [[ "${BUILD_PARALLEL:-0}" == "1" ]]; then
     echo "Building api + frontend in parallel (requires 4GB+ RAM)..."
     compose_prod build --parallel
@@ -180,7 +201,11 @@ build_images() {
   echo "Building api image..."
   compose_prod build api
   echo "Building frontend image (npm run build — slowest step, ~2–5 min)..."
-  compose_prod build frontend
+  if [[ "${FORCE_FRONTEND_REBUILD:-1}" == "1" ]]; then
+    compose_prod build --no-cache frontend
+  else
+    compose_prod build frontend
+  fi
 }
 
 POSTGRES_VOLUME_NAME="${POSTGRES_VOLUME_NAME:-ai-tracker-postgres-data}"
@@ -340,6 +365,12 @@ ARCHIVE_PATH="$(cd "$(dirname "$ARCHIVE_PATH")" && pwd)/$(basename "$ARCHIVE_PAT
 
 mkdir -p "$DEPLOY_ROOT"
 unzip -oq "$ARCHIVE_PATH" -d "$DEPLOY_ROOT"
+normalize_shell_scripts "$DEPLOY_ROOT"
+
+if [[ -f "$DEPLOY_ROOT/PACKAGE_BUILD.txt" ]]; then
+  echo "Package build info:"
+  cat "$DEPLOY_ROOT/PACKAGE_BUILD.txt"
+fi
 
 if [[ ! -f "$DEPLOY_ROOT/docker-compose.yml" ]]; then
   echo "Invalid archive: docker-compose.yml not found in $DEPLOY_ROOT" >&2
@@ -474,8 +505,8 @@ echo "Recreating postgres with aligned credentials..."
 compose_prod up -d --force-recreate --no-build postgres
 wait_for_postgres_container
 
-echo "Starting api + frontend..."
-compose_prod up -d --no-build --remove-orphans
+echo "Starting api + frontend (force recreate with new images)..."
+compose_prod up -d --no-build --force-recreate --remove-orphans api frontend
 
 echo "Waiting for API health via frontend gateway..."
 ready=0

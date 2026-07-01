@@ -2,6 +2,8 @@ import { apiRequest } from "./client";
 import {
   buildDashboardStats,
   dashboardQuery,
+  mapOrganizationCostBreakdownItem,
+  mapOrganizationCostSummary,
   mapRecentAlerts,
   mapTeamCostRows,
   mapTopUsers,
@@ -9,6 +11,8 @@ import {
   type ApiActiveAlertSummary,
   type ApiActiveCountsWidget,
   type ApiCostOverviewWidget,
+  type ApiOrganizationCostBreakdownItem,
+  type ApiOrganizationCostSummary,
   type ApiTokenUsageWidget,
   type ApiTopConsumersResponse,
   type ApiTrendPoint,
@@ -45,6 +49,23 @@ export interface DashboardStats {
   packageAllowance?: number;
   allowanceConsumedPct?: number | null;
   overageCost?: number;
+}
+
+export interface OrganizationCostSummary {
+  toolsCost: number;
+  additionalBillableCost: number;
+  totalCost: number;
+  teamCount: number;
+  connectedToolCount: number;
+}
+
+export interface OrganizationCostBreakdownItem {
+  organizationId: string;
+  organizationName: string;
+  toolsCost: number;
+  additionalBillableCost: number;
+  totalCost: number;
+  connectedToolCount: number;
 }
 
 export interface TokenDataPoint {
@@ -145,6 +166,42 @@ export async function fetchDashboardStats(
   return buildDashboardStats(tokens, cost, activeCounts, deltas);
 }
 
+export async function fetchOrganizationCosts(
+  from: string,
+  to: string,
+  filters?: DashboardFilters,
+): Promise<OrganizationCostSummary> {
+  const normalized = normalizeFilters(filters);
+  const query = dashboardQuery(from, to, normalized);
+  const summary = await apiRequest<ApiOrganizationCostSummary>(
+    `/dashboard/organization-costs?${query}`,
+  );
+  return mapOrganizationCostSummary(summary);
+}
+
+export async function fetchOrganizationCostBreakdown(options?: {
+  allTime?: boolean;
+  from?: string;
+  to?: string;
+}): Promise<OrganizationCostBreakdownItem[]> {
+  const params = new URLSearchParams();
+  if (options?.allTime) {
+    params.set("all_time", "true");
+  } else if (options?.from && options?.to) {
+    const query = dashboardQuery(options.from, options.to);
+    for (const part of query.split("&")) {
+      const [key, value] = part.split("=");
+      if (key && value) {
+        params.set(key, value);
+      }
+    }
+  }
+  const rows = await apiRequest<ApiOrganizationCostBreakdownItem[]>(
+    `/dashboard/organization-costs/breakdown?${params.toString()}`,
+  );
+  return rows.map(mapOrganizationCostBreakdownItem);
+}
+
 export async function fetchTokenTimeseries(
   from: string,
   to: string,
@@ -194,6 +251,8 @@ export async function fetchRecentAlerts(filters?: DashboardFilters): Promise<Rec
 
 export const dashboardApi = {
   fetchDashboardStats,
+  fetchOrganizationCosts,
+  fetchOrganizationCostBreakdown,
   fetchTokenTimeseries,
   fetchTeamCost,
   fetchTopUsers,

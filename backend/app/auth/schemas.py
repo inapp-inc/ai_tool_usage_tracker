@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 Role = Literal[
     "super_admin",
+    "org_admin",
     "team_admin",
     "finance_viewer",
     "team_member",
@@ -41,4 +42,6 @@ class UserProfile(BaseModel):
     role_id: UUID | None = None
     role_name: str | None = None
     organization_id: UUID
+    organization_name: str | None = None
+    organization_slug: str | None = None
     team_ids: list[UUID] = Field(default_factory=list)

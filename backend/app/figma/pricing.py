@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 
 from app.models.admin import TeamTool
@@ -75,6 +76,93 @@ def figma_configured_subscription(
     full_total = (pricing.full_seat_cost_usd or Decimal("0")) * Decimal(full_seat_count)
     view_total = (pricing.view_seat_cost_usd or Decimal("0")) * Decimal(view_seat_count)
     return full_total + view_total
+
+
+@dataclass(frozen=True)
+class FigmaImportPeriodSlice:
+    usage_period_start: date | None
+    usage_period_end: date | None
+    full_seat_count: int
+    view_seat_count: int
+    paid_cost_usd: Decimal
+    paid_credits: Decimal = Decimal("0")
+
+
+def figma_billing_cycle_key(
+    subscription_start: date | None,
+    usage_period_start: date | None,
+    usage_period_end: date | None,
+) -> tuple[date, date] | None:
+    """Normalize an import usage window onto one subscription billing cycle."""
+    if usage_period_start is None:
+        return None
+    if subscription_start is not None:
+        from app.billing.subscription_period import subscription_period_for_date
+
+        return subscription_period_for_date(subscription_start, usage_period_start)
+    return (usage_period_start, usage_period_end or usage_period_start)
+
+
+def merge_figma_import_slices_by_cycle(
+    slices: list[FigmaImportPeriodSlice],
+    subscription_start: date | None,
+) -> list[FigmaImportPeriodSlice]:
+    """Merge import rows that belong to the same subscription billing cycle."""
+    merged: dict[tuple[date, date], FigmaImportPeriodSlice] = {}
+    for slice_ in slices:
+        cycle_key = figma_billing_cycle_key(
+            subscription_start,
+            slice_.usage_period_start,
+            slice_.usage_period_end,
+        )
+        if cycle_key is None:
+            continue
+        existing = merged.get(cycle_key)
+        if existing is None:
+            merged[cycle_key] = FigmaImportPeriodSlice(
+                usage_period_start=cycle_key[0],
+                usage_period_end=cycle_key[1],
+                full_seat_count=slice_.full_seat_count,
+                view_seat_count=slice_.view_seat_count,
+                paid_cost_usd=slice_.paid_cost_usd,
+                paid_credits=slice_.paid_credits,
+            )
+            continue
+        merged[cycle_key] = FigmaImportPeriodSlice(
+            usage_period_start=cycle_key[0],
+            usage_period_end=cycle_key[1],
+            full_seat_count=max(existing.full_seat_count, slice_.full_seat_count),
+            view_seat_count=max(existing.view_seat_count, slice_.view_seat_count),
+            paid_cost_usd=existing.paid_cost_usd + slice_.paid_cost_usd,
+            paid_credits=existing.paid_credits + slice_.paid_credits,
+        )
+    return [merged[key] for key in sorted(merged.keys())]
+
+
+def figma_split_costs_from_import_slices(
+    slices: list[FigmaImportPeriodSlice],
+    pricing: FigmaTeamPricing,
+    subscription_start: date | None,
+) -> tuple[Decimal, Decimal, list[FigmaImportPeriodSlice]]:
+    """
+    Return subscription, additional paid-credit cost, and cycle-merged slices.
+
+    Subscription is counted once per billing cycle even when multiple imports
+    overlap the same cycle (for example calendar-month and anchored-period CSVs).
+    """
+    merged = merge_figma_import_slices_by_cycle(slices, subscription_start)
+    subscription = Decimal("0")
+    additional = Decimal("0")
+    has_seat_pricing = pricing.full_seat_cost_usd is not None or pricing.view_seat_cost_usd is not None
+    for slice_ in merged:
+        if has_seat_pricing:
+            subscription += figma_configured_subscription(
+                pricing,
+                full_seat_count=slice_.full_seat_count,
+                view_seat_count=slice_.view_seat_count,
+            )
+        additional += slice_.paid_cost_usd
+    return subscription, additional, merged
 
 
 def figma_paid_credit_cost(

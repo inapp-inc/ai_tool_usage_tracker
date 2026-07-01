@@ -29,7 +29,7 @@ const FIELD_HINTS: Record<string, string> = {
   timestamp: "When the usage occurred",
   sku: "GitHub billing SKU (e.g. copilot_for_business)",
   unit_type: "Billing unit type (ai_credits or user-months)",
-  monthly_amount: "Monthly cost limit from GitHub invoice",
+  monthly_amount: "Monthly cost limit (from applied cost per quantity on Excel exports)",
   net_amount: "Net charge for additional usage or credits",
   quantity: "Seat count or credit quantity",
   billing_period_start: "Billing period start date",

@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.figma import FigmaBillingImport
+from app.models.figma import FigmaBillingImport, FigmaBillingImportUser
 from app.models.ingestion import Upload
 
 
@@ -51,6 +51,41 @@ async def sum_figma_import_cost_by_team(
             FigmaBillingImport.team_id,
             func.coalesce(func.sum(FigmaBillingImport.total_cost), 0),
         )
+        .outerjoin(Upload, FigmaBillingImport.upload_id == Upload.id)
+        .where(
+            FigmaBillingImport.organization_id == organization_id,
+            FigmaBillingImport.team_id.in_(team_ids),
+            active_upload_filter(),
+        )
+        .group_by(FigmaBillingImport.team_id)
+    )
+
+    if from_dt is not None and to_dt is not None:
+        from_date = from_dt.date() if isinstance(from_dt, datetime) else from_dt
+        to_date = to_dt.date() if isinstance(to_dt, datetime) else to_dt
+        stmt = stmt.where(figma_import_overlaps_period(from_date, to_date))
+
+    result = await session.execute(stmt)
+    return {team_id: Decimal(str(total or 0)) for team_id, total in result.all()}
+
+
+async def sum_figma_paid_credits_by_team(
+    session: AsyncSession,
+    organization_id: UUID,
+    team_ids: list[UUID],
+    from_dt: datetime | None = None,
+    to_dt: datetime | None = None,
+) -> dict[UUID, Decimal]:
+    """Sum paid credits used from Figma billing imports per team."""
+    if not team_ids:
+        return {}
+
+    stmt = (
+        select(
+            FigmaBillingImport.team_id,
+            func.coalesce(func.sum(FigmaBillingImportUser.paid_credits_used), 0),
+        )
+        .join(FigmaBillingImportUser, FigmaBillingImportUser.import_id == FigmaBillingImport.id)
         .outerjoin(Upload, FigmaBillingImport.upload_id == Upload.id)
         .where(
             FigmaBillingImport.organization_id == organization_id,

@@ -12,6 +12,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.collector.adapters.base import ProviderValidationError
 from app.collector.adapters.registry import fetch_provider_members, fetch_provider_snapshot, fetch_provider_usage
+from app.core.org_scope import OperatingOrgScope, organization_ids_for_scope
 from app.integration.resolve import resolve_tool_polling_context
 from app.collector.service import CollectorService
 from app.core.token_crypto import decrypt_token, encrypt_token, mask_token
@@ -43,7 +44,7 @@ from app.tools.schemas import (
     ToolUpdateRequest,
 )
 
-SYNC_LOOKBACK_DAYS = 30
+from app.collector.sync_since import resolve_usage_sync_since
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +64,45 @@ class ToolService:
         active: bool | None = None,
         catalogue_only: bool | None = None,
     ) -> ToolListResponse:
-        rows = await self._tools.list_by_organization(
-            organization_id,
+        return await self._list_tools_for_org_ids(
+            [organization_id],
             active=active,
             catalogue_only=catalogue_only,
         )
+
+    async def list_tools_for_scope(
+        self,
+        scope: OperatingOrgScope,
+        *,
+        active: bool | None = None,
+        catalogue_only: bool | None = None,
+    ) -> ToolListResponse:
+        org_ids = await organization_ids_for_scope(self._session, scope)
+        return await self._list_tools_for_org_ids(
+            org_ids,
+            active=active,
+            catalogue_only=catalogue_only,
+        )
+
+    async def _list_tools_for_org_ids(
+        self,
+        org_ids: list[UUID],
+        *,
+        active: bool | None = None,
+        catalogue_only: bool | None = None,
+    ) -> ToolListResponse:
+        if len(org_ids) == 1:
+            rows = await self._tools.list_by_organization(
+                org_ids[0],
+                active=active,
+                catalogue_only=catalogue_only,
+            )
+        else:
+            rows = await self._tools.list_for_organizations(
+                org_ids,
+                active=active,
+                catalogue_only=catalogue_only,
+            )
         provider_order = await self._provider_sort_order()
         provider_map, parent_map = await self._catalogue_lookup_maps()
         rows.sort(
@@ -465,28 +500,8 @@ class ToolService:
             )
 
     async def _usage_sync_since(self, tool: Tool, until: datetime) -> datetime:
-        """Pull only from last stored event (with overlap), capped by lookback window."""
-        lookback_start = until - timedelta(days=SYNC_LOOKBACK_DAYS)
-        tool_ids = {tool.id}
-        catalogue_id = catalogue_tool_id_from_connected(tool)
-        if catalogue_id is not None:
-            tool_ids.add(catalogue_id)
-
-        result = await self._session.execute(
-            select(func.max(UsageEvent.occurred_at)).where(
-                UsageEvent.provider == tool.vendor,
-                UsageEvent.tool_id.in_(tool_ids),
-            )
-        )
-        latest = result.scalar_one_or_none()
-        if latest is None:
-            return lookback_start
-
-        overlap = timedelta(hours=1)
-        incremental_since = latest - overlap
-        if incremental_since.tzinfo is None:
-            incremental_since = incremental_since.replace(tzinfo=UTC)
-        return max(incremental_since, lookback_start)
+        """Pull from billing/subscription start on first connect; overlap thereafter."""
+        return await resolve_usage_sync_since(self._session, tool, until)
 
     async def _get_collector(self, tool_id: UUID) -> CollectorConfig | None:
         result = await self._session.execute(

@@ -28,6 +28,8 @@ interface UserProfileResponse {
   role_id?: string | null;
   role_name?: string | null;
   organization_id: string;
+  organization_name?: string | null;
+  organization_slug?: string | null;
   team_ids?: string[];
 }
 
@@ -77,8 +79,9 @@ export function clearPersistedRefreshToken(): void {
 }
 
 function mapUserProfile(profile: UserProfileResponse): User {
-  const platformRole = Object.values(Role).includes(profile.role as Role)
-    ? (profile.role as Role)
+  const rawRole = profile.role_name ?? profile.role;
+  const platformRole = Object.values(Role).includes(rawRole as Role)
+    ? (rawRole as Role)
     : Role.TeamMember;
 
   return {
@@ -88,6 +91,8 @@ function mapUserProfile(profile: UserProfileResponse): User {
     platformRole,
     roleId: profile.role_id ?? null,
     roleName: profile.role_name ?? profile.role,
+    organizationId: profile.organization_id,
+    organizationName: profile.organization_name ?? null,
     teamMemberships: (profile.team_ids ?? []).map((teamId) => ({
       teamId,
       teamName: teamId,

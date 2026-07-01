@@ -9,15 +9,11 @@ import {
   Box,
   CircularProgress,
   Divider,
-  FormControl,
-  InputLabel,
   LinearProgress,
-  MenuItem,
-  Select,
   Typography,
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Bar,
@@ -125,23 +121,24 @@ function FigmaCostTrendTooltipContent({
 interface FigmaBillingInsightsPanelProps {
   teamId: string;
   toolId: string;
+  from: string;
+  to: string;
 }
 
-const FIGMA_ALL_TIME_FROM = "2020-01-01T00:00:00.000Z";
-const FIGMA_ALL_TIME_TO = "2030-12-31T23:59:59.000Z";
-
-function formatBillingPeriodLabel(start: string | null, end: string | null, fileName?: string | null) {
-  const range =
-    start && end ? `${start} → ${end}` : start ?? end ?? "Unknown period";
-  return fileName ? `${range} (${fileName})` : range;
+function formatBillingPeriodLabel(start: string | null, end: string | null) {
+  if (start && end) {
+    return `${formatDate(start)} – ${formatDate(end)}`;
+  }
+  return start ?? end ?? "Unknown period";
 }
 
 export function FigmaBillingInsightsPanel({
   teamId,
   toolId,
+  from,
+  to,
 }: FigmaBillingInsightsPanelProps) {
   const navigate = useNavigate();
-  const [selectedImportId, setSelectedImportId] = useState<string | null>(null);
   const [dateDrilldown, setDateDrilldown] = useState<{
     open: boolean;
     label: string | null;
@@ -149,48 +146,22 @@ export function FigmaBillingInsightsPanel({
   }>({ open: false, label: null, onDate: null });
   const [userDrilldown, setUserDrilldown] = useState<TopUserRow | null>(null);
 
-  useEffect(() => {
-    setSelectedImportId(null);
-  }, [teamId, toolId]);
-
   const insightsQuery = useQuery({
-    queryKey: ["figma", "billing-insights", teamId, toolId, selectedImportId],
-    queryFn: () =>
-      fetchFigmaBillingInsights(
-        teamId,
-        toolId,
-        FIGMA_ALL_TIME_FROM,
-        FIGMA_ALL_TIME_TO,
-        selectedImportId ? { importId: selectedImportId } : undefined,
-      ),
-    enabled: Boolean(teamId && toolId),
+    queryKey: ["figma", "billing-insights", teamId, toolId, from, to],
+    queryFn: () => fetchFigmaBillingInsights(teamId, toolId, from, to),
+    enabled: Boolean(teamId && toolId && from && to),
   });
 
   const data = insightsQuery.data;
-
-  useEffect(() => {
-    if (selectedImportId != null || !data?.available_periods?.length) {
-      return;
-    }
-    setSelectedImportId(data.available_periods[0].import_id);
-  }, [data?.available_periods, selectedImportId]);
-  const subscriptionTotal =
-    data?.configured_seat_cost != null
-      ? Number(data.configured_seat_cost)
-      : Number(data?.seat_cost ?? 0);
+  const subscriptionTotal = Number(
+    data?.configured_seat_cost ?? data?.seat_cost ?? 0,
+  );
   const paidCredits = Number(data?.credits?.total_paid_credits_used ?? 0);
   const seatCredits = Number(data?.credits?.total_seat_credits_used ?? 0);
   const usdPerCredit =
     data?.credits_per_usd != null ? Number(data.credits_per_usd) : null;
-  const additionalCost =
-    usdPerCredit != null && paidCredits > 0
-      ? paidCredits * usdPerCredit
-      : Number(data?.paid_cost ?? 0);
-  const displayTotal = data?.has_import
-    ? subscriptionTotal + additionalCost
-    : subscriptionTotal > 0
-      ? subscriptionTotal
-      : 0;
+  const additionalCost = Number(data?.paid_cost ?? 0);
+  const displayTotal = Number(data?.total_cost ?? subscriptionTotal + additionalCost);
 
   const costTrend: CostTrendPoint[] = useMemo(
     () =>
@@ -263,7 +234,7 @@ export function FigmaBillingInsightsPanel({
         usdPerCredit != null && periodPaidCredits > 0
           ? periodPaidCredits * usdPerCredit
           : Number(row.paid_cost);
-      const periodSubscription = Number(row.seat_cost) || subscriptionTotal;
+      const periodSubscription = Number(row.seat_cost);
       return {
         key: `period-${index}`,
         period:
@@ -422,33 +393,24 @@ export function FigmaBillingInsightsPanel({
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      {(data?.available_periods?.length ?? 0) > 0 && (
-        <FormControl size="small" sx={{ maxWidth: 480 }}>
-          <InputLabel id="figma-billing-period-label">Billing period (from CSV)</InputLabel>
-          <Select
-            labelId="figma-billing-period-label"
-            label="Billing period (from CSV)"
-            value={selectedImportId ?? ""}
-            onChange={(event) => setSelectedImportId(String(event.target.value))}
-          >
-            {(data?.available_periods ?? []).map((period) => (
-              <MenuItem key={period.import_id} value={period.import_id}>
-                {formatBillingPeriodLabel(
-                  period.usage_period_start,
-                  period.usage_period_end,
-                  period.upload_filename,
-                )}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+      {data?.imports_outside_filter && (
+        <Alert severity="info">
+          No imported billing data overlaps the selected period. Widen the date range above or
+          re-import Figma billing for this subscription cycle.
+        </Alert>
       )}
 
       {data?.active_billing_period_start && data?.active_billing_period_end && (
         <Alert severity="info">
-          Showing Figma usage for CSV period{" "}
-          {data.active_billing_period_start} → {data.active_billing_period_end}. Seat credits
-          are included in subscription; additional credits are billed separately.
+          Showing Figma billing for{" "}
+          {formatBillingPeriodLabel(
+            data.active_billing_period_start,
+            data.active_billing_period_end,
+          )}
+          {data.subscription_start
+            ? ` (subscription cycle from ${formatDate(data.subscription_start)})`
+            : ""}
+          . Seat credits are included in subscription; additional credits are billed separately.
         </Alert>
       )}
 
@@ -539,7 +501,7 @@ export function FigmaBillingInsightsPanel({
           }}
         >
           <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-            Monthly cost trend
+            Daily cost trend
           </Typography>
           {trendPeriodLabel && (
             <Typography variant="caption" sx={{ color: tokens.textMuted, mb: 2, display: "block" }}>

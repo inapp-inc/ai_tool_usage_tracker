@@ -1,6 +1,7 @@
 """In-process collector scheduler (runs inside the API container)."""
 
 import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -60,6 +61,7 @@ class CollectorScheduler:
                 kwargs={"collector_id": config.id},
                 max_instances=1,
                 coalesce=True,
+                next_run_time=datetime.now(UTC),
             )
             self._job_ids.add(job_id)
             logger.info(

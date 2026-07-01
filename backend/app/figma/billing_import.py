@@ -320,6 +320,32 @@ def aggregate_figma_billing_rows(
     return aggregates
 
 
+def apply_subscription_usage_periods(
+    rows: list[FigmaBillingRow],
+    subscription_start: date | None,
+) -> None:
+    """Re-anchor CSV usage periods to team subscription billing cycles (e.g. 14th → 13th)."""
+    if subscription_start is None:
+        return
+
+    from app.billing.subscription_period import row_activity_date, subscription_period_for_date
+
+    for row in rows:
+        if row.error_reason is not None:
+            continue
+        activity = row_activity_date(
+            last_activity=row.last_activity.date() if row.last_activity else None,
+            usage_period_start=row.usage_period_start,
+            usage_period_end=row.usage_period_end,
+        )
+        if activity is None:
+            continue
+        row.usage_period_start, row.usage_period_end = subscription_period_for_date(
+            subscription_start,
+            activity,
+        )
+
+
 def summarize_figma_aggregates(aggregates: list[FigmaBillingAggregate]) -> dict[str, object]:
     total_seat = sum((row.total_seat_cost for row in aggregates), Decimal("0"))
     total_paid = sum((row.total_paid_cost for row in aggregates), Decimal("0"))

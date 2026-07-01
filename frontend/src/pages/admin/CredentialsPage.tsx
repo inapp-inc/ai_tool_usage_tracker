@@ -48,7 +48,6 @@ import { StatusBadge } from "@/components/data-display/StatusBadge";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
-import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { formatDate } from "@/utils/formatters";
 
@@ -551,7 +550,7 @@ export function CredentialsPage() {
 
   return (
     <RoleGuard
-      roles={[Role.SuperAdmin]}
+      resource="credentials"
       fallback={
         <EmptyState
           title="Access denied"

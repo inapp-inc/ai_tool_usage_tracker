@@ -54,6 +54,7 @@ export interface ApiMember {
 
 const ROLE_FROM_API: Record<string, Role> = {
   super_admin: Role.SuperAdmin,
+  org_admin: Role.OrgAdmin,
   team_admin: Role.TeamAdmin,
   finance_viewer: Role.FinanceViewer,
   team_member: Role.TeamMember,
@@ -62,6 +63,7 @@ const ROLE_FROM_API: Record<string, Role> = {
 
 const ROLE_TO_API: Record<Role, string> = {
   [Role.SuperAdmin]: "super_admin",
+  [Role.OrgAdmin]: "org_admin",
   [Role.TeamAdmin]: "team_admin",
   [Role.FinanceViewer]: "finance_viewer",
   [Role.TeamMember]: "team_member",
@@ -193,6 +195,15 @@ export function toUserCreateBody(body: InviteMemberRequest): Record<string, unkn
     payload.role_id = body.roleId;
   } else if (body.platformRole) {
     payload.role = ROLE_TO_API[body.platformRole];
+  }
+  if (body.password?.trim()) {
+    payload.password = body.password.trim();
+  }
+  if (body.organizationId) {
+    payload.organization_id = body.organizationId;
+  }
+  if (body.organizationName?.trim()) {
+    payload.organization_name = body.organizationName.trim();
   }
   return payload;
 }

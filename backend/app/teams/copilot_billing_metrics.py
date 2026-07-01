@@ -10,9 +10,14 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.copilot.billing_totals import totals_from_upload_ids
+from app.copilot.billing_totals import (
+    compute_copilot_billed_split_from_parsed,
+    totals_from_upload_ids,
+)
+from app.models.admin import TeamTool, Tool
 from app.models.copilot import CopilotBillingImport
 from app.models.ingestion import Upload
+from app.teams.team_tool_repository import TeamToolRepository
 
 
 def copilot_import_overlaps_period(
@@ -58,6 +63,27 @@ async def sum_copilot_import_cost_by_team(
     from_dt: datetime | None = None,
     to_dt: datetime | None = None,
 ) -> dict[UUID, Decimal]:
+    split = await copilot_import_split_by_team(
+        session,
+        organization_id,
+        team_ids,
+        from_dt=from_dt,
+        to_dt=to_dt,
+    )
+    return {
+        team_id: subscription + additional
+        for team_id, (subscription, additional) in split.items()
+    }
+
+
+async def copilot_import_split_by_team(
+    session: AsyncSession,
+    organization_id: UUID,
+    team_ids: list[UUID],
+    from_dt: datetime | None = None,
+    to_dt: datetime | None = None,
+) -> dict[UUID, tuple[Decimal, Decimal]]:
+    """Return configured subscription and additional billable Copilot spend per team."""
     if not team_ids:
         return {}
 
@@ -85,11 +111,36 @@ async def sum_copilot_import_cost_by_team(
             continue
         uploads_by_team.setdefault(team_id, set()).add(upload_id)
 
-    totals_by_team: dict[UUID, Decimal] = {}
+    split_by_team: dict[UUID, tuple[Decimal, Decimal]] = {}
+    team_tools = TeamToolRepository(session)
     for team_id, upload_ids in uploads_by_team.items():
         parsed = await totals_from_upload_ids(session, list(upload_ids))
-        totals_by_team[team_id] = parsed.gross_total
-    return totals_by_team
+        assignment = await _copilot_assignment_for_team(session, team_tools, team_id)
+        from app.copilot.service import CopilotAnalyticsService
+
+        _, _, configured_subscription, _ = CopilotAnalyticsService._configured_copilot_pricing(
+            assignment
+        )
+        subscription, additional, _total = compute_copilot_billed_split_from_parsed(
+            parsed,
+            configured_subscription,
+        )
+        split_by_team[team_id] = (subscription, additional)
+    return split_by_team
+
+
+async def _copilot_assignment_for_team(
+    session: AsyncSession,
+    team_tools: TeamToolRepository,
+    team_id: UUID,
+):
+    result = await session.execute(
+        select(TeamTool)
+        .join(Tool, TeamTool.tool_id == Tool.id)
+        .where(TeamTool.team_id == team_id, Tool.vendor == "copilot")
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 def month_bounds(value: date) -> tuple[date, date]:

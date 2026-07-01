@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -33,12 +33,17 @@ from app.dashboard.schemas import (
     UsageByTeamResponse,
     UsageByToolItem,
     UsageByToolResponse,
+    OrganizationCostSummary,
+    OrganizationCostBreakdownItem,
+    OrganizationCostBreakdownResponse,
 )
 from app.models.admin import Team, Tool
 from app.models.auth import User
 from app.models.collector import CollectorConfig, UsageEvent
 from app.models.notifications import Threshold, ThresholdEvent
 from app.teams.membership_repository import TeamMembershipRepository
+from app.core.org_scope import list_tenant_organizations
+from app.teams.metrics import summarize_organization_costs_from_teams
 from app.teams.pricing_resolution import resolve_team_tool_pricing
 from app.teams.repository import TeamRepository
 from app.teams.team_tool_repository import TeamToolRepository
@@ -89,6 +94,48 @@ def _previous_period(from_dt: datetime, to_dt: datetime) -> tuple[datetime, date
     prev_to = from_dt - timedelta(microseconds=1)
     prev_from = prev_to - duration
     return prev_from, prev_to
+
+
+def _fill_daily_trend_gaps(
+    data: list[TrendPoint],
+    from_dt: datetime,
+    to_dt: datetime,
+    *,
+    breakdown_available: bool,
+) -> list[TrendPoint]:
+    """Return one trend point per calendar day in [from_dt, to_dt], zero-filling gaps."""
+    if from_dt.tzinfo is None:
+        from_dt = from_dt.replace(tzinfo=UTC)
+    if to_dt.tzinfo is None:
+        to_dt = to_dt.replace(tzinfo=UTC)
+
+    by_day: dict[date, TrendPoint] = {}
+    for point in data:
+        period = point.period_start
+        day = period.date() if isinstance(period, datetime) else period
+        by_day[day] = point
+
+    zero = Decimal("0")
+    filled: list[TrendPoint] = []
+    current = from_dt.date()
+    end = to_dt.date()
+    while current <= end:
+        existing = by_day.get(current)
+        if existing is not None:
+            filled.append(existing)
+        else:
+            filled.append(
+                TrendPoint(
+                    period_start=datetime.combine(current, datetime.min.time(), tzinfo=UTC),
+                    total_tokens=0,
+                    estimated_cost=zero,
+                    included_cost=zero if breakdown_available else None,
+                    billable_cost=zero if breakdown_available else None,
+                    breakdown_available=breakdown_available,
+                )
+            )
+        current += timedelta(days=1)
+    return filled
 
 
 @dataclass(frozen=True)
@@ -148,6 +195,64 @@ class DashboardService:
             active_tools=len(catalogue_ids),
             active_teams=1 if team.active else 0,
         )
+
+    async def get_organization_cost_summary(
+        self,
+        scope: DashboardScope,
+        from_dt: datetime,
+        to_dt: datetime,
+    ) -> OrganizationCostSummary:
+        """Roll up connected-tool pricing and billable spend for the period."""
+        team_ids = scope.allowed_team_ids
+        teams = await self._teams.list_by_organization(scope.organization_id, active=None)
+        if team_ids is not None:
+            allowed = set(team_ids)
+            teams = [team for team in teams if team.id in allowed]
+
+        summary = await summarize_organization_costs_from_teams(
+            self._session,
+            scope.organization_id,
+            from_dt,
+            to_dt,
+            team_ids=team_ids,
+        )
+
+        return OrganizationCostSummary(
+            tools_cost=summary.tools_cost,
+            additional_billable_cost=summary.additional_billable_cost,
+            total_cost=summary.total_cost,
+            team_count=len(teams),
+            connected_tool_count=summary.connected_tool_count,
+        )
+
+    async def get_organization_cost_breakdown(
+        self,
+        from_dt: datetime,
+        to_dt: datetime,
+    ) -> OrganizationCostBreakdownResponse:
+        """Per-tenant organization cost rollup for super admin."""
+        orgs = await list_tenant_organizations(self._session)
+        items: list[OrganizationCostBreakdownItem] = []
+        for org in orgs:
+            teams = await self._teams.list_by_organization(org.id, active=None)
+            summary = await summarize_organization_costs_from_teams(
+                self._session,
+                org.id,
+                from_dt,
+                to_dt,
+            )
+            items.append(
+                OrganizationCostBreakdownItem(
+                    organization_id=org.id,
+                    organization_name=org.name,
+                    tools_cost=summary.tools_cost,
+                    additional_billable_cost=summary.additional_billable_cost,
+                    total_cost=summary.total_cost,
+                    connected_tool_count=summary.connected_tool_count,
+                )
+            )
+        items.sort(key=lambda row: row.organization_name.lower())
+        return OrganizationCostBreakdownResponse(data=items)
 
     async def _catalogue_ids_by_team(self, teams: list[Team]) -> dict[UUID, set[UUID]]:
         catalogue_by_team: dict[UUID, set[UUID]] = {}
@@ -691,24 +796,75 @@ class DashboardService:
         else:
             bucket = cast(UsageEvent.occurred_at, Date)
 
-        result = await self._session.execute(
-            select(
-                bucket,
-                _sum_tokens(),
-                func.coalesce(func.sum(_EFFECTIVE_COST_EXPR), 0),
+        breakdown_available = await self._cursor_breakdown_available(
+            scope.organization_id,
+            tool_id,
+            usage_tool_ids,
+        )
+        included_predicate = and_(
+            UsageEvent.included_in_plan.is_(True),
+            UsageEvent.provider == "cursor",
+        )
+        billable_predicate = and_(
+            UsageEvent.included_in_plan.is_(False),
+            UsageEvent.provider == "cursor",
+        )
+
+        select_columns = [
+            bucket,
+            _sum_tokens(),
+            func.coalesce(func.sum(_EFFECTIVE_COST_EXPR), 0),
+        ]
+        if breakdown_available:
+            select_columns.extend(
+                [
+                    func.coalesce(
+                        func.sum(
+                            case((included_predicate, UsageEvent.reference_cost), else_=0)
+                        ),
+                        0,
+                    ),
+                    func.coalesce(
+                        func.sum(
+                            case((billable_predicate, UsageEvent.estimated_cost), else_=0)
+                        ),
+                        0,
+                    ),
+                ]
             )
+
+        result = await self._session.execute(
+            select(*select_columns)
             .where(*filters)
             .group_by(bucket)
             .order_by(bucket.asc())
         )
-        data = [
-            TrendPoint(
-                period_start=period if isinstance(period, datetime) else datetime.combine(period, datetime.min.time(), tzinfo=UTC),
-                total_tokens=int(total_tokens),
-                estimated_cost=Decimal(str(estimated_cost)),
+        data: list[TrendPoint] = []
+        for row in result.all():
+            period = row[0]
+            total_tokens = int(row[1])
+            estimated_cost = Decimal(str(row[2]))
+            included_cost = Decimal(str(row[3])) if breakdown_available else None
+            billable_cost = Decimal(str(row[4])) if breakdown_available else None
+            data.append(
+                TrendPoint(
+                    period_start=period
+                    if isinstance(period, datetime)
+                    else datetime.combine(period, datetime.min.time(), tzinfo=UTC),
+                    total_tokens=total_tokens,
+                    estimated_cost=estimated_cost,
+                    included_cost=included_cost,
+                    billable_cost=billable_cost,
+                    breakdown_available=breakdown_available,
+                )
             )
-            for period, total_tokens, estimated_cost in result.all()
-        ]
+        if granularity == "daily":
+            data = _fill_daily_trend_gaps(
+                data,
+                from_dt,
+                to_dt,
+                breakdown_available=breakdown_available,
+            )
         return TrendsResponse(granularity=granularity, data=data)
 
     async def get_alerts(

@@ -133,6 +133,38 @@ async def test_team_admin_denied_for_unassigned_team() -> None:
 
 
 @pytest.mark.asyncio
+async def test_figma_assignment_requires_package() -> None:
+    org_id = uuid4()
+    team_id = uuid4()
+    tool_id = uuid4()
+    user = MagicMock()
+    user.role_name = "org_admin"
+    user.organization_id = org_id
+
+    team = MagicMock()
+    team.id = team_id
+    team.organization_id = org_id
+    team.tool_ids = []
+
+    tool = _tool(id=tool_id)
+    tool.vendor = "figma"
+
+    session = AsyncMock()
+    service = TeamToolService(session)
+    service._require_team_access = AsyncMock(return_value=team)
+    service._require_tool = AsyncMock(return_value=tool)
+    service._team_tools.get_by_team_and_tool = AsyncMock(return_value=None)
+
+    body = TeamToolAssignRequest(tool_id=tool_id, pricing_model="custom")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.create_assignment(user, team_id, body)
+
+    assert exc_info.value.status_code == 422
+    assert "Figma requires a subscription package" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
 async def test_sync_team_tools_skips_tools_without_credentials() -> None:
     org_id = uuid4()
     team_id = uuid4()

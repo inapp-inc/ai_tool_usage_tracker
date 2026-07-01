@@ -119,9 +119,7 @@ export async function fetchToolMembers(id: string): Promise<ToolMember[]> {
 }
 
 export async function fetchToolPackages(toolId: string): Promise<ToolPackage[]> {
-  const response = await apiFetch(`/tools/${toolId}/packages`);
-  const payload = (await response.json()) as { data?: ApiToolPackage[] };
-  const rows = Array.isArray(payload.data) ? payload.data : [];
+  const rows = await apiRequest<ApiToolPackage[]>(`/tools/${toolId}/packages`);
   return rows.map(mapApiToolPackage);
 }
 

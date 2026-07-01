@@ -8,11 +8,16 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.figma.pricing import (
+    figma_configured_subscription,
+    figma_paid_credit_cost,
+    figma_pricing_from_assignment,
+)
 from app.models.admin import Team, TeamTool, Tool
 from app.models.collector import UsageEvent
 from app.teams.cost_calculator import calculate_pricing_cost
-from app.teams.copilot_billing_metrics import sum_copilot_import_cost_by_team
-from app.teams.figma_billing_metrics import sum_figma_import_cost_by_team
+from app.teams.copilot_billing_metrics import copilot_import_split_by_team
+from app.teams.figma_billing_metrics import sum_figma_paid_credits_by_team
 from app.teams.pricing_resolution import resolve_team_tool_pricing
 from app.teams.team_tool_repository import TeamToolRepository
 from app.tools.catalogue import connected_to_catalogue_map, find_connected_for_catalogue
@@ -31,6 +36,14 @@ class TeamMetrics:
     pricing_total: Decimal = Decimal("0")
     total_cost: Decimal = Decimal("0")
     last_synced_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class OrganizationCostRollup:
+    tools_cost: Decimal
+    additional_billable_cost: Decimal
+    total_cost: Decimal
+    connected_tool_count: int
 
 
 class TeamMetricsLoader:
@@ -87,14 +100,14 @@ class TeamMetricsLoader:
             from_dt,
             to_dt,
         )
-        copilot_import_cost = await sum_copilot_import_cost_by_team(
+        copilot_import_split = await copilot_import_split_by_team(
             self._session,
             organization_id,
             team_ids,
             None if all_time else from_dt,
             None if all_time else to_dt,
         )
-        figma_import_cost = await sum_figma_import_cost_by_team(
+        figma_paid_credits = await sum_figma_paid_credits_by_team(
             self._session,
             organization_id,
             team_ids,
@@ -105,15 +118,43 @@ class TeamMetricsLoader:
         metrics: dict[UUID, TeamMetrics] = {}
         for team in teams:
             tokens_used, total_cost = usage_by_team.get(team.id, (0, Decimal("0")))
-            total_cost += copilot_import_cost.get(team.id, Decimal("0"))
-            total_cost += figma_import_cost.get(team.id, Decimal("0"))
+
+            copilot_assignment = self._copilot_assignment_for_team(
+                team.id,
+                team_tool_ids.get(team.id, set()),
+                tools_by_id,
+                assignments_by_pair,
+            )
+            copilot_import_subscription, copilot_import_additional = copilot_import_split.get(
+                team.id,
+                (Decimal("0"), Decimal("0")),
+            )
+            copilot_subscription, copilot_billable = _copilot_team_list_costs(
+                copilot_assignment,
+                copilot_import_subscription,
+                copilot_import_additional,
+            )
+            total_cost += copilot_subscription + copilot_billable
+
+            figma_assignment = self._figma_assignment_for_team(
+                team.id,
+                team_tool_ids.get(team.id, set()),
+                tools_by_id,
+                assignments_by_pair,
+            )
+            figma_subscription, figma_billable = _figma_team_list_costs(
+                figma_assignment,
+                figma_paid_credits.get(team.id, Decimal("0")),
+            )
+            total_cost += figma_subscription + figma_billable
             pricing_total = Decimal("0")
 
             for tool_id in team_tool_ids.get(team.id, set()):
                 tool = tools_by_id.get(tool_id)
                 if tool is None:
                     continue
-
+                if tool.vendor in {"copilot", "figma"}:
+                    continue
                 input_tokens, output_tokens, tool_total, _event_cost = self._usage_for_catalogue_tool(
                     team.id,
                     tool_id,
@@ -131,7 +172,8 @@ class TeamMetricsLoader:
                 )
 
             pricing_total += unscoped_cost.get(team.id, Decimal("0"))
-            pricing_total += figma_import_cost.get(team.id, Decimal("0"))
+            pricing_total += copilot_subscription
+            pricing_total += figma_subscription
             last_synced_at = self._last_synced_at(
                 team,
                 team_tool_ids.get(team.id, set()),
@@ -275,6 +317,34 @@ class TeamMetricsLoader:
         return mapping
 
     @staticmethod
+    def _copilot_assignment_for_team(
+        team_id: UUID,
+        tool_ids: set[UUID],
+        tools_by_id: dict[UUID, Tool],
+        assignments_by_pair: dict[tuple[UUID, UUID], TeamTool],
+    ) -> TeamTool | None:
+        for tool_id in tool_ids:
+            tool = tools_by_id.get(tool_id)
+            if tool is None or tool.vendor != "copilot":
+                continue
+            return assignments_by_pair.get((team_id, tool_id))
+        return None
+
+    @staticmethod
+    def _figma_assignment_for_team(
+        team_id: UUID,
+        tool_ids: set[UUID],
+        tools_by_id: dict[UUID, Tool],
+        assignments_by_pair: dict[tuple[UUID, UUID], TeamTool],
+    ) -> TeamTool | None:
+        for tool_id in tool_ids:
+            tool = tools_by_id.get(tool_id)
+            if tool is None or tool.vendor != "figma":
+                continue
+            return assignments_by_pair.get((team_id, tool_id))
+        return None
+
+    @staticmethod
     def _last_synced_at(
         team: Team,
         tool_ids: set[UUID],
@@ -296,3 +366,105 @@ class TeamMetricsLoader:
             if latest is None or sync_tool.last_sync_at > latest:
                 latest = sync_tool.last_sync_at
         return latest
+
+
+def _copilot_team_list_costs(
+    assignment: TeamTool | None,
+    import_subscription: Decimal,
+    import_additional: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """
+    Copilot on the Teams page:
+    - Tools cost = configured subscription from team setup (fixed)
+    - Billable = imported spend beyond that subscription (from billing CSV net amounts)
+    """
+    from app.copilot.service import CopilotAnalyticsService
+
+    _, _, configured, _ = CopilotAnalyticsService._configured_copilot_pricing(assignment)
+    configured = configured or Decimal("0")
+    if configured > 0:
+        return configured, import_additional
+    if import_subscription > 0 or import_additional > 0:
+        return import_subscription, import_additional
+    return Decimal("0"), Decimal("0")
+
+
+async def summarize_organization_costs_from_teams(
+    session: AsyncSession,
+    organization_id: UUID,
+    from_dt: datetime,
+    to_dt: datetime,
+    *,
+    team_ids: list[UUID] | None = None,
+) -> OrganizationCostRollup:
+    """
+    Organization cost rollup aligned with the Teams admin page.
+
+    Tools cost uses configured team pricing (static; not narrowed by the date filter).
+    Billable cost uses imports and usage overage within [from_dt, to_dt].
+    Total cost = tools cost + billable cost.
+    """
+    from app.teams.repository import TeamRepository
+
+    teams_repo = TeamRepository(session)
+    teams = await teams_repo.list_by_organization(organization_id, active=None)
+    if team_ids is not None:
+        allowed = set(team_ids)
+        teams = [team for team in teams if team.id in allowed]
+
+    if not teams:
+        return OrganizationCostRollup(
+            tools_cost=Decimal("0"),
+            additional_billable_cost=Decimal("0"),
+            total_cost=Decimal("0"),
+            connected_tool_count=0,
+        )
+
+    loader = TeamMetricsLoader(session)
+    static_metrics = await loader.load_for_teams(organization_id, teams, all_time=True)
+    period_metrics = await loader.load_for_teams(
+        organization_id,
+        teams,
+        from_dt=from_dt,
+        to_dt=to_dt,
+    )
+
+    org_tools = await ToolRepository(session).list_by_organization(organization_id, active=None)
+    id_to_catalogue = connected_to_catalogue_map(org_tools)
+    team_tool_ids = TeamMetricsLoader._team_tool_id_map(teams, id_to_catalogue)
+
+    tools_cost = Decimal("0")
+    billable = Decimal("0")
+    connected_tools: set[UUID] = set()
+    for team in teams:
+        static_m = static_metrics.get(team.id, TeamMetrics())
+        period_m = period_metrics.get(team.id, TeamMetrics())
+        tools_cost += static_m.pricing_total
+        # Match Teams page: billable = spend beyond configured tools pricing.
+        billable += max(period_m.total_cost - static_m.pricing_total, Decimal("0"))
+        connected_tools.update(team_tool_ids.get(team.id, set()))
+
+    return OrganizationCostRollup(
+        tools_cost=tools_cost,
+        additional_billable_cost=billable,
+        total_cost=tools_cost + billable,
+        connected_tool_count=len(connected_tools),
+    )
+
+
+def _figma_team_list_costs(
+    assignment: TeamTool | None,
+    paid_credits: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """
+    Figma on the Teams page:
+    - Tools cost = configured subscription from team setup (fixed, not import totals)
+    - Billable = total paid credits from imports × configured USD per credit
+    """
+    if assignment is None:
+        return Decimal("0"), Decimal("0")
+
+    pricing = figma_pricing_from_assignment(assignment)
+    subscription = figma_configured_subscription(pricing)
+    billable = figma_paid_credit_cost(paid_credits, pricing.credits_per_usd)
+    return subscription, billable

@@ -53,6 +53,7 @@ export { API_BASE, ApiClientError, apiFetch, apiRequest, getAccessToken, setAcce
 export {
   dashboardApi,
   fetchDashboardStats,
+  fetchOrganizationCosts,
   fetchRecentAlerts,
   fetchTeamCost,
   fetchTokenTimeseries,
@@ -60,6 +61,7 @@ export {
 } from "./dashboard";
 export type {
   DashboardStats,
+  OrganizationCostSummary,
   RecentAlert,
   TeamCostDataPoint,
   TokenDataPoint,

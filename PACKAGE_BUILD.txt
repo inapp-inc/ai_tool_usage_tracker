@@ -1,0 +1,5 @@
+Packaged at (UTC): 2026-07-01T09:39:16.9100892Z
+frontend/src/components/layout/Sidebar.tsx (UTC): 2026-06-29T14:59:29.2402692Z
+frontend/src/theme/palette.ts (UTC): 2026-06-29T14:59:26.1600368Z
+frontend/dist: excluded (rebuilt on server via docker compose build frontend)
+Deploy: bash deploy-production.sh ai-tools-token-tracker.zip

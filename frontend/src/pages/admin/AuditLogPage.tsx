@@ -27,7 +27,6 @@ import {
 import { RoleGuard } from "@/components/auth/RoleGuard";
 import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { EmptyState } from "@/components/feedback/EmptyState";
-import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { formatDateTime, formatRelativeTime } from "@/utils/formatters";
 
@@ -223,7 +222,7 @@ export function AuditLogPage() {
 
   return (
     <RoleGuard
-      roles={[Role.SuperAdmin, Role.Auditor]}
+      resource="audit_logs"
       fallback={
         <EmptyState
           title="Access denied"

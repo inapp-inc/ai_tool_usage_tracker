@@ -49,7 +49,6 @@ import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { StatusBadge } from "@/components/data-display/StatusBadge";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
-import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { formatRelativeTime } from "@/utils/formatters";
 import {
@@ -68,6 +67,7 @@ const FORMAT_CHIP_COLORS: Record<
 > = {
   csv: { background: "#DCFCE7", color: "#16A34A" },
   json: { background: "#EFF6FF", color: "#2563EB" },
+  xlsx: { background: "#EFF6FF", color: "#2563EB" },
 };
 
 function FormatChip({ format }: { format: UploadFormat }) {
@@ -228,7 +228,12 @@ export function UploadsPage() {
     setColumnMapping({});
   };
 
-  const isCsvUpload = selectedFile?.name.toLowerCase().endsWith(".csv") ?? false;
+  const isSpreadsheetUpload =
+    selectedFile?.name.toLowerCase().endsWith(".csv") ||
+    selectedFile?.name.toLowerCase().endsWith(".xlsx") ||
+    selectedFile?.name.toLowerCase().endsWith(".xlsm") ||
+    false;
+  const skipMappingForCopilot = isCopilotToolSelected && isSpreadsheetUpload;
   const mappingReady = isColumnMappingReady(
     columnMapping,
     mappingQuery.data?.fields,
@@ -239,6 +244,15 @@ export function UploadsPage() {
       return;
     }
     const extension = file.name.toLowerCase();
+    const isCopilotSpreadsheet =
+      isCopilotToolSelected &&
+      (extension.endsWith(".csv") ||
+        extension.endsWith(".xlsx") ||
+        extension.endsWith(".xlsm"));
+    if (isCopilotSpreadsheet) {
+      setSelectedFile(file);
+      return;
+    }
     if (!extension.endsWith(".csv") && !extension.endsWith(".json")) {
       return;
     }
@@ -388,7 +402,7 @@ export function UploadsPage() {
 
   return (
     <RoleGuard
-      roles={[Role.SuperAdmin, Role.TeamAdmin]}
+      resource="uploads"
       fallback={
         <EmptyState
           title="Access denied"
@@ -558,7 +572,11 @@ export function UploadsPage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".csv,.json"
+              accept={
+                isCopilotToolSelected
+                  ? ".csv,.xlsx,.xlsm"
+                  : ".csv,.json"
+              }
               hidden
               onChange={(event) => {
                 const file = event.target.files?.item(0) ?? null;
@@ -692,9 +710,16 @@ export function UploadsPage() {
               </Alert>
             )}
 
+            {selectedFile && isCopilotToolSelected && (
+              <Alert severity="info" sx={{ mt: 1 }}>
+                Copilot billing CSV or Excel files are parsed automatically using
+                GitHub column names — no manual column mapping required.
+              </Alert>
+            )}
+
             {selectedFile && !isBillingToolSelected && (
               <Alert severity="info" sx={{ mt: 1 }}>
-                {isCsvUpload
+                {isSpreadsheetUpload
                   ? "After upload, map CSV columns to fields. If you assign a team, usage and members import to that team."
                   : "JSON files are parsed after upload. Assign a team to bind imported usage to that team."}
               </Alert>
@@ -744,7 +769,11 @@ export function UploadsPage() {
                 ) : undefined
               }
             >
-              {isCsvUpload ? "Upload & Map Columns" : "Upload & Validate"}
+              {skipMappingForCopilot
+                ? "Upload & Preview"
+                : isSpreadsheetUpload
+                  ? "Upload & Map Columns"
+                  : "Upload & Validate"}
             </Button>
             )}
           </DialogActions>

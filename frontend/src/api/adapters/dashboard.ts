@@ -4,6 +4,7 @@ import { format, parseISO } from "date-fns";
 
 import type {
   DashboardStats,
+  OrganizationCostSummary,
   RecentAlert,
   TeamCostDataPoint,
   TokenDataPoint,
@@ -91,6 +92,9 @@ export interface ApiTrendPoint {
   period_start: string;
   total_tokens: number;
   estimated_cost?: number | null;
+  included_cost?: number | null;
+  billable_cost?: number | null;
+  breakdown_available?: boolean;
 }
 
 export interface ApiTrendsResponse {
@@ -101,6 +105,56 @@ export interface ApiTrendsResponse {
 export interface ApiActiveCountsWidget {
   active_tools: number;
   active_teams: number;
+}
+
+export interface ApiOrganizationCostSummary {
+  tools_cost: number | string;
+  additional_billable_cost: number | string;
+  total_cost: number | string;
+  team_count: number;
+  connected_tool_count?: number;
+}
+
+export interface ApiOrganizationCostBreakdownItem {
+  organization_id: string;
+  organization_name: string;
+  tools_cost: number | string;
+  additional_billable_cost: number | string;
+  total_cost: number | string;
+  connected_tool_count?: number;
+}
+
+export function mapOrganizationCostSummary(
+  api: ApiOrganizationCostSummary,
+): OrganizationCostSummary {
+  const parse = (value: number | string) => {
+    const n = typeof value === "number" ? value : Number(value);
+    return Number.isNaN(n) ? 0 : n;
+  };
+  return {
+    toolsCost: parse(api.tools_cost),
+    additionalBillableCost: parse(api.additional_billable_cost),
+    totalCost: parse(api.total_cost),
+    teamCount: api.team_count,
+    connectedToolCount: api.connected_tool_count ?? 0,
+  };
+}
+
+export function mapOrganizationCostBreakdownItem(
+  api: ApiOrganizationCostBreakdownItem,
+): import("../dashboard").OrganizationCostBreakdownItem {
+  const parse = (value: number | string) => {
+    const n = typeof value === "number" ? value : Number(value);
+    return Number.isNaN(n) ? 0 : n;
+  };
+  return {
+    organizationId: api.organization_id,
+    organizationName: api.organization_name,
+    toolsCost: parse(api.tools_cost),
+    additionalBillableCost: parse(api.additional_billable_cost),
+    totalCost: parse(api.total_cost),
+    connectedToolCount: api.connected_tool_count ?? 0,
+  };
 }
 
 export function buildDashboardStats(

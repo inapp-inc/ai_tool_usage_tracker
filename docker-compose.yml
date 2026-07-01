@@ -183,6 +183,8 @@ services:
 
         VITE_BASE_PATH: ${VITE_BASE_PATH:-/aitool/}
 
+        CACHEBUST: ${CACHEBUST:-0}
+
     container_name: ai-tracker-frontend
 
     ports:

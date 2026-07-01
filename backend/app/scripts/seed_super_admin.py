@@ -12,6 +12,7 @@ import sys
 from app.auth.service import seed_super_admin_if_empty, sync_super_admin_credentials
 from app.config import get_settings
 from app.db.session import get_session_factory
+from app.organizations.service import ensure_platform_organization, ensure_tenant_isolation
 
 
 async def main() -> int:
@@ -22,6 +23,12 @@ async def main() -> int:
         synced = False
         if not created and settings.sync_super_admin_credentials:
             synced = await sync_super_admin_credentials(session, settings)
+        if not created:
+            await ensure_platform_organization(session)
+            moved = await ensure_tenant_isolation(session)
+            if moved:
+                await session.commit()
+                print(f"Relocated {moved} organization admin(s) to tenant organization(s).")
 
     if created:
         print(

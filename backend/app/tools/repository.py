@@ -34,6 +34,24 @@ class ToolRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_for_organizations(
+        self,
+        organization_ids: list[UUID],
+        *,
+        active: bool | None = None,
+        catalogue_only: bool | None = None,
+    ) -> list[Tool]:
+        if not organization_ids:
+            return []
+        stmt = select(Tool).where(Tool.organization_id.in_(organization_ids))
+        if active is not None:
+            stmt = stmt.where(Tool.active == active)
+        if catalogue_only is not None:
+            stmt = stmt.where(Tool.catalogue_only == catalogue_only)
+        stmt = stmt.order_by(Tool.organization_id.asc(), Tool.name.asc())
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_by_id(self, tool_id: UUID, organization_id: UUID) -> Tool | None:
         result = await self._session.execute(
             select(Tool).where(

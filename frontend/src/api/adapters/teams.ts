@@ -19,6 +19,7 @@ export interface ApiTeam {
 
 export interface Team {
   id: string;
+  organizationId: string;
   name: string;
   description: string;
   memberCount: number;
@@ -64,6 +65,7 @@ function parseMoney(value: number | string | null | undefined): number {
 export function mapApiTeam(api: ApiTeam): Team {
   return {
     id: api.id,
+    organizationId: api.organization_id,
     name: api.name,
     description: api.description ?? "",
     memberCount: api.member_count,

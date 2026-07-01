@@ -1,5 +1,6 @@
 import {
   Box,
+  Chip,
   CircularProgress,
   FormControl,
   FormHelperText,
@@ -7,6 +8,7 @@ import {
   MenuItem,
   Select,
   TextField,
+  Typography,
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 
@@ -159,7 +161,9 @@ export function TeamToolPackageSelector({
 }: TeamToolPackageSelectorProps) {
   const isCopilot = vendor === "copilot";
   const isFigma = vendor === "figma";
+  const isCursor = vendor === "cursor";
   const requiresPackage = isCopilot || isFigma;
+  const packageFieldId = `tool-package-${toolId}`;
 
   const packagesQuery = useQuery({
     queryKey: ["tool-packages", toolId],
@@ -243,14 +247,17 @@ export function TeamToolPackageSelector({
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5, mb: 2 }}>
       <FormControl fullWidth size="small" disabled={disabled || packagesQuery.isPending}>
-        <InputLabel id={`tool-package-${toolId}`}>Subscription package</InputLabel>
+        <InputLabel id={packageFieldId} shrink>
+          {isCursor ? "Cursor plan" : "Subscription package"}
+        </InputLabel>
         <Select
-          labelId={`tool-package-${toolId}`}
-          label="Subscription package"
+          labelId={packageFieldId}
+          label={isCursor ? "Cursor plan" : "Subscription package"}
           value={binding.packageId ?? ""}
           onChange={(event) => applyPackage(String(event.target.value))}
           displayEmpty
           required={requiresPackage}
+          notched
         >
           {!requiresPackage && (
             <MenuItem value="">
@@ -274,23 +281,27 @@ export function TeamToolPackageSelector({
           <FormHelperText>Required for Copilot — matches GitHub billing SKU</FormHelperText>
         ) : isFigma ? (
           <FormHelperText>Required for Figma — aligns seat credit amounts with your plan</FormHelperText>
+        ) : isCursor ? (
+          <FormHelperText>
+            Optional — select your Cursor subscription tier for budget tracking
+          </FormHelperText>
         ) : (
           <FormHelperText>Select a vendor package or use custom pricing</FormHelperText>
         )}
       </FormControl>
 
       {pricingType && (
-        <FormControl fullWidth size="small" disabled>
-          <InputLabel id={`pricing-type-${toolId}`}>Pricing type</InputLabel>
-          <Select
-            labelId={`pricing-type-${toolId}`}
-            label="Pricing type"
-            value={pricingType}
-          >
-            <MenuItem value={pricingType}>{BILLING_TYPE_LABELS[pricingType]}</MenuItem>
-          </Select>
-          <FormHelperText>Derived from the selected subscription package</FormHelperText>
-        </FormControl>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+          <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600 }}>
+            Billing model
+          </Typography>
+          <Chip
+            size="small"
+            label={BILLING_TYPE_LABELS[pricingType]}
+            variant="outlined"
+            sx={{ height: 24 }}
+          />
+        </Box>
       )}
 
       {showFigmaPricingFields && (
@@ -539,6 +550,11 @@ export function TeamToolPackageSelector({
             onChange({ subscriptionStart: event.target.value || null })
           }
           disabled={disabled}
+          helperText={
+            isCursor
+              ? "Usage sync pulls from this date (or up to 90 days back)"
+              : undefined
+          }
         />
         {!isCopilot && !isFigma && (
           <TextField
@@ -557,6 +573,7 @@ export function TeamToolPackageSelector({
           label="Monthly budget (USD)"
           type="number"
           size="small"
+          InputLabelProps={{ shrink: true }}
           value={binding.monthlyBudget ?? ""}
           onChange={(event) =>
             onChange({
@@ -570,6 +587,7 @@ export function TeamToolPackageSelector({
           label={isCopilot ? "Alert threshold (USD)" : "Alert threshold (%)"}
           type="number"
           size="small"
+          InputLabelProps={{ shrink: true }}
           inputProps={isCopilot ? { min: 0, step: 0.01 } : { min: 0, max: 100 }}
           value={
             isCopilot

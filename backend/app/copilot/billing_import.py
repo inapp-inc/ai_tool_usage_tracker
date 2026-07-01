@@ -20,7 +20,14 @@ USER_MONTHS_UNIT_TYPES = frozenset({"user-months", "user months", "user_months"}
 COPILOT_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "sku": ("sku", "product_sku", "product"),
     "unit_type": ("unit_type", "unittype", "unit type"),
-    "monthly_amount": ("monthly_amount", "monthlyamount", "amount", "monthly cost"),
+    "monthly_amount": (
+        "monthly_amount",
+        "monthlyamount",
+        "amount",
+        "monthly cost",
+        "applied_cost_per_quantity",
+        "applied cost per quantity",
+    ),
     "net_amount": ("net_amount", "netamount", "net amount"),
     "gross_amount": ("gross_amount", "grossamount", "gross amount"),
     "quantity": ("quantity", "qty"),
@@ -32,6 +39,7 @@ COPILOT_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "report_start_date",
         "report_start",
         "report period start",
+        "billing period start",
     ),
     "billing_period_end": (
         "billing_period_end",
@@ -41,6 +49,7 @@ COPILOT_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "report_end_date",
         "report_end",
         "report period end",
+        "billing period end",
     ),
     "usage_date": (
         "usage_date",
@@ -95,6 +104,65 @@ class CopilotBillingAggregate:
     total_cost: Decimal
     seat_count: int | None
     row_count: int
+
+
+def compute_copilot_additional_cost(
+    net_total: Decimal,
+    configured_subscription: Decimal | None,
+) -> Decimal:
+    """Additional spend = sum(net_amount) minus configured subscription (floored at zero)."""
+    subscription = configured_subscription or Decimal("0")
+    if subscription > 0:
+        return max(net_total - subscription, Decimal("0"))
+    return net_total or Decimal("0")
+
+
+def compute_copilot_cost_split(
+    net_total: Decimal,
+    configured_subscription: Decimal | None,
+    *,
+    credits_gross: Decimal = Decimal("0"),
+) -> tuple[Decimal, Decimal, Decimal]:
+    """Return (subscription, additional, total) for Copilot billing."""
+    subscription = configured_subscription or Decimal("0")
+    if subscription > 0:
+        net_overage = compute_copilot_additional_cost(net_total, configured_subscription)
+        # GitHub invoices often report AI credit spend as gross-only rows (net_amount = 0).
+        if net_overage > 0:
+            additional = net_overage
+        elif credits_gross > 0:
+            additional = credits_gross
+        else:
+            additional = Decimal("0")
+        return subscription, additional, subscription + additional
+
+    additional = net_total or Decimal("0")
+    if additional <= 0 and credits_gross > 0:
+        additional = credits_gross
+    return Decimal("0"), additional, additional
+
+
+def compute_copilot_billed_total(
+    *,
+    monthly_cost_limit: Decimal,
+    additional_cost: Decimal,
+    credits_cost: Decimal = Decimal("0"),
+) -> Decimal:
+    """Total billed cost = subscription limit + additional spend (not CSV gross)."""
+    subscription = monthly_cost_limit or Decimal("0")
+    additional = additional_cost or Decimal("0")
+    credits = credits_cost or Decimal("0")
+    if subscription > 0:
+        return subscription + additional
+    return additional + credits
+
+
+def compute_aggregate_total_cost(aggregate: CopilotBillingAggregate) -> Decimal:
+    return compute_copilot_billed_total(
+        monthly_cost_limit=aggregate.monthly_cost_limit,
+        additional_cost=aggregate.additional_cost,
+        credits_cost=aggregate.credits_cost,
+    )
 
 
 @dataclass
@@ -177,6 +245,11 @@ def suggest_copilot_column_mapping(headers: list[str]) -> dict[str, str | None]:
     return mapping
 
 
+def copilot_auto_column_mapping(headers: list[str]) -> dict[str, str | None]:
+    """Alias-driven mapping used when Copilot uploads skip the manual mapping step."""
+    return suggest_copilot_column_mapping(headers)
+
+
 def parse_copilot_billing_csv(
     content: str,
     *,
@@ -189,31 +262,37 @@ def parse_copilot_billing_csv(
     except csv.Error as exc:
         return CopilotParseResult(error_message=f"Invalid CSV: {exc}")
 
+    headers = [name for name in reader.fieldnames if name is not None]
+    effective_mapping = column_mapping
     if not any(column for column in column_mapping.values() if column):
-        return CopilotParseResult(error_message="Map at least one CSV column before continuing.")
+        effective_mapping = suggest_copilot_column_mapping(headers)
 
     rows: list[CopilotBillingRow] = []
     for index, raw in enumerate(reader, start=1):
         if not raw:
             continue
-        sku = str(_pick_mapped_value(raw, column_mapping, "sku") or "").strip().lower()
-        unit_type = _normalize_unit_type(str(_pick_mapped_value(raw, column_mapping, "unit_type") or ""))
-        usage_date = _parse_date(_pick_mapped_value(raw, column_mapping, "usage_date"))
-        raw_period_start = _parse_date(_pick_mapped_value(raw, column_mapping, "billing_period_start"))
-        raw_period_end = _parse_date(_pick_mapped_value(raw, column_mapping, "billing_period_end"))
+        sku = str(_pick_mapped_value(raw, effective_mapping, "sku") or "").strip().lower()
+        unit_type = _normalize_unit_type(str(_pick_mapped_value(raw, effective_mapping, "unit_type") or ""))
+        usage_date = _parse_date(_pick_mapped_value(raw, effective_mapping, "usage_date"))
+        raw_period_start = _parse_date(_pick_mapped_value(raw, effective_mapping, "billing_period_start"))
+        raw_period_end = _parse_date(_pick_mapped_value(raw, effective_mapping, "billing_period_end"))
+        if raw_period_start is None and usage_date is not None:
+            raw_period_start = usage_date
+        if usage_date is None and raw_period_start is not None:
+            usage_date = raw_period_start
         row = CopilotBillingRow(
             row_number=index,
             sku=sku,
             unit_type=unit_type,
-            monthly_amount=_decimal(_pick_mapped_value(raw, column_mapping, "monthly_amount")),
-            net_amount=_decimal(_pick_mapped_value(raw, column_mapping, "net_amount")),
-            gross_amount=_decimal(_pick_mapped_value(raw, column_mapping, "gross_amount")),
-            quantity=int(_decimal(_pick_mapped_value(raw, column_mapping, "quantity"))),
+            monthly_amount=_decimal(_pick_mapped_value(raw, effective_mapping, "monthly_amount")),
+            net_amount=_decimal(_pick_mapped_value(raw, effective_mapping, "net_amount")),
+            gross_amount=_decimal(_pick_mapped_value(raw, effective_mapping, "gross_amount")),
+            quantity=int(_decimal(_pick_mapped_value(raw, effective_mapping, "quantity"))),
             billing_period_start=raw_period_start,
             billing_period_end=raw_period_end,
             usage_date=usage_date,
             user_login=(
-                str(_pick_mapped_value(raw, column_mapping, "user_login") or "").strip() or None
+                str(_pick_mapped_value(raw, effective_mapping, "user_login") or "").strip() or None
             ),
             raw_payload=dict(raw),
         )
@@ -268,7 +347,6 @@ def aggregate_copilot_billing(rows: list[CopilotBillingRow]) -> list[CopilotBill
             if row.unit_type in USER_MONTHS_UNIT_TYPES and row.quantity > 0:
                 seat_count = (seat_count or 0) + row.quantity
 
-        total = sum((row.gross_amount for row in bucket), Decimal("0"))
         aggregates.append(
             CopilotBillingAggregate(
                 sku=sku,
@@ -277,7 +355,11 @@ def aggregate_copilot_billing(rows: list[CopilotBillingRow]) -> list[CopilotBill
                 monthly_cost_limit=monthly_cost_limit,
                 additional_cost=additional_cost,
                 credits_cost=credits_cost,
-                total_cost=total,
+                total_cost=compute_copilot_billed_total(
+                    monthly_cost_limit=monthly_cost_limit,
+                    additional_cost=additional_cost,
+                    credits_cost=credits_cost,
+                ),
                 seat_count=seat_count,
                 row_count=len(bucket),
             )
@@ -323,8 +405,21 @@ def apply_configured_subscription(
     for aggregate in aggregates:
         if aggregate.sku == "copilot_for_business" and subscription > 0:
             aggregate.monthly_cost_limit = subscription
+            net_overage = compute_copilot_additional_cost(
+                aggregate.additional_cost,
+                subscription,
+            )
+            if net_overage > 0:
+                aggregate.additional_cost = net_overage
+            elif aggregate.credits_cost > 0 and aggregate.additional_cost <= 0:
+                aggregate.additional_cost = aggregate.credits_cost
+            else:
+                aggregate.additional_cost = net_overage
         else:
             aggregate.monthly_cost_limit = Decimal("0")
+            if aggregate.credits_cost > 0 and aggregate.additional_cost <= 0:
+                aggregate.additional_cost = aggregate.credits_cost
+        aggregate.total_cost = compute_aggregate_total_cost(aggregate)
 
 
 def summarize_aggregates(
@@ -332,6 +427,7 @@ def summarize_aggregates(
     *,
     configured_subscription: Decimal | None = None,
 ) -> dict[str, Any]:
+    apply_configured_subscription(aggregates, configured_subscription)
     additional_cost = sum((row.additional_cost for row in aggregates), Decimal("0"))
     credits_cost = sum((row.credits_cost for row in aggregates), Decimal("0"))
     monthly_cost_limit = configured_subscription or Decimal("0")

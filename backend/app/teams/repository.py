@@ -26,6 +26,21 @@ class TeamRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_for_organizations(
+        self,
+        organization_ids: list[UUID],
+        *,
+        active: bool | None = None,
+    ) -> list[Team]:
+        if not organization_ids:
+            return []
+        stmt = select(Team).where(Team.organization_id.in_(organization_ids))
+        if active is not None:
+            stmt = stmt.where(Team.active == active)
+        stmt = stmt.order_by(Team.organization_id.asc(), Team.name.asc())
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_by_id(self, team_id: UUID, organization_id: UUID) -> Team | None:
         result = await self._session.execute(
             select(Team).where(
@@ -33,6 +48,10 @@ class TeamRepository:
                 Team.organization_id == organization_id,
             )
         )
+        return result.scalar_one_or_none()
+
+    async def get_by_id_unscoped(self, team_id: UUID) -> Team | None:
+        result = await self._session.execute(select(Team).where(Team.id == team_id))
         return result.scalar_one_or_none()
 
     async def get_by_name(self, organization_id: UUID, name: str) -> Team | None:

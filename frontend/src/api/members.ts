@@ -33,12 +33,16 @@ export interface InviteMemberRequest {
   email: string;
   platformRole?: Role;
   roleId?: string;
+  password?: string;
   teamIds: string[];
+  organizationId?: string;
+  organizationName?: string;
 }
 
 export interface InviteMemberResult {
   member: Member;
   temporaryPassword: string | null;
+  organizationId: string;
 }
 
 export interface UpdateMemberRequest {
@@ -75,6 +79,7 @@ export async function inviteMember(body: InviteMemberRequest): Promise<InviteMem
   return {
     member: mapApiUser(created),
     temporaryPassword: created.temporary_password ?? null,
+    organizationId: created.organization_id,
   };
 }
 

@@ -92,6 +92,7 @@ class FigmaBillingInsightsResponse(BaseModel):
     has_import: bool = False
     has_config: bool = False
     imports_outside_filter: bool = False
+    subscription_start: date | None = None
     full_seat_cost_usd: Decimal | None = None
     view_seat_cost_usd: Decimal | None = None
     credits_per_usd: Decimal | None = None

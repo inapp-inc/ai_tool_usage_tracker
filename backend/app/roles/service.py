@@ -69,6 +69,11 @@ class RoleService:
         body: UpdateRoleRequest,
     ) -> RoleResponse:
         role = await self._require_role(organization_id, role_id)
+        if role.name == "super_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin role cannot be modified.",
+            )
         updates = body.model_fields_set
 
         if "name" in updates and body.name is not None and body.name.strip() != role.name:
@@ -94,6 +99,11 @@ class RoleService:
 
     async def delete_role(self, organization_id: UUID, role_id: UUID) -> None:
         role = await self._require_role(organization_id, role_id)
+        if role.name == "super_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin role cannot be deleted.",
+            )
         if role.is_system:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -129,6 +139,11 @@ class RoleService:
         items: list[PermissionMatrixItem],
     ) -> PermissionMatrixResponse:
         role = await self._require_role(organization_id, role_id)
+        if role.name == "super_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin role permissions cannot be modified.",
+            )
 
         seen: set[str] = set()
         payload: list[dict] = []

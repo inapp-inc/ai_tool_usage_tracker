@@ -43,7 +43,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("SUPER_ADMIN_EMAIL", "DEV_SUPER_ADMIN_EMAIL"),
     )
     super_admin_password: str = Field(
-        default="change_me_dev_only",
+        default="123456789",
         validation_alias=AliasChoices("SUPER_ADMIN_PASSWORD", "DEV_SUPER_ADMIN_PASSWORD"),
     )
     seed_super_admin_on_startup: bool = Field(
@@ -79,15 +79,15 @@ class Settings(BaseSettings):
         validation_alias="LOCAL_STORAGE_ROOT",
     )
     cursor_pull_dump_enabled: bool = Field(
-        default=True,
+        default=False,
         validation_alias="CURSOR_PULL_DUMP_ENABLED",
     )
     copilot_pull_dump_enabled: bool = Field(
-        default=True,
+        default=False,
         validation_alias="COPILOT_PULL_DUMP_ENABLED",
     )
     openai_pull_dump_enabled: bool = Field(
-        default=True,
+        default=False,
         validation_alias="OPENAI_PULL_DUMP_ENABLED",
     )
 

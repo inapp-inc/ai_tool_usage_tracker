@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 USER_ROLES = (
     "super_admin",
+    "org_admin",
     "team_admin",
     "finance_viewer",
     "team_member",

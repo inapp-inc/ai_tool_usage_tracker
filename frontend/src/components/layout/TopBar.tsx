@@ -2,16 +2,24 @@ import { IconChevronDown, IconLogout } from "@tabler/icons-react";
 import {
   AppBar,
   Box,
+  FormControl,
   Menu,
   MenuItem,
+  Select,
   Toolbar,
   Typography,
 } from "@mui/material";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useLocation } from "react-router-dom";
 
+import { fetchOrganizations } from "@/api/organizations";
 import { NotificationBell } from "./NotificationBell";
+import { PeriodSelector } from "@/components/inputs/PeriodSelector";
 import { useAuthStore } from "@/stores/authStore";
+import { useInsightsPeriodStore } from "@/stores/insightsPeriodStore";
+import { useOrgScopeStore } from "@/stores/orgScopeStore";
+import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 
 const ROUTE_TITLES: Record<string, string> = {
@@ -44,10 +52,32 @@ interface TopBarProps {
 export function TopBar({ height }: TopBarProps) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const location = useLocation();
+  const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.user);
   const clearAuth = useAuthStore((s) => s.clearAuth);
+  const isSuperAdmin = user?.platformRole === Role.SuperAdmin;
+  const selectedOrganizationId = useOrgScopeStore((s) => s.selectedOrganizationId);
+  const setSelectedOrganizationId = useOrgScopeStore((s) => s.setSelectedOrganizationId);
+
+  const organizationsQuery = useQuery({
+    queryKey: ["organizations"],
+    queryFn: fetchOrganizations,
+    enabled: isSuperAdmin,
+  });
 
   const title = resolveTitle(location.pathname);
+  const insightsPeriodActive = useInsightsPeriodStore((state) => state.active);
+  const insightsPeriod = useInsightsPeriodStore((state) => state.period);
+  const changeInsightsPeriod = useInsightsPeriodStore((state) => state.changePeriod);
+  const showInsightsPeriod = location.pathname === "/insights" && insightsPeriodActive;
+
+  const handleOrgScopeChange = (value: string) => {
+    setSelectedOrganizationId(value === "__all__" ? null : value);
+    void queryClient.invalidateQueries({ queryKey: ["teams"] });
+    void queryClient.invalidateQueries({ queryKey: ["tools"] });
+    void queryClient.invalidateQueries({ queryKey: ["members"] });
+    void queryClient.invalidateQueries({ queryKey: ["roles"] });
+  };
 
   const handleUserMenuOpen = (e: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(e.currentTarget);
@@ -97,8 +127,37 @@ export function TopBar({ height }: TopBarProps) {
           {title}
         </Typography>
 
-        {/* Period selector slot — injected by pages that need it */}
-        <Box id="topbar-period-slot" />
+        {/* Period selector — Insights page registers period state */}
+        <Box id="topbar-period-slot" sx={{ display: "flex", alignItems: "center" }}>
+          {showInsightsPeriod ? (
+            <PeriodSelector
+              variant="inline"
+              value={insightsPeriod}
+              onChange={changeInsightsPeriod}
+            />
+          ) : null}
+        </Box>
+
+        {isSuperAdmin ? (
+          <FormControl size="small" sx={{ minWidth: 200 }}>
+            <Select
+              value={selectedOrganizationId ?? "__all__"}
+              onChange={(event) => handleOrgScopeChange(event.target.value)}
+              displayEmpty
+              sx={{
+                fontSize: "0.8125rem",
+                "& .MuiSelect-select": { py: 0.75 },
+              }}
+            >
+              <MenuItem value="__all__">All organizations</MenuItem>
+              {(organizationsQuery.data ?? []).map((org) => (
+                <MenuItem key={org.id} value={org.id}>
+                  {org.name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        ) : null}
 
         {/* Notification bell */}
         <NotificationBell />
@@ -166,6 +225,11 @@ export function TopBar({ height }: TopBarProps) {
               <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
                 {user.email}
               </Typography>
+              {user.organizationName ? (
+                <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>
+                  {user.organizationName}
+                </Typography>
+              ) : null}
             </Box>
           )}
           <MenuItem

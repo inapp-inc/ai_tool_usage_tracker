@@ -3,6 +3,9 @@ import { create } from "zustand";
 import { fetchRolePermissions } from "@/api/roles";
 import { setRefreshToken } from "@/api/auth";
 import { setAccessToken } from "@/api/client";
+import { isOrgWideRole, isOrgWideRoleName } from "@/auth/orgWideRoles";
+import { resetTenantQueryCache } from "@/lib/queryClient";
+import { syncOrgScopeForUser } from "@/lib/tenantScope";
 import type { User } from "@/types";
 
 export interface PermissionEntry {
@@ -20,6 +23,7 @@ interface AuthState {
   clearAuth: () => void;
   loadPermissions: (roleId: string) => Promise<void>;
   canRead: (resource: string) => boolean;
+  canWrite: (resource: string) => boolean;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -29,11 +33,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   permissionMap: {},
   setAuth: (user, token) => {
     setAccessToken(token);
+    syncOrgScopeForUser(user);
+    resetTenantQueryCache();
     set({ user, accessToken: token, isAuthenticated: true });
   },
   clearAuth: () => {
     setAccessToken(null);
     setRefreshToken(null);
+    syncOrgScopeForUser(null);
+    resetTenantQueryCache();
     set({ user: null, accessToken: null, isAuthenticated: false, permissionMap: {} });
   },
   loadPermissions: async (roleId: string) => {
@@ -50,10 +58,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
   canRead: (resource: string) => {
     const state = get();
-    if (state.user?.platformRole === "super_admin") {
+    if (
+      isOrgWideRole(state.user?.platformRole) ||
+      isOrgWideRoleName(state.user?.roleName)
+    ) {
       return true;
     }
     const entry = state.permissionMap[resource];
     return Boolean(entry?.can_read || entry?.can_write);
+  },
+  canWrite: (resource: string) => {
+    const state = get();
+    if (
+      isOrgWideRole(state.user?.platformRole) ||
+      isOrgWideRoleName(state.user?.roleName)
+    ) {
+      return true;
+    }
+    const entry = state.permissionMap[resource];
+    return Boolean(entry?.can_write);
   },
 }));

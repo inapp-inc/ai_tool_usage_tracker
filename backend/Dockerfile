@@ -20,7 +20,8 @@ COPY alembic.ini .
 COPY alembic ./alembic
 COPY app ./app
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+# Strip Windows CRLF so the shebang works in Linux containers.
+RUN sed -i 's/\r$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
 
 EXPOSE 8000
 

@@ -9,7 +9,7 @@ import {
   type ApiUploadPreview,
 } from "./adapters/uploads";
 
-export type UploadFormat = "csv" | "json";
+export type UploadFormat = "csv" | "json" | "xlsx";
 
 export type UploadStatus =
   | "pending"

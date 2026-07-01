@@ -15,22 +15,46 @@ export interface PermissionRow {
   team_scoped: boolean;
 }
 
-export async function fetchRoles(): Promise<RoleRecord[]> {
-  return apiRequest<RoleRecord[]>("/roles");
+export async function fetchRoles(organizationId?: string | null): Promise<RoleRecord[]> {
+  const query =
+    organizationId != null && organizationId !== ""
+      ? `?organization_id=${encodeURIComponent(organizationId)}`
+      : "";
+  const response = await apiRequest<{ data: RoleRecord[] } | RoleRecord[]>(
+    `/roles${query}`,
+  );
+  return Array.isArray(response) ? response : response.data;
+}
+
+export interface PermissionMatrixResponse {
+  data: PermissionRow[];
+}
+
+function unwrapPermissionRows(
+  response: PermissionRow[] | PermissionMatrixResponse,
+): PermissionRow[] {
+  return Array.isArray(response) ? response : response.data;
 }
 
 export async function fetchRolePermissions(roleId: string): Promise<PermissionRow[]> {
-  return apiRequest<PermissionRow[]>(`/roles/${roleId}/permissions`);
+  const response = await apiRequest<PermissionRow[] | PermissionMatrixResponse>(
+    `/roles/${roleId}/permissions`,
+  );
+  return unwrapPermissionRows(response);
 }
 
 export async function updateRolePermissions(
   roleId: string,
   permissions: PermissionRow[],
 ): Promise<PermissionRow[]> {
-  return apiRequest<PermissionRow[]>(`/roles/${roleId}/permissions`, {
-    method: "PUT",
-    body: JSON.stringify({ permissions }),
-  });
+  const response = await apiRequest<PermissionRow[] | PermissionMatrixResponse>(
+    `/roles/${roleId}/permissions`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ permissions }),
+    },
+  );
+  return unwrapPermissionRows(response);
 }
 
 export async function createRole(

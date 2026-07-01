@@ -9,10 +9,17 @@ from decimal import Decimal
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.billing.subscription_period import (
+    effective_subscription_query_range,
+    subscription_period_for_date,
+)
 from app.figma.pricing import (
+    FigmaImportPeriodSlice,
+    figma_billing_cycle_key,
     figma_configured_subscription,
     figma_paid_credit_cost,
     figma_pricing_from_assignment,
+    figma_split_costs_from_import_slices,
 )
 from app.figma.schemas import (
     FigmaBillingCostTrendPoint,
@@ -52,7 +59,20 @@ class FigmaAnalyticsService:
         assignment = await self._team_figma_assignment(team_id, tool_id=tool_id)
         pricing = figma_pricing_from_assignment(assignment)
         configured = self._configured_pricing(pricing, assignment)
+        subscription_start = assignment.subscription_start if assignment else None
+        effective_from, effective_to = effective_subscription_query_range(
+            subscription_start,
+            from_date,
+            to_date,
+        )
 
+        filtered_rows = await self._billing_import_rows(
+            team_id,
+            tool_id,
+            from_date,
+            to_date,
+            apply_date_filter=True,
+        )
         all_rows = await self._billing_import_rows(
             team_id,
             tool_id,
@@ -60,53 +80,15 @@ class FigmaAnalyticsService:
             to_date,
             apply_date_filter=False,
         )
-        available_periods = [
-            FigmaBillingPeriodOption(
-                import_id=str(billing_import.id),
-                usage_period_start=billing_import.usage_period_start,
-                usage_period_end=billing_import.usage_period_end,
-                upload_filename=upload.filename if upload else None,
-            )
-            for billing_import, upload in all_rows
-        ]
-
-        active_import_id = billing_import_id
-        active_start = billing_period_start
-        active_end = billing_period_end
-        if active_import_id is not None:
-            selected = next(
-                (
-                    (billing_import, upload)
-                    for billing_import, upload in all_rows
-                    if billing_import.id == active_import_id
-                ),
-                None,
-            )
-            if selected is not None:
-                active_start = selected[0].usage_period_start
-                active_end = selected[0].usage_period_end
-        elif active_start is None or active_end is None:
-            if available_periods:
-                active_start = available_periods[0].usage_period_start
-                active_end = available_periods[0].usage_period_end
-                active_import_id = uuid.UUID(available_periods[0].import_id)
-
-        if active_import_id is not None:
-            rows = [
-                (billing_import, upload)
-                for billing_import, upload in all_rows
-                if billing_import.id == active_import_id
-            ]
-        elif active_start is not None and active_end is not None:
-            rows = [
-                (billing_import, upload)
-                for billing_import, upload in all_rows
-                if billing_import.usage_period_start == active_start
-                and billing_import.usage_period_end == active_end
-            ]
-        else:
-            rows = []
         imports_outside_filter = False
+        pool_rows = filtered_rows
+        if not pool_rows:
+            pool_rows = all_rows
+            imports_outside_filter = bool(all_rows)
+
+        rows = self._dedupe_imports_by_period(pool_rows)
+        active_start = effective_from
+        active_end = effective_to
 
         import_ids = [billing_import.id for billing_import, _upload in rows]
         users_by_import = await self._users_for_imports(import_ids)
@@ -139,40 +121,69 @@ class FigmaAnalyticsService:
                 }
             )
 
-        configured_seat_cost = None
-        if pricing.full_seat_cost_usd is not None or pricing.view_seat_cost_usd is not None:
-            sub = figma_configured_subscription(
-                pricing,
-                full_seat_count=full_seat_count,
-                view_seat_count=view_seat_count,
-            )
-            if sub > 0:
-                configured_seat_cost = sub
-
         usd_per_credit = pricing.credits_per_usd
-        import_paid_cost = figma_paid_credit_cost(total_paid_credits, usd_per_credit)
-        display_seat_cost = configured_seat_cost or Decimal("0")
-        display_total = display_seat_cost + import_paid_cost
+
+        import_slices = [
+            FigmaImportPeriodSlice(
+                usage_period_start=stub["billing_import"].usage_period_start,
+                usage_period_end=stub["billing_import"].usage_period_end,
+                full_seat_count=stub["billing_import"].full_seat_count,
+                view_seat_count=stub["billing_import"].view_seat_count,
+                paid_cost_usd=figma_paid_credit_cost(stub["period_paid_credits"], usd_per_credit),
+                paid_credits=stub["period_paid_credits"],
+            )
+            for stub in period_stubs
+        ]
+        has_seat_pricing = (
+            pricing.full_seat_cost_usd is not None or pricing.view_seat_cost_usd is not None
+        )
+        static_subscription = (
+            figma_configured_subscription(pricing) if has_seat_pricing else Decimal("0")
+        )
+        _import_subscription, import_paid_cost, merged_slices = figma_split_costs_from_import_slices(
+            import_slices,
+            pricing,
+            subscription_start,
+        )
+        configured_seat_cost = static_subscription if static_subscription > 0 else None
+        display_seat_cost = static_subscription
+        display_total = static_subscription + import_paid_cost
 
         periods: list[FigmaBillingPeriodRow] = []
+        stub_by_cycle: dict[tuple[date, date], dict] = {}
         for stub in period_stubs:
             billing_import = stub["billing_import"]
-            upload = stub["upload"]
-            period_paid_credits = stub["period_paid_credits"]
-            period_paid_cost = figma_paid_credit_cost(period_paid_credits, usd_per_credit)
+            cycle_key = figma_billing_cycle_key(
+                subscription_start,
+                billing_import.usage_period_start,
+                billing_import.usage_period_end,
+            )
+            if cycle_key is None:
+                continue
+            current = stub_by_cycle.get(cycle_key)
+            if current is None or billing_import.imported_at > current["billing_import"].imported_at:
+                stub_by_cycle[cycle_key] = stub
+
+        for slice_ in merged_slices:
+            cycle_key = (slice_.usage_period_start, slice_.usage_period_end)
+            stub = stub_by_cycle.get(cycle_key, {})
+            billing_import = stub.get("billing_import")
+            upload = stub.get("upload")
+            period_subscription = static_subscription if has_seat_pricing else Decimal("0")
+            period_paid_cost = slice_.paid_cost_usd
             periods.append(
                 FigmaBillingPeriodRow(
-                    usage_period_start=billing_import.usage_period_start,
-                    usage_period_end=billing_import.usage_period_end,
-                    seat_cost=display_seat_cost,
+                    usage_period_start=slice_.usage_period_start,
+                    usage_period_end=slice_.usage_period_end,
+                    seat_cost=period_subscription,
                     paid_cost=period_paid_cost,
-                    total_cost=display_seat_cost + period_paid_cost,
-                    paid_credits_used=period_paid_credits,
-                    full_seat_count=billing_import.full_seat_count,
-                    view_seat_count=billing_import.view_seat_count,
-                    user_count=billing_import.user_count,
+                    total_cost=period_subscription + period_paid_cost,
+                    paid_credits_used=slice_.paid_credits,
+                    full_seat_count=slice_.full_seat_count,
+                    view_seat_count=slice_.view_seat_count,
+                    user_count=billing_import.user_count if billing_import else 0,
                     upload_filename=upload.filename if upload else None,
-                    imported_at=billing_import.imported_at,
+                    imported_at=billing_import.imported_at if billing_import else None,
                 )
             )
 
@@ -187,16 +198,22 @@ class FigmaAnalyticsService:
             and display_total >= alert_threshold_usd
         )
 
-        trend_from = active_start or from_date
-        trend_to = active_end or to_date
+        trend_from = max(effective_from, active_start) if active_start else effective_from
+        trend_to = min(effective_to, active_end) if active_end else effective_to
         if periods:
             period_starts = [row.usage_period_start for row in periods if row.usage_period_start]
             period_ends = [row.usage_period_end for row in periods if row.usage_period_end]
             if period_starts and period_ends:
-                trend_from = min(period_starts)
-                trend_to = max(period_ends)
+                trend_from = max(effective_from, min(period_starts))
+                trend_to = min(effective_to, max(period_ends))
 
-        cost_trend = self._billing_cost_trend(periods, from_date=trend_from, to_date=trend_to)
+        cost_trend = self._billing_cost_trend_from_users(
+            periods,
+            users_by_import,
+            usd_per_credit=usd_per_credit,
+            from_date=trend_from,
+            to_date=trend_to,
+        )
         top_users = self._top_users(
             users_by_import,
             total_cost=display_total,
@@ -222,6 +239,7 @@ class FigmaAnalyticsService:
             alert_threshold_usd=alert_threshold_usd,
             budget_alert_triggered=budget_alert_triggered,
             imports_outside_filter=imports_outside_filter,
+            subscription_start=subscription_start,
         )
 
         return FigmaBillingInsightsResponse(
@@ -236,13 +254,14 @@ class FigmaAnalyticsService:
                 or pricing.configured_seat_count is not None
             ),
             imports_outside_filter=imports_outside_filter,
+            subscription_start=subscription_start,
             full_seat_cost_usd=configured[0],
             view_seat_cost_usd=configured[1],
             credits_per_usd=configured[2],
             configured_seat_cost=configured_seat_cost,
-            seat_cost=display_seat_cost if periods or configured_seat_cost else None,
+            seat_cost=display_seat_cost if display_seat_cost > 0 or periods else None,
             paid_cost=import_paid_cost if periods else None,
-            total_cost=display_total if periods or configured_seat_cost else None,
+            total_cost=display_total if display_seat_cost > 0 or periods else None,
             monthly_budget=monthly_budget,
             alert_threshold_usd=alert_threshold_usd,
             budget_remaining=budget_remaining,
@@ -254,7 +273,7 @@ class FigmaAnalyticsService:
                 total_seat_credits_used=total_seat_credits,
                 total_paid_credits_used=total_paid_credits,
             ),
-            available_periods=available_periods,
+            available_periods=[],
             active_billing_period_start=active_start,
             active_billing_period_end=active_end,
             periods=periods,
@@ -334,6 +353,23 @@ class FigmaAnalyticsService:
             on_date,
             apply_date_filter=True,
         )
+        if not rows:
+            rows = await self._billing_import_rows(
+                team_id,
+                tool_id,
+                on_date,
+                on_date,
+                apply_date_filter=False,
+            )
+        subscription_start = assignment.subscription_start if assignment else None
+        if subscription_start is not None:
+            period_start, period_end = subscription_period_for_date(subscription_start, on_date)
+            rows = [
+                (billing_import, upload)
+                for billing_import, upload in rows
+                if billing_import.usage_period_start == period_start
+                and billing_import.usage_period_end == period_end
+            ]
         import_ids = [billing_import.id for billing_import, _upload in rows]
         users_by_import = await self._users_for_imports(import_ids)
         users: list[FigmaBillingPeriodUser] = []
@@ -375,6 +411,23 @@ class FigmaAnalyticsService:
             total_paid_cost=total_paid,
             total_seat_cost=Decimal("0"),
             users=users,
+        )
+
+    def _dedupe_imports_by_period(
+        self,
+        rows: list[tuple[FigmaBillingImport, Upload | None]],
+    ) -> list[tuple[FigmaBillingImport, Upload | None]]:
+        """Keep the newest import per usage period."""
+        best: dict[tuple[date | None, date | None], tuple[FigmaBillingImport, Upload | None]] = {}
+        for billing_import, upload in rows:
+            key = (billing_import.usage_period_start, billing_import.usage_period_end)
+            current = best.get(key)
+            if current is None or billing_import.imported_at > current[0].imported_at:
+                best[key] = (billing_import, upload)
+        return sorted(
+            best.values(),
+            key=lambda row: row[0].usage_period_start or date.min,
+            reverse=True,
         )
 
     async def _team_figma_assignment(
@@ -448,6 +501,59 @@ class FigmaAnalyticsService:
             pricing.view_seat_cost_usd,
             pricing.credits_per_usd,
         )
+
+    def _billing_cost_trend_from_users(
+        self,
+        periods: list[FigmaBillingPeriodRow],
+        users_by_import: dict[uuid.UUID, list[FigmaBillingImportUser]],
+        *,
+        usd_per_credit: Decimal | None,
+        from_date: date,
+        to_date: date,
+    ) -> list[FigmaBillingCostTrendPoint]:
+        """Daily cumulative cost from subscription (period start) + paid credit activity."""
+        if from_date > to_date:
+            return []
+
+        daily_increment: dict[date, Decimal] = {}
+        for period in periods:
+            start = period.usage_period_start
+            if start is None:
+                continue
+            if from_date <= start <= to_date and period.seat_cost > 0:
+                daily_increment[start] = daily_increment.get(start, Decimal("0")) + period.seat_cost
+
+        for rows in users_by_import.values():
+            for row in rows:
+                activity = row.last_activity_at.date() if row.last_activity_at else None
+                if activity is None or activity < from_date or activity > to_date:
+                    continue
+                paid = figma_paid_credit_cost(row.paid_credits_used, usd_per_credit)
+                if paid <= 0:
+                    continue
+                daily_increment[activity] = daily_increment.get(activity, Decimal("0")) + paid
+
+        if not daily_increment and not periods:
+            return self._billing_cost_trend(periods, from_date=from_date, to_date=to_date)
+
+        points: list[FigmaBillingCostTrendPoint] = []
+        cumulative = Decimal("0")
+        current = from_date
+        while current <= to_date:
+            day_cost = daily_increment.get(current, Decimal("0"))
+            cumulative += day_cost
+            points.append(
+                FigmaBillingCostTrendPoint(
+                    label=current.strftime("%b %d, %Y"),
+                    iso_date=current.isoformat(),
+                    cost=cumulative,
+                    daily_cost=day_cost,
+                    usage_period_start=current,
+                    usage_period_end=current,
+                )
+            )
+            current += timedelta(days=1)
+        return points
 
     def _billing_cost_trend(
         self,
@@ -548,6 +654,7 @@ class FigmaAnalyticsService:
         alert_threshold_usd: Decimal | None,
         budget_alert_triggered: bool,
         imports_outside_filter: bool,
+        subscription_start: date | None = None,
     ) -> list[FigmaInsight]:
         insights: list[FigmaInsight] = []
         if not has_config:
@@ -573,6 +680,19 @@ class FigmaAnalyticsService:
                     severity="warning",
                     title="Imports outside date filter",
                     message="Showing imported billing data outside the selected date range.",
+                )
+            )
+        if subscription_start is not None:
+            insights.append(
+                FigmaInsight(
+                    severity="info",
+                    title="Subscription billing cycle",
+                    message=(
+                        f"Usage periods align to subscription start "
+                        f"({subscription_start.isoformat()}): each cycle runs from the "
+                        f"{subscription_start.day}{self._ordinal_suffix(subscription_start.day)} "
+                        f"of one month through the day before the next cycle."
+                    ),
                 )
             )
         insights.append(
@@ -630,3 +750,9 @@ class FigmaAnalyticsService:
                 )
             )
         return insights
+
+    @staticmethod
+    def _ordinal_suffix(day: int) -> str:
+        if 11 <= day % 100 <= 13:
+            return "th"
+        return {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")

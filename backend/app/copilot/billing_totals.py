@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.copilot.billing_import import (
     AI_CREDITS_UNIT_TYPES,
     USER_MONTHS_UNIT_TYPES,
+    compute_copilot_billed_total,
+    compute_copilot_cost_split,
     extract_row_amounts,
 )
 from app.copilot.billing_period import resolve_billing_period
@@ -208,3 +210,27 @@ async def totals_from_upload_ids(
     upload_ids: list[UUID],
 ) -> CopilotBillingParsedTotals:
     return totals_from_mapped_rows(await load_parsed_rows_for_uploads(session, upload_ids))
+
+
+def compute_copilot_billed_total_from_parsed(
+    parsed: CopilotBillingParsedTotals,
+    configured_subscription: Decimal | None,
+) -> Decimal:
+    """Subscription limit + additional net spend beyond subscription."""
+    _, _, total = compute_copilot_cost_split(
+        parsed.net_total,
+        configured_subscription,
+        credits_gross=parsed.credits_gross,
+    )
+    return total
+
+
+def compute_copilot_billed_split_from_parsed(
+    parsed: CopilotBillingParsedTotals,
+    configured_subscription: Decimal | None,
+) -> tuple[Decimal, Decimal, Decimal]:
+    return compute_copilot_cost_split(
+        parsed.net_total,
+        configured_subscription,
+        credits_gross=parsed.credits_gross,
+    )

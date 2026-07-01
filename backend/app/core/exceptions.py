@@ -3,6 +3,7 @@
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR
@@ -57,7 +58,11 @@ def problem_response(
         body["detail"] = detail
     if extra:
         body.update(extra)
-    return JSONResponse(status_code=status, content=body, media_type="application/problem+json")
+    return JSONResponse(
+        status_code=status,
+        content=jsonable_encoder(body),
+        media_type="application/problem+json",
+    )
 
 
 def register_exception_handlers(app: FastAPI) -> None:

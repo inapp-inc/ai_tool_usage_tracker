@@ -10,12 +10,13 @@ COPY . .
 
 ARG VITE_API_BASE_URL=/aitool/api/v1
 ARG VITE_BASE_PATH=/aitool/
+ARG CACHEBUST=0
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
     VITE_BASE_PATH=$VITE_BASE_PATH \
     NODE_OPTIONS="--max-old-space-size=1536" \
     CI=true
 
-RUN npm run build
+RUN echo "frontend build cachebust=$CACHEBUST" && npm run build
 
 FROM nginx:1.27-alpine AS runtime
 

@@ -4,13 +4,13 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import ORG_ADMIN_NOTIFY_ROLES, ORG_WIDE_ROLE_NAMES
 from app.models.notifications import Threshold, ThresholdEvent
 from app.notifications.repository import NotificationRepository
 from app.teams.membership_repository import TeamMembershipRepository
 from app.users.repository import UserAdminRepository
 
-ADMIN_ROLES = frozenset({"super_admin", "team_admin"})
-
+ADMIN_ROLES = ORG_ADMIN_NOTIFY_ROLES
 
 async def resolve_recipient_user_ids(
     session: AsyncSession,
@@ -31,8 +31,8 @@ async def resolve_recipient_user_ids(
             for row in await memberships.list_active_for_team(threshold.team_id)
         }
         scoped = [user for user in admins if user.id in member_user_ids]
-        super_admins = [user for user in admins if user.role_name == "super_admin"]
-        recipient_ids = {user.id for user in super_admins + scoped}
+        org_wide_admins = [user for user in admins if user.role_name in ORG_WIDE_ROLE_NAMES]
+        recipient_ids = {user.id for user in org_wide_admins + scoped}
         return list(recipient_ids)
 
     return [user.id for user in admins]

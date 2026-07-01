@@ -12,7 +12,6 @@ from app.copilot.router import router as copilot_router
 from app.figma.router import router as figma_router
 from app.credentials.router import router as credentials_router
 from app.dashboard.router import router as dashboard_router
-from app.files.router import router as files_router
 from app.members.router import router as members_router
 from app.teams.router import router as teams_router
 from app.reports.router import router as reports_router
@@ -24,6 +23,7 @@ from app.tools.router import router as tools_router
 from app.uploads.router import router as uploads_router
 from app.usage.router import router as usage_router
 from app.users.router import router as users_router
+from app.organizations.router import router as organizations_router
 
 router = APIRouter()
 
@@ -33,13 +33,13 @@ router.include_router(collectors_router)
 router.include_router(teams_router)
 router.include_router(tools_router)
 router.include_router(users_router)
+router.include_router(organizations_router)
 router.include_router(members_router)
 router.include_router(credentials_router)
 router.include_router(copilot_router)
 router.include_router(figma_router)
 router.include_router(settings_router)
 router.include_router(dashboard_router)
-router.include_router(files_router)
 router.include_router(thresholds_router)
 router.include_router(notifications_router)
 router.include_router(reports_router)

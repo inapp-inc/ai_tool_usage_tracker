@@ -20,7 +20,7 @@ class UserRepository:
         normalized = email.strip().lower()
         result = await self._session.execute(
             select(User)
-            .options(selectinload(User.role_ref))
+            .options(selectinload(User.role_ref), selectinload(User.organization))
             .where(User.email == normalized)
         )
         return result.scalar_one_or_none()
@@ -28,7 +28,7 @@ class UserRepository:
     async def get_by_id(self, user_id: UUID) -> User | None:
         result = await self._session.execute(
             select(User)
-            .options(selectinload(User.role_ref))
+            .options(selectinload(User.role_ref), selectinload(User.organization))
             .where(User.id == user_id)
         )
         return result.scalar_one_or_none()
@@ -41,7 +41,7 @@ class UserRepository:
         result = await self._session.execute(
             select(User)
             .join(Role, User.role_id == Role.id)
-            .options(selectinload(User.role_ref))
+            .options(selectinload(User.role_ref), selectinload(User.organization))
             .where(Role.name == "super_admin")
             .limit(1)
         )
@@ -79,7 +79,10 @@ class UserRepository:
         )
         self._session.add(user)
         await self._session.flush()
-        return user
+        loaded = await self.get_by_id(user.id)
+        if loaded is None:
+            raise RuntimeError(f"Failed to reload user {user.id} after create")
+        return loaded
 
     async def update_last_login(self, user: User) -> None:
         user.last_login_at = datetime.now(UTC)
@@ -111,6 +114,24 @@ class OrganizationRepository:
     async def get_first(self) -> Organization | None:
         result = await self._session.execute(select(Organization).limit(1))
         return result.scalar_one_or_none()
+
+    async def get_by_id(self, organization_id: UUID) -> Organization | None:
+        result = await self._session.execute(
+            select(Organization).where(Organization.id == organization_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_slug(self, slug: str) -> Organization | None:
+        result = await self._session.execute(
+            select(Organization).where(Organization.slug == slug)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_all(self) -> list[Organization]:
+        result = await self._session.execute(
+            select(Organization).order_by(Organization.name.asc())
+        )
+        return list(result.scalars().all())
 
     async def create(self, *, name: str, slug: str) -> Organization:
         org = Organization(name=name, slug=slug)

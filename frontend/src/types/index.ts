@@ -1,6 +1,7 @@
 // Roles
 export enum Role {
   SuperAdmin = "super_admin",
+  OrgAdmin = "org_admin",
   TeamAdmin = "team_admin",
   FinanceViewer = "finance_viewer",
   TeamMember = "team_member",
@@ -15,6 +16,8 @@ export interface User {
   platformRole: Role;
   roleId?: string | null;
   roleName?: string | null;
+  organizationId?: string | null;
+  organizationName?: string | null;
   teamMemberships: TeamMembership[];
 }
 

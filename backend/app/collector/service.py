@@ -6,7 +6,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,7 +34,7 @@ from app.tools.catalogue import catalogue_tool_id_from_connected, team_id_from_c
 
 logger = logging.getLogger(__name__)
 
-SYNC_LOOKBACK_DAYS = 30
+from app.collector.sync_since import resolve_usage_sync_since
 
 
 def _to_collector_response(config: CollectorConfig) -> CollectorResponse:
@@ -426,11 +426,14 @@ class CollectorService:
         vendor_ids = [record.vendor_event_id for record in records if record.vendor_event_id]
         existing_ids: set[str] = set()
         if vendor_ids:
+            duplicate_conditions = [
+                UsageEvent.provider == config.provider,
+                UsageEvent.vendor_event_id.in_(vendor_ids),
+            ]
+            if team_id is not None:
+                duplicate_conditions.append(UsageEvent.team_id == team_id)
             result = await self._session.execute(
-                select(UsageEvent.vendor_event_id).where(
-                    UsageEvent.provider == config.provider,
-                    UsageEvent.vendor_event_id.in_(vendor_ids),
-                )
+                select(UsageEvent.vendor_event_id).where(*duplicate_conditions)
             )
             existing_ids = {row for row in result.scalars().all() if row}
 
@@ -469,8 +472,11 @@ class CollectorService:
                     user_name=getattr(record, "user_name", None),
                 )
                 .on_conflict_do_nothing(
-                    index_elements=["provider", "vendor_event_id"],
-                    index_where=UsageEvent.vendor_event_id.is_not(None),
+                    index_elements=["provider", "vendor_event_id", "team_id"],
+                    index_where=and_(
+                        UsageEvent.vendor_event_id.is_not(None),
+                        UsageEvent.team_id.is_not(None),
+                    ),
                 )
             )
             result = await self._session.execute(stmt)
@@ -491,36 +497,19 @@ class CollectorService:
         return tool.organization_id if tool is not None else None
 
     async def _resolve_pull_since(self, config: CollectorConfig, until: datetime) -> datetime:
-        """First pull uses lookback window; later pulls overlap from last stored event."""
-        lookback_start = until - timedelta(days=SYNC_LOOKBACK_DAYS)
-        interval_start = until - timedelta(minutes=config.pull_interval_minutes)
+        """First pull from billing/subscription start; later pulls overlap last event."""
         if config.tool_id is None:
-            return max(lookback_start, interval_start)
+            from app.collector.sync_since import SYNC_LOOKBACK_DAYS
+
+            return until - timedelta(days=SYNC_LOOKBACK_DAYS)
 
         tool = await self._session.get(Tool, config.tool_id)
         if tool is None:
-            return max(lookback_start, interval_start)
+            from app.collector.sync_since import SYNC_LOOKBACK_DAYS
 
-        tool_ids = {tool.id}
-        catalogue_id = catalogue_tool_id_from_connected(tool)
-        if catalogue_id is not None:
-            tool_ids.add(catalogue_id)
+            return until - timedelta(days=SYNC_LOOKBACK_DAYS)
 
-        result = await self._session.execute(
-            select(func.max(UsageEvent.occurred_at)).where(
-                UsageEvent.provider == config.provider,
-                UsageEvent.tool_id.in_(tool_ids),
-            )
-        )
-        latest = result.scalar_one_or_none()
-        if latest is None:
-            return lookback_start
-
-        overlap = timedelta(hours=1)
-        incremental_since = latest - overlap
-        if incremental_since.tzinfo is None:
-            incremental_since = incremental_since.replace(tzinfo=UTC)
-        return max(incremental_since, lookback_start)
+        return await resolve_usage_sync_since(self._session, tool, until)
 
     async def _resolve_team_id_for_tool(self, tool: Tool) -> UUID | None:
         team_id = team_id_from_connected(tool)

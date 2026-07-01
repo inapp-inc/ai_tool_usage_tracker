@@ -11,12 +11,15 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.core.permissions import ORG_UPLOAD_ROLES
 from app.copilot.billing_import import (
     COPILOT_MAPPING_FIELD_LABELS,
+    copilot_auto_column_mapping,
     parse_copilot_billing_csv,
     suggest_copilot_column_mapping,
     summarize_aggregates,
 )
+from app.copilot.billing_spreadsheet import xlsx_to_csv_text
 from app.copilot.billing_import_service import CopilotBillingImportService
 from app.figma.billing_import import (
     FIGMA_MAPPING_FIELD_LABELS,
@@ -58,8 +61,6 @@ from app.uploads.schemas import (
 from app.users.repository import UserAdminRepository
 
 MAX_UPLOAD_BYTES = 52_428_800
-ADMIN_ROLES = frozenset({"super_admin", "team_admin"})
-
 
 class UploadService:
     def __init__(self, session: AsyncSession) -> None:
@@ -111,7 +112,7 @@ class UploadService:
         team_id: UUID | None,
         tool_id: UUID | None = None,
     ) -> UploadCreateResponse:
-        if user.role not in ADMIN_ROLES:
+        if user.role_name not in ORG_UPLOAD_ROLES:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions.")
 
         if team_id is not None:
@@ -143,7 +144,25 @@ class UploadService:
         if not content:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is empty.")
 
-        detected_format = "json" if filename.lower().endswith(".json") else "csv"
+        lower_name = filename.lower()
+        is_copilot_upload = resolved_tool is not None and resolved_tool.vendor == "copilot"
+        if lower_name.endswith(".json"):
+            detected_format = "json"
+        elif lower_name.endswith((".xlsx", ".xlsm")):
+            detected_format = "xlsx"
+        else:
+            detected_format = "csv"
+
+        if is_copilot_upload and detected_format in {"csv", "xlsx"}:
+            return await self._create_copilot_billing_upload(
+                user=user,
+                file_content=content,
+                filename=filename,
+                detected_format=detected_format,
+                team_id=team_id,
+                resolved_tool=resolved_tool,
+            )
+
         upload = Upload(
             organization_id=user.organization_id,
             team_id=team_id,
@@ -274,6 +293,111 @@ class UploadService:
             upload=response,
         )
 
+    async def _create_copilot_billing_upload(
+        self,
+        user: User,
+        *,
+        file_content: bytes,
+        filename: str,
+        detected_format: str,
+        team_id: UUID | None,
+        resolved_tool: Tool,
+    ) -> UploadCreateResponse:
+        text, headers, header_error = self._copilot_upload_text(file_content, filename)
+        if header_error:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=header_error)
+
+        mapping = copilot_auto_column_mapping(headers)
+        upload = Upload(
+            organization_id=user.organization_id,
+            team_id=team_id,
+            tool_id=resolved_tool.id,
+            uploaded_by=user.id,
+            filename=filename,
+            content_type=None,
+            size_bytes=len(file_content),
+            storage_key="",
+            status="parsing",
+            detected_format=detected_format,
+            detected_headers=headers,
+            column_mapping=mapping,
+        )
+        await self._uploads.create(upload)
+        storage_key = await self._persist_file(
+            user.organization_id,
+            upload.id,
+            filename,
+            file_content,
+        )
+        upload.storage_key = storage_key
+
+        users_by_login: dict[str, UUID] = {}
+        if team_id is not None:
+            from app.copilot.user_matching import build_team_copilot_user_lookup
+
+            users_by_login = await build_team_copilot_user_lookup(
+                self._session,
+                organization_id=user.organization_id,
+                team_id=team_id,
+            )
+
+        parsed_rows, _, error_message = self._parse_copilot_rows(
+            text,
+            mapping,
+            organization_id=user.organization_id,
+            upload_id=upload.id,
+            team_id=team_id,
+            users_by_login=users_by_login,
+        )
+        if error_message:
+            upload.status = "failed"
+            upload.error_message = error_message
+            await self._session.commit()
+            await self._session.refresh(upload)
+            response = self._to_upload_response(
+                upload,
+                team_name=await self._resolve_team_name(user.organization_id, team_id),
+                uploaded_by_name=self._display_name(user),
+            )
+            return UploadCreateResponse(
+                upload_id=upload.id,
+                status=upload.status,  # type: ignore[arg-type]
+                filename=upload.filename,
+                size_bytes=upload.size_bytes,
+                upload=response,
+            )
+
+        await self._uploads.add_parsed_rows(parsed_rows)
+        upload.status = "preview_ready"
+        upload.total_rows = len(parsed_rows)
+        upload.matched_rows = len(parsed_rows)
+        upload.unmatched_rows = 0
+        upload.error_message = None
+        await self._session.commit()
+        await self._session.refresh(upload)
+
+        response = self._to_upload_response(
+            upload,
+            team_name=await self._resolve_team_name(user.organization_id, team_id),
+            uploaded_by_name=self._display_name(user),
+        )
+        return UploadCreateResponse(
+            upload_id=upload.id,
+            status=upload.status,  # type: ignore[arg-type]
+            filename=upload.filename,
+            size_bytes=upload.size_bytes,
+            upload=response,
+        )
+
+    @staticmethod
+    def _copilot_upload_text(content: bytes, filename: str) -> tuple[str, list[str], str | None]:
+        lower_name = filename.lower()
+        if lower_name.endswith((".xlsx", ".xlsm")):
+            return xlsx_to_csv_text(content)
+        text = content.decode("utf-8-sig", errors="replace")
+        headers, header_error = extract_csv_headers(text)
+        return text, headers, header_error
+
     async def get_mapping(
         self,
         organization_id: UUID,
@@ -325,7 +449,7 @@ class UploadService:
             UploadMappingField(
                 key=key,
                 label=label,
-                required=is_copilot and key in {"sku", "unit_type"},
+                required=False,
             )
             for key, label in field_labels.items()
         ]

@@ -6,6 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.org_scope import get_operating_org_scope, OperatingOrgScope
 from app.core.permissions import get_scoped_team_ids_for, require_permission
 from app.db.session import get_session
 from app.members.schemas import MemberListResponse, MembersView
@@ -24,11 +25,12 @@ async def list_members(
     view: Literal["all", "invited"] = Query(default="all"),
     current_user: User = Depends(require_permission("members", "read")),
     managed_team_ids: list[uuid.UUID] = Depends(get_scoped_team_ids_for("members")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: MembersService = Depends(get_members_service),
 ) -> MemberListResponse:
     resolved: MembersView = view if view in ("all", "invited") else "all"
-    return await service.list_members(
-        current_user.organization_id,
+    return await service.list_members_for_scope(
+        scope,
         view=resolved,
         managed_team_ids=managed_team_ids if managed_team_ids else None,
     )

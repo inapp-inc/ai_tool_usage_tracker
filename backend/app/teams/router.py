@@ -10,7 +10,8 @@ from app.audit.router import get_audit_recorder, record_audit_event
 from app.audit.recorder import AuditRecorder
 
 from app.auth.dependencies import get_current_user
-from app.core.permissions import require_permission
+from app.core.org_scope import get_operating_org_scope, OperatingOrgScope
+from app.core.permissions import ORG_WIDE_ROLE_NAMES, PermissionCache, require_permission
 from app.db.session import get_session
 from app.models.auth import User
 from app.teams.schemas import (
@@ -34,8 +35,8 @@ router = APIRouter(prefix="/teams", tags=["Teams"])
 
 logger = logging.getLogger(__name__)
 
-WRITE_ROLES = frozenset({"super_admin"})
-TEAM_TOOL_WRITE_ROLES = frozenset({"super_admin", "team_admin"})
+WRITE_ROLES = frozenset({"super_admin", "org_admin"})
+TEAM_TOOL_WRITE_ROLES = frozenset({"super_admin", "org_admin", "team_admin"})
 
 
 def get_team_service(session: AsyncSession = Depends(get_session)) -> TeamService:
@@ -46,8 +47,30 @@ def get_team_tool_service(session: AsyncSession = Depends(get_session)) -> TeamT
     return TeamToolService(session)
 
 
-def require_team_tool_writer(current_user: User = Depends(require_permission("members", "write"))) -> User:
-    return current_user
+async def require_team_tool_writer(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """Team tool assignment — org admins use teams write; team admins use members write."""
+    if current_user.role_name in ORG_WIDE_ROLE_NAMES:
+        return current_user
+
+    role_id = current_user.role_id
+    if role_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions.",
+        )
+
+    if await PermissionCache.check(role_id, "teams", "write", session) or await PermissionCache.check(
+        role_id, "members", "write", session
+    ):
+        return current_user
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Insufficient permissions.",
+    )
 
 
 # TODO: RBAC guard needed — currently allows all authenticated roles (finance_viewer, auditor, team_member)
@@ -123,9 +146,10 @@ async def sync_team_tools(
 async def list_teams(
     active: bool | None = Query(default=None),
     current_user: User = Depends(require_permission("teams", "read")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: TeamService = Depends(get_team_service),
 ) -> TeamListResponse:
-    return await service.list_teams(current_user, active=active)
+    return await service.list_teams(current_user, active=active, scope=scope)
 
 
 @router.post("", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
@@ -133,10 +157,11 @@ async def create_team(
     body: TeamCreateRequest,
     request: Request,
     current_user: User = Depends(require_permission("teams", "write")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: TeamService = Depends(get_team_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> TeamResponse:
-    created = await service.create_team(current_user, body)
+    created = await service.create_team(current_user, body, scope=scope)
     await record_audit_event(
         recorder,
         actor=current_user,
@@ -182,9 +207,10 @@ async def remove_team_member(
 async def get_team(
     team_id: UUID,
     current_user: User = Depends(require_permission("teams", "read")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: TeamService = Depends(get_team_service),
 ) -> TeamResponse:
-    return await service.get_team(current_user, team_id)
+    return await service.get_team(current_user, team_id, scope=scope)
 
 
 @router.patch("/{team_id}", response_model=TeamResponse)
@@ -193,10 +219,11 @@ async def update_team(
     body: TeamUpdateRequest,
     request: Request,
     current_user: User = Depends(require_permission("teams", "write")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: TeamService = Depends(get_team_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> TeamResponse:
-    updated = await service.update_team(current_user, team_id, body)
+    updated = await service.update_team(current_user, team_id, body, scope=scope)
     await record_audit_event(
         recorder,
         actor=current_user,
@@ -214,11 +241,12 @@ async def delete_team(
     team_id: UUID,
     request: Request,
     current_user: User = Depends(require_permission("teams", "write")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: TeamService = Depends(get_team_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> None:
-    team = await service.get_team(current_user, team_id)
-    await service.delete_team(current_user, team_id)
+    team = await service.get_team(current_user, team_id, scope=scope)
+    await service.delete_team(current_user, team_id, scope=scope)
     await record_audit_event(
         recorder,
         actor=current_user,

@@ -79,6 +79,11 @@ export function mapDailyUsagePoints(points: ApiTrendPoint[]): DailyUsagePoint[] 
     isoDate: point.period_start,
     tokens: point.total_tokens,
     cost: Number(point.estimated_cost ?? 0),
+    includedCost:
+      point.included_cost != null ? Number(point.included_cost) : undefined,
+    billableCost:
+      point.billable_cost != null ? Number(point.billable_cost) : undefined,
+    breakdownAvailable: point.breakdown_available ?? false,
   }));
 }
 

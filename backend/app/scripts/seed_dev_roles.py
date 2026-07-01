@@ -24,6 +24,12 @@ DEV_PASSWORD = "DevPass123!"
 
 ROLE_USERS = [
     {
+        "email": "orgadmin@acme.example",
+        "display_name": "Organization Admin Dev",
+        "role": "org_admin",
+        "add_to_team": False,
+    },
+    {
         "email": "teamadmin@acme.example",
         "display_name": "Team Admin Dev",
         "role": "team_admin",

@@ -261,11 +261,46 @@ class CursorUsageAdapter:
         cursor_pull_dumper: CursorPullDumper | None = None,
         **_kwargs: object,
     ) -> list[UsageRecord]:
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=UTC)
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=UTC)
+        if since > until:
+            since, until = until, since
+
         logger.info(
             "Cursor fetch_usage | since=%s until=%s",
             since.isoformat(),
             until.isoformat(),
         )
+
+        records: list[UsageRecord] = []
+        chunk_start = since
+        while chunk_start < until:
+            chunk_end = min(
+                chunk_start + timedelta(days=MAX_FILTERED_USAGE_DAYS),
+                until,
+            )
+            chunk_records = await self._fetch_usage_window(
+                api_token,
+                since=chunk_start,
+                until=chunk_end,
+                cursor_pull_dumper=cursor_pull_dumper,
+            )
+            records.extend(chunk_records)
+            chunk_start = chunk_end
+
+        logger.info("Cursor fetch_usage complete | rows=%s", len(records))
+        return records
+
+    async def _fetch_usage_window(
+        self,
+        api_token: str,
+        *,
+        since: datetime,
+        until: datetime,
+        cursor_pull_dumper: CursorPullDumper | None = None,
+    ) -> list[UsageRecord]:
         since_filtered, until_filtered = _clamp_range(
             since,
             until,

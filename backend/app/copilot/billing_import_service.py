@@ -176,7 +176,7 @@ class CopilotBillingImportService:
                 seat_count=aggregate.seat_count,
                 raw_summary={
                     "credits_cost": str(aggregate.credits_cost),
-                    "gross_total": str(aggregate.total_cost),
+                    "total_cost": str(aggregate.total_cost),
                     "row_count": aggregate.row_count,
                 },
             )
@@ -281,13 +281,14 @@ class CopilotBillingImportService:
         }
 
         repo = NotificationRepository(self._session)
+        from app.core.permissions import ORG_ADMIN_NOTIFY_ROLES, ORG_WIDE_ROLE_NAMES
         from app.users.repository import UserAdminRepository
 
         users = await UserAdminRepository(self._session).list_by_organization(organization_id)
-        admin_users = [user for user in users if user.role in {"super_admin", "team_admin"}]
-        recipient_ids = {user.id for user in admin_users if user.role == "super_admin"}
+        admin_users = [user for user in users if user.role_name in ORG_ADMIN_NOTIFY_ROLES]
+        recipient_ids = {user.id for user in admin_users if user.role_name in ORG_WIDE_ROLE_NAMES}
         for user in admin_users:
-            if user.role == "team_admin":
+            if user.role_name == "team_admin":
                 from app.teams.membership_repository import TeamMembershipRepository
 
                 memberships = await TeamMembershipRepository(self._session).list_active_for_team(team_id)

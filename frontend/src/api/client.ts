@@ -148,6 +148,7 @@ export async function apiFetch(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
+  const scopedPath = await appendSuperAdminOrgScope(path);
   const headers = new Headers(init.headers);
   headers.set("X-Correlation-ID", createCorrelationId());
 
@@ -164,15 +165,40 @@ export async function apiFetch(
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${API_BASE}${scopedPath}`, {
     ...init,
     headers,
   });
 
   const method = (init.method ?? "GET").toUpperCase();
-  logRequestOutcome(method, `${API_BASE}${path}`, response.status);
+  logRequestOutcome(method, `${API_BASE}${scopedPath}`, response.status);
 
   return response;
+}
+
+async function appendSuperAdminOrgScope(path: string): Promise<string> {
+  const { useAuthStore } = await import("@/stores/authStore");
+  const { useOrgScopeStore } = await import("@/stores/orgScopeStore");
+  const { Role } = await import("@/types");
+
+  const user = useAuthStore.getState().user;
+  if (user?.platformRole !== Role.SuperAdmin) {
+    return path;
+  }
+
+  const orgId = useOrgScopeStore.getState().selectedOrganizationId;
+  if (!orgId) {
+    return path;
+  }
+
+  const [pathname, search = ""] = path.split("?");
+  const params = new URLSearchParams(search);
+  if (params.has("organization_id")) {
+    return path;
+  }
+  params.set("organization_id", orgId);
+  const query = params.toString();
+  return query ? `${pathname}?${query}` : pathname;
 }
 
 interface ApiRequestInit extends RequestInit {

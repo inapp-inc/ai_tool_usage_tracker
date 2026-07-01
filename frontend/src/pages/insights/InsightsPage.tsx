@@ -54,6 +54,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  Legend,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -64,10 +65,14 @@ import { z } from "zod";
 
 import {
   fetchDashboardStats,
+  fetchOrganizationCostBreakdown,
+  fetchOrganizationCosts,
   fetchRecentAlerts,
   fetchTeamCost,
   fetchTopUsers,
   type DashboardStats,
+  type OrganizationCostBreakdownItem,
+  type OrganizationCostSummary,
   type RecentAlert,
   type TeamCostDataPoint,
   type TopUser,
@@ -90,6 +95,7 @@ import {
 } from "@/api/reports";
 import { fetchCredentials, type Credential } from "@/api/credentials";
 import { fetchTeams, type Team } from "@/api/teams";
+import { fetchTeamToolAssignment } from "@/api/teamTools";
 import { fetchTools } from "@/api/tools";
 import {
   fetchDailyBreakdown,
@@ -111,9 +117,13 @@ import { CopilotBillingInsightsPanel } from "@/components/insights/CopilotBillin
 import { FigmaBillingInsightsPanel } from "@/components/insights/FigmaBillingInsightsPanel";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
-import { PeriodSelector } from "@/components/inputs/PeriodSelector";
 import { SlideOver } from "@/components/layout/SlideOver";
 import type { DateRange } from "@/types";
+import { Role } from "@/types";
+import { useAuthStore } from "@/stores/authStore";
+import { useInsightsPeriodStore } from "@/stores/insightsPeriodStore";
+import { useOrgScopeStore } from "@/stores/orgScopeStore";
+import { tenantScopeKey } from "@/lib/tenantScope";
 import { tokens } from "@/theme/palette";
 import {
   insightsChartTooltipItemStyle,
@@ -126,9 +136,9 @@ import {
   formatRelativeTime,
   formatTokens,
 } from "@/utils/formatters";
-import { currentMonthUtcRange } from "@/utils/periods";
+import { currentMonthUtcRange, currentSubscriptionPeriodRange } from "@/utils/periods";
 
-type ChartMode = "tokens" | "cost";
+type ChartMode = "tokens" | "cost" | "bill";
 
 interface InsightsFilters {
   period: DateRange;
@@ -386,6 +396,222 @@ function CostStatTooltip({ stats }: { stats: DashboardStats }) {
   );
 }
 
+function OrgCostStatTooltip({ costs }: { costs: OrganizationCostSummary }) {
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
+        Organization total: {formatCost(costs.totalCost)}
+      </Typography>
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
+        Total tools cost: {formatCost(costs.toolsCost)}
+      </Typography>
+      <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
+        Additional billable: {formatCost(costs.additionalBillableCost)}
+      </Typography>
+      <Typography variant="caption" sx={{ color: "rgba(255,255,255,0.85)" }}>
+        Tools cost is configured per team and does not change with the date filter.
+        Billable cost reflects imports and overage in the selected period.
+      </Typography>
+    </Box>
+  );
+}
+
+function OrganizationCostCards({
+  costs,
+  loading,
+}: {
+  costs: OrganizationCostSummary | undefined;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: "16px",
+          mb: 2,
+        }}
+      >
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+      </Box>
+    );
+  }
+
+  if (!costs) {
+    return null;
+  }
+
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: "repeat(3, 1fr)",
+        gap: "16px",
+        mb: 2,
+      }}
+    >
+      <StatCard
+        label="Organization Total Cost"
+        value={formatCost(costs.totalCost)}
+        icon={IconCurrencyDollar}
+        iconColor={tokens.success}
+        tooltipContent={<OrgCostStatTooltip costs={costs} />}
+      />
+      <StatCard
+        label="Total Tools Cost"
+        value={formatCost(costs.toolsCost)}
+        icon={IconTool}
+        iconColor="#8B5CF6"
+        tooltipContent={
+          <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
+            Same as Teams: configured package and subscription amounts (static)
+          </Typography>
+        }
+      />
+      <StatCard
+        label="Billable Cost"
+        value={formatCost(costs.additionalBillableCost)}
+        icon={IconCurrencyDollar}
+        iconColor="#F59E0B"
+        tooltipContent={
+          <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
+            Imports and overage in the selected date range (same rules as Teams billable)
+          </Typography>
+        }
+      />
+    </Box>
+  );
+}
+
+function OrganizationCostBreakdownPanel({
+  rows,
+  loading,
+}: {
+  rows: OrganizationCostBreakdownItem[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <Box sx={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", mb: 2 }}>
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+      </Box>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <Alert severity="info" sx={{ mb: 2 }}>
+        No customer organizations with connected tools.
+      </Alert>
+    );
+  }
+
+  const totals = rows.reduce(
+    (acc, row) => ({
+      toolsCost: acc.toolsCost + row.toolsCost,
+      additionalBillableCost: acc.additionalBillableCost + row.additionalBillableCost,
+      totalCost: acc.totalCost + row.totalCost,
+    }),
+    { toolsCost: 0, additionalBillableCost: 0, totalCost: 0 },
+  );
+
+  return (
+    <Box sx={{ mb: 2 }}>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: "16px",
+          mb: 2,
+        }}
+      >
+        <StatCard
+          label="All Organizations Total Cost"
+          value={formatCost(totals.totalCost)}
+          icon={IconCurrencyDollar}
+          iconColor={tokens.success}
+        />
+        <StatCard
+          label="All Organizations Tools Cost"
+          value={formatCost(totals.toolsCost)}
+          icon={IconTool}
+          iconColor="#8B5CF6"
+        />
+        <StatCard
+          label="All Organizations Billable Cost"
+          value={formatCost(totals.additionalBillableCost)}
+          icon={IconCurrencyDollar}
+          iconColor="#F59E0B"
+        />
+      </Box>
+
+      <Card variant="outlined" sx={{ borderColor: tokens.border }}>
+        <CardContent sx={{ p: 0, "&:last-child": { pb: 0 } }}>
+          <Box sx={{ px: 2, py: 1.5, borderBottom: `0.5px solid ${tokens.border}` }}>
+            <Typography sx={{ fontSize: "0.875rem", fontWeight: 600 }}>
+              Organization cost breakdown
+            </Typography>
+          </Box>
+          <Box component="table" sx={{ width: "100%", borderCollapse: "collapse" }}>
+            <Box component="thead">
+              <Box component="tr" sx={{ backgroundColor: tokens.bgDefault }}>
+                {["Organization", "Total cost", "Tools cost", "Billable cost", "Tools"].map(
+                  (header) => (
+                    <Box
+                      component="th"
+                      key={header}
+                      sx={{
+                        textAlign: "left",
+                        px: 2,
+                        py: 1,
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: tokens.textMuted,
+                      }}
+                    >
+                      {header}
+                    </Box>
+                  ),
+                )}
+              </Box>
+            </Box>
+            <Box component="tbody">
+              {rows.map((row) => (
+                <Box
+                  component="tr"
+                  key={row.organizationId}
+                  sx={{ borderTop: `0.5px solid ${tokens.border}` }}
+                >
+                  <Box component="td" sx={{ px: 2, py: 1.25, fontSize: "0.8125rem" }}>
+                    {row.organizationName}
+                  </Box>
+                  <Box component="td" sx={{ px: 2, py: 1.25, fontSize: "0.8125rem" }}>
+                    {formatCost(row.totalCost)}
+                  </Box>
+                  <Box component="td" sx={{ px: 2, py: 1.25, fontSize: "0.8125rem" }}>
+                    {formatCost(row.toolsCost)}
+                  </Box>
+                  <Box component="td" sx={{ px: 2, py: 1.25, fontSize: "0.8125rem" }}>
+                    {formatCost(row.additionalBillableCost)}
+                  </Box>
+                  <Box component="td" sx={{ px: 2, py: 1.25, fontSize: "0.8125rem" }}>
+                    {row.connectedToolCount}
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+          </Box>
+        </CardContent>
+      </Card>
+    </Box>
+  );
+}
+
 function SectionError() {
   return (
     <Alert severity="error">Failed to load data. Please refresh.</Alert>
@@ -533,6 +759,12 @@ function resolveDailyChartPoint(
 export function InsightsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const isSuperAdmin = useAuthStore((s) => s.user?.platformRole === Role.SuperAdmin);
+  const currentUser = useAuthStore((s) => s.user);
+  const selectedOrganizationId = useOrgScopeStore((s) => s.selectedOrganizationId);
+  const tenantScope = tenantScopeKey(currentUser, selectedOrganizationId);
+  const showOrgCostBreakdown = isSuperAdmin && !selectedOrganizationId;
+  const insightsOrgReady = !isSuperAdmin || Boolean(selectedOrganizationId);
 
   const [filters, setFilters] = useState<InsightsFilters>(createDefaultFilters);
   const [filtersInitialized, setFiltersInitialized] = useState(false);
@@ -562,7 +794,31 @@ export function InsightsPage() {
 
   const dashboardFilters: DashboardFilters = { teamId, toolId };
   const insightsFiltersReady =
-    filtersInitialized && Boolean(teamId) && Boolean(toolId);
+    insightsOrgReady &&
+    filtersInitialized &&
+    Boolean(teamId) &&
+    Boolean(toolId);
+
+  useEffect(() => {
+    setFiltersInitialized(false);
+    setFilters(createDefaultFilters());
+  }, [selectedOrganizationId]);
+
+  useEffect(() => {
+    const register = useInsightsPeriodStore.getState().register;
+    const setActive = useInsightsPeriodStore.getState().setActive;
+    register((period) => {
+      setFilters((prev) => ({ ...prev, period }));
+    });
+    setActive(true);
+    return () => {
+      setActive(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    useInsightsPeriodStore.getState().syncPeriod(filters.period);
+  }, [filters.period.from, filters.period.to]);
 
   const statsQuery = useQuery({
     queryKey: ["insights", "stats", from, to, teamId, toolId],
@@ -656,8 +912,21 @@ export function InsightsPage() {
   });
 
   const teamsQuery = useQuery({
-    queryKey: ["teams"],
+    queryKey: ["teams", tenantScope],
     queryFn: fetchTeams,
+    enabled: insightsOrgReady,
+  });
+
+  const orgCostBreakdownQuery = useQuery({
+    queryKey: ["insights", "org-cost-breakdown", from, to],
+    queryFn: () => fetchOrganizationCostBreakdown({ from, to }),
+    enabled: showOrgCostBreakdown && Boolean(from) && Boolean(to),
+  });
+
+  const organizationCostsQuery = useQuery({
+    queryKey: ["insights", "org-costs", from, to],
+    queryFn: () => fetchOrganizationCosts(from, to),
+    enabled: !showOrgCostBreakdown && insightsFiltersReady,
   });
 
   const toolOptionsQuery = useQuery({
@@ -671,8 +940,9 @@ export function InsightsPage() {
   });
 
   const credentialsQuery = useQuery({
-    queryKey: ["credentials"],
+    queryKey: ["credentials", tenantScope],
     queryFn: fetchCredentials,
+    enabled: insightsOrgReady,
   });
 
   useEffect(() => {
@@ -841,7 +1111,33 @@ export function InsightsPage() {
   const isFigmaTool =
     catalogToolsQuery.data?.find((tool) => tool.id === toolId)?.provider === "figma" ||
     toolOptions.find((tool) => tool.id === toolId)?.provider === "figma";
+  const isCursorTool =
+    catalogToolsQuery.data?.find((tool) => tool.id === toolId)?.provider === "cursor" ||
+    toolOptions.find((tool) => tool.id === toolId)?.provider === "cursor";
   const credentials = credentialsQuery.data ?? [];
+
+  const cursorBillTrendAvailable = useMemo(() => {
+    if (!isCursorTool) {
+      return false;
+    }
+    if (statsQuery.data?.breakdownAvailable) {
+      return true;
+    }
+    return (dailyQuery.data ?? []).some(
+      (point) =>
+        point.breakdownAvailable ||
+        (point.includedCost ?? 0) > 0 ||
+        (point.billableCost ?? 0) > 0,
+    );
+  }, [dailyQuery.data, isCursorTool, statsQuery.data?.breakdownAvailable]);
+
+  useEffect(() => {
+    if (isCursorTool) {
+      setChartMode("bill");
+      return;
+    }
+    setChartMode("tokens");
+  }, [isCursorTool, toolId]);
 
   const drilldownAssignedToolIds = useMemo(() => {
     if (!drilldown.team) {
@@ -895,6 +1191,34 @@ export function InsightsPage() {
       };
     });
   }, [credentials, filteredToolOptions, teamId, teams]);
+
+  useEffect(() => {
+    if (!isFigmaTool || !teamId || !toolId) {
+      return;
+    }
+    let cancelled = false;
+    void fetchTeamToolAssignment(teamId, toolId).then((assignment) => {
+      if (cancelled) {
+        return;
+      }
+      const subscriptionStart = assignment?.package.subscriptionStart;
+      if (!subscriptionStart) {
+        return;
+      }
+      setFilters((prev) => {
+        if (prev.teamId !== teamId || prev.toolId !== toolId) {
+          return prev;
+        }
+        return {
+          ...prev,
+          period: currentSubscriptionPeriodRange(subscriptionStart),
+        };
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isFigmaTool, teamId, toolId]);
 
   const sortedTeamRows = useMemo(() => {
     const rows = teamsUsageQuery.data ?? [];
@@ -1247,16 +1571,32 @@ export function InsightsPage() {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      {!isFigmaTool && (
-        <PeriodSelector
-          value={filters.period}
-          onChange={(period) =>
-            setFilters((prev) => ({ ...prev, period }))
-          }
+      {isSuperAdmin && !selectedOrganizationId && (
+        <Alert severity="info">
+          Select a customer organization in the header to view team-level insights and
+          date-filtered dashboards. The table below shows all-tenant cost summary.
+        </Alert>
+      )}
+
+      {showOrgCostBreakdown ? (
+        <OrganizationCostBreakdownPanel
+          rows={orgCostBreakdownQuery.data ?? []}
+          loading={orgCostBreakdownQuery.isLoading}
+        />
+      ) : (
+        <OrganizationCostCards
+          costs={organizationCostsQuery.data}
+          loading={organizationCostsQuery.isLoading}
         />
       )}
 
-      <Box sx={{ display: "flex", gap: 2, mb: 0, alignItems: "center" }}>
+      {orgCostBreakdownQuery.isError && showOrgCostBreakdown && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          Failed to load organization cost breakdown.
+        </Alert>
+      )}
+
+      <Box sx={{ display: "flex", gap: 2, mb: 0, alignItems: "center", flexWrap: "wrap" }}>
         <FormControl size="small" sx={{ width: 180 }}>
           <InputLabel id="insights-team-label">Team</InputLabel>
           <Select
@@ -1320,7 +1660,12 @@ export function InsightsPage() {
           to={to}
         />
       ) : isFigmaTool && insightsFiltersReady ? (
-        <FigmaBillingInsightsPanel teamId={teamId} toolId={toolId} />
+        <FigmaBillingInsightsPanel
+          teamId={teamId}
+          toolId={toolId}
+          from={from}
+          to={to}
+        />
       ) : (
         <>
       <Box
@@ -1396,16 +1741,26 @@ export function InsightsPage() {
           >
             <Box>
               <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                Token Usage
+                {chartMode === "bill"
+                  ? "Bill cost trend"
+                  : chartMode === "cost"
+                    ? "Cost trend"
+                    : "Token usage"}
               </Typography>
               <Typography variant="caption" sx={{ color: tokens.textMuted }}>
-                Daily usage over selected period
+                {chartMode === "bill"
+                  ? "Daily included plan consumption vs additional billable spend"
+                  : chartMode === "cost"
+                    ? "Daily total cost over selected period"
+                    : "Daily usage over selected period"}
               </Typography>
-              <Typography
-                sx={{ fontSize: "0.75rem", color: "text.secondary", mb: 1, mt: 0.5 }}
-              >
-                Click any point to see team breakdown
-              </Typography>
+              {chartMode !== "bill" ? (
+                <Typography
+                  sx={{ fontSize: "0.75rem", color: "text.secondary", mb: 1, mt: 0.5 }}
+                >
+                  Click any point to see team breakdown
+                </Typography>
+              ) : null}
             </Box>
             <ToggleButtonGroup
               size="small"
@@ -1417,8 +1772,15 @@ export function InsightsPage() {
             >
               <ToggleButton value="tokens">Tokens</ToggleButton>
               <ToggleButton value="cost">Cost</ToggleButton>
+              {isCursorTool ? <ToggleButton value="bill">Bill</ToggleButton> : null}
             </ToggleButtonGroup>
           </Box>
+          {isCursorTool && chartMode === "bill" && !cursorBillTrendAvailable ? (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Bill cost breakdown is not available yet. Re-sync Cursor usage to populate
+              included vs billable spend.
+            </Alert>
+          ) : null}
           {dailyQuery.isError ? (
             <SectionError />
           ) : dailyQuery.isLoading ? (
@@ -1429,12 +1791,14 @@ export function InsightsPage() {
               height={200}
               sx={{ borderRadius: "8px" }}
             />
+          ) : (dailyQuery.data ?? []).length === 0 ? (
+            <Alert severity="info">No usage data for this period.</Alert>
           ) : (
-            <ResponsiveContainer width="100%" height={200}>
+            <ResponsiveContainer width="100%" height={chartMode === "bill" ? 240 : 200}>
               <LineChart
                 data={dailyQuery.data ?? []}
-                onClick={handleDailyChartClick}
-                style={{ cursor: "pointer" }}
+                onClick={chartMode === "bill" ? undefined : handleDailyChartClick}
+                style={{ cursor: chartMode === "bill" ? "default" : "pointer" }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
                 <XAxis
@@ -1446,22 +1810,57 @@ export function InsightsPage() {
                   tickFormatter={(value: number) =>
                     chartMode === "tokens"
                       ? formatTokens(value)
-                      : `$${value.toFixed(2)}`
+                      : formatCost(value)
                   }
                   tick={{ fontSize: 11, fill: tokens.textMuted }}
-                  width={65}
+                  width={chartMode === "bill" ? 72 : 65}
                 />
-                <Tooltip
-                  formatter={(value) =>
-                    chartMode === "tokens"
-                      ? [formatTokens(value as number), "Tokens"]
-                      : [formatCost(value as number), "Cost"]
-                  }
-                  contentStyle={insightsChartTooltipStyle}
-                  labelStyle={insightsChartTooltipLabelStyle}
-                  itemStyle={insightsChartTooltipItemStyle}
-                />
-                {dateDrilldown.dateLabel && (
+                {chartMode === "bill" ? (
+                  <Tooltip
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload?.length) {
+                        return null;
+                      }
+                      const point = payload[0]?.payload as DailyUsagePoint | undefined;
+                      if (!point) {
+                        return null;
+                      }
+                      return (
+                        <Box
+                          sx={{
+                            backgroundColor: "#fff",
+                            border: `1px solid ${tokens.border}`,
+                            borderRadius: 1,
+                            px: 1.5,
+                            py: 1,
+                          }}
+                        >
+                          <Typography variant="caption" sx={{ fontWeight: 600, display: "block" }}>
+                            {label}
+                          </Typography>
+                          <Typography variant="caption" sx={{ display: "block" }}>
+                            Included in plan: {formatCost(point.includedCost ?? 0)}
+                          </Typography>
+                          <Typography variant="caption" sx={{ display: "block" }}>
+                            Billable: {formatCost(point.billableCost ?? 0)}
+                          </Typography>
+                        </Box>
+                      );
+                    }}
+                  />
+                ) : (
+                  <Tooltip
+                    formatter={(value) =>
+                      chartMode === "tokens"
+                        ? [formatTokens(value as number), "Tokens"]
+                        : [formatCost(value as number), "Cost"]
+                    }
+                    contentStyle={insightsChartTooltipStyle}
+                    labelStyle={insightsChartTooltipLabelStyle}
+                    itemStyle={insightsChartTooltipItemStyle}
+                  />
+                )}
+                {dateDrilldown.dateLabel && chartMode !== "bill" && (
                   <ReferenceLine
                     x={dateDrilldown.dateLabel}
                     stroke={tokens.primary}
@@ -1478,7 +1877,7 @@ export function InsightsPage() {
                     dot={false}
                     activeDot={renderClickableActiveDot(tokens.primary)}
                   />
-                ) : (
+                ) : chartMode === "cost" ? (
                   <Line
                     type="monotone"
                     dataKey="cost"
@@ -1487,6 +1886,26 @@ export function InsightsPage() {
                     dot={false}
                     activeDot={renderClickableActiveDot(tokens.success)}
                   />
+                ) : (
+                  <>
+                    <Legend verticalAlign="top" height={28} />
+                    <Line
+                      type="monotone"
+                      dataKey="includedCost"
+                      name="Included in plan"
+                      stroke={tokens.primary}
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="billableCost"
+                      name="Billable"
+                      stroke={tokens.success}
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </>
                 )}
               </LineChart>
             </ResponsiveContainer>

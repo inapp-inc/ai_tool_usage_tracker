@@ -32,6 +32,7 @@ TEAM_SCOPED_RESOURCES = frozenset(
 
 SYSTEM_ROLE_NAMES = (
     "super_admin",
+    "org_admin",
     "team_admin",
     "finance_viewer",
     "auditor",

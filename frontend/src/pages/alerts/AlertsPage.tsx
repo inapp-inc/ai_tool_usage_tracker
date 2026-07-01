@@ -50,7 +50,6 @@ import { DataTable, type Column } from "@/components/data-display/DataTable";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { EmptyState } from "@/components/feedback/EmptyState";
 import { SlideOver } from "@/components/layout/SlideOver";
-import { Role } from "@/types";
 import { tokens } from "@/theme/palette";
 import { formatCost, formatRelativeTime, formatTokens } from "@/utils/formatters";
 
@@ -586,7 +585,7 @@ export function AlertsPage() {
 
   return (
     <RoleGuard
-      roles={[Role.SuperAdmin, Role.TeamAdmin]}
+      resource="alerts"
       fallback={
         <EmptyState
           title="Access denied"

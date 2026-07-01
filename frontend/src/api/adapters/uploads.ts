@@ -148,6 +148,13 @@ function inferFormat(filename: string, detected?: string | null): UploadFormat {
   if (detected === "json" || filename.toLowerCase().endsWith(".json")) {
     return "json";
   }
+  if (
+    detected === "xlsx" ||
+    filename.toLowerCase().endsWith(".xlsx") ||
+    filename.toLowerCase().endsWith(".xlsm")
+  ) {
+    return "xlsx";
+  }
   return "csv";
 }
 

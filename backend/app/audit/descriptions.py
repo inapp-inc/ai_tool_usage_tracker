@@ -8,6 +8,7 @@ def format_role_label(role: str | None) -> str:
         return "User"
     labels = {
         "super_admin": "Super Admin",
+        "org_admin": "Organization Admin",
         "team_admin": "Team Admin",
         "finance_viewer": "Finance Viewer",
         "team_member": "Team Member",

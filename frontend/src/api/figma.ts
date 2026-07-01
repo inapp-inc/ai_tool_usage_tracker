@@ -63,6 +63,7 @@ export type FigmaBillingInsights = {
   has_import: boolean;
   has_config: boolean;
   imports_outside_filter: boolean;
+  subscription_start?: string | null;
   full_seat_cost_usd: number | string | null;
   view_seat_cost_usd: number | string | null;
   credits_per_usd: number | string | null;
@@ -104,7 +105,6 @@ export async function fetchFigmaBillingInsights(
   toolId: string,
   from: string,
   to: string,
-  billingPeriod?: { importId?: string | null; start?: string | null; end?: string | null },
 ): Promise<FigmaBillingInsights> {
   const params = new URLSearchParams({
     team_id: teamId,
@@ -112,16 +112,6 @@ export async function fetchFigmaBillingInsights(
     from,
     to,
   });
-  if (billingPeriod?.importId) {
-    params.set("billing_import_id", billingPeriod.importId);
-  } else {
-    if (billingPeriod?.start) {
-      params.set("billing_period_start", billingPeriod.start);
-    }
-    if (billingPeriod?.end) {
-      params.set("billing_period_end", billingPeriod.end);
-    }
-  }
   return apiRequest<FigmaBillingInsights>(`/figma/billing-insights?${params.toString()}`);
 }
 

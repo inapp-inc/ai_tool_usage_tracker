@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.router import get_audit_recorder, record_audit_event
 from app.audit.recorder import AuditRecorder
 from app.auth.dependencies import get_current_user
+from app.core.org_scope import get_operating_org_scope, OperatingOrgScope, require_operating_organization_id
 from app.core.permissions import require_permission
 from app.db.session import get_session
 from app.models.auth import User
@@ -33,10 +34,11 @@ async def list_tools(
     active: bool | None = Query(default=None),
     catalogue_only: bool | None = Query(default=None),
     current_user: User = Depends(require_permission("tools", "read")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolListResponse:
-    return await service.list_tools(
-        current_user.organization_id,
+    return await service.list_tools_for_scope(
+        scope,
         active=active,
         catalogue_only=catalogue_only,
     )
@@ -47,10 +49,12 @@ async def create_tool(
     body: ToolCreateRequest,
     request: Request,
     current_user: User = Depends(require_permission("tools", "write")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: ToolService = Depends(get_tool_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> ToolResponse:
-    created = await service.create_tool(current_user.organization_id, body)
+    org_id = require_operating_organization_id(scope)
+    created = await service.create_tool(org_id, body)
     await _reload_scheduler(request)
     await record_audit_event(
         recorder,
@@ -68,27 +72,33 @@ async def create_tool(
 async def list_tool_members(
     tool_id: UUID,
     current_user: User = Depends(require_permission("tools", "read")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolMembersListResponse:
-    return await service.list_tool_members(current_user.organization_id, tool_id)
+    org_id = require_operating_organization_id(scope)
+    return await service.list_tool_members(org_id, tool_id)
 
 
 @router.get("/{tool_id}/packages", response_model=ToolPackageListResponse)
 async def list_tool_packages(
     tool_id: UUID,
     current_user: User = Depends(require_permission("tools", "read")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolPackageListResponse:
-    return await service.list_packages(tool_id, current_user.organization_id)
+    org_id = require_operating_organization_id(scope)
+    return await service.list_packages(tool_id, org_id)
 
 
 @router.get("/{tool_id}", response_model=ToolResponse)
 async def get_tool(
     tool_id: UUID,
     current_user: User = Depends(require_permission("tools", "read")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolResponse:
-    return await service.get_tool(current_user.organization_id, tool_id)
+    org_id = require_operating_organization_id(scope)
+    return await service.get_tool(org_id, tool_id)
 
 
 @router.patch("/{tool_id}", response_model=ToolResponse)
@@ -97,10 +107,12 @@ async def update_tool(
     body: ToolUpdateRequest,
     request: Request,
     current_user: User = Depends(require_permission("tools", "write")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: ToolService = Depends(get_tool_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> ToolResponse:
-    updated = await service.update_tool(current_user.organization_id, tool_id, body)
+    org_id = require_operating_organization_id(scope)
+    updated = await service.update_tool(org_id, tool_id, body)
     await _reload_scheduler(request)
     await record_audit_event(
         recorder,
@@ -119,11 +131,13 @@ async def delete_tool(
     tool_id: UUID,
     request: Request,
     current_user: User = Depends(require_permission("tools", "write")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: ToolService = Depends(get_tool_service),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> None:
-    tool = await service.get_tool(current_user.organization_id, tool_id)
-    await service.delete_tool(current_user.organization_id, tool_id)
+    org_id = require_operating_organization_id(scope)
+    tool = await service.get_tool(org_id, tool_id)
+    await service.delete_tool(org_id, tool_id)
     await _reload_scheduler(request)
     await record_audit_event(
         recorder,
@@ -140,6 +154,8 @@ async def delete_tool(
 async def sync_tool(
     tool_id: UUID,
     current_user: User = Depends(require_permission("tools", "write")),
+    scope: OperatingOrgScope = Depends(get_operating_org_scope),
     service: ToolService = Depends(get_tool_service),
 ) -> ToolResponse:
-    return await service.sync_tool(current_user.organization_id, tool_id)
+    org_id = require_operating_organization_id(scope)
+    return await service.sync_tool(org_id, tool_id)

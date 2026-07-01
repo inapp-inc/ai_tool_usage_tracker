@@ -46,6 +46,9 @@ export interface DailyUsagePoint {
   isoDate: string;
   tokens: number;
   cost: number;
+  includedCost?: number;
+  billableCost?: number;
+  breakdownAvailable?: boolean;
 }
 
 export interface UserUsageRow {

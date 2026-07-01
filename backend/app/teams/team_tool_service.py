@@ -5,9 +5,11 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.permissions import ORG_WIDE_ROLE_NAMES
 from app.models.admin import Team, TeamTool, Tool, ToolPackage
 from app.models.auth import User
 from app.teams.membership_repository import TeamMembershipRepository
@@ -27,8 +29,6 @@ from app.tools.catalogue import catalogue_tool_id_from_connected, connected_to_c
 from app.tools.pricing import merge_pricing_config, normalize_pricing_config, validate_pricing_model
 from app.tools.repository import ToolRepository
 from app.tools.service import ToolService
-
-WRITE_ROLES = frozenset({"super_admin", "team_admin"})
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class TeamToolService:
         body: TeamToolAssignRequest,
     ) -> TeamToolAssignmentResponse:
         team = await self._require_team_access(user, team_id, write=True)
-        tool = await self._require_tool(user.organization_id, body.tool_id)
+        tool = await self._require_tool(team.organization_id, body.tool_id)
 
         existing = await self._team_tools.get_by_team_and_tool(team.id, tool.id)
         if existing is not None:
@@ -75,12 +75,14 @@ class TeamToolService:
         self._apply_pricing_fields(assignment, body)
         await self._apply_package_binding(assignment, body, tool)
         self._apply_subscription_fields(assignment, body)
+        self._sync_figma_pricing_config(assignment, body, tool)
         self._validate_copilot_assignment(tool, assignment)
+        self._validate_figma_assignment(tool, assignment)
         await self._team_tools.create(assignment)
         await self._ensure_tool_on_team(team, tool.id)
         await sync_team_tool_cost_alert(
             self._session,
-            organization_id=user.organization_id,
+            organization_id=team.organization_id,
             team=team,
             tool=tool,
             assignment=assignment,
@@ -97,15 +99,17 @@ class TeamToolService:
         body: TeamToolUpdateRequest,
     ) -> TeamToolAssignmentResponse:
         team = await self._require_team_access(user, team_id, write=True)
-        tool = await self._require_tool(user.organization_id, tool_id)
+        tool = await self._require_tool(team.organization_id, tool_id)
         assignment = await self._require_assignment(team.id, tool.id)
         self._apply_pricing_fields(assignment, body)
         await self._apply_package_binding(assignment, body, tool)
         self._apply_subscription_fields(assignment, body)
+        self._sync_figma_pricing_config(assignment, body, tool)
         self._validate_copilot_assignment(tool, assignment)
+        self._validate_figma_assignment(tool, assignment)
         await sync_team_tool_cost_alert(
             self._session,
-            organization_id=user.organization_id,
+            organization_id=team.organization_id,
             team=team,
             tool=tool,
             assignment=assignment,
@@ -321,7 +325,7 @@ class TeamToolService:
         *,
         write: bool = False,
     ) -> Team:
-        team = await self._teams.get_by_id(team_id, user.organization_id)
+        team = await self._teams.get_by_id_unscoped(team_id)
         if team is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -330,6 +334,22 @@ class TeamToolService:
 
         if user.role_name == "super_admin":
             return team
+
+        if user.role_name in ORG_WIDE_ROLE_NAMES:
+            if team.organization_id != user.organization_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Insufficient permissions for this team.",
+                )
+            return team
+
+        scoped = await self._teams.get_by_id(team_id, user.organization_id)
+        if scoped is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Team not found.",
+            )
+        team = scoped
 
         if user.role_name == "team_admin":
             allowed = await self._memberships.active_team_ids_for_user(user.id)
@@ -440,6 +460,38 @@ class TeamToolService:
             package_allowance=assignment.package_allowance,
             overage_price=assignment.overage_price,
         )
+
+    @staticmethod
+    def _sync_figma_pricing_config(
+        assignment: TeamTool,
+        body: TeamToolAssignRequest | TeamToolUpdateRequest,
+        tool: Tool,
+    ) -> None:
+        if tool.vendor != "figma":
+            return
+        config = assignment.pricing_config if isinstance(assignment.pricing_config, dict) else {}
+        if assignment.cost_per_seat is not None:
+            config["full_seat_cost_usd"] = str(assignment.cost_per_seat)
+            config["cost_per_seat"] = str(assignment.cost_per_seat)
+        if assignment.seat_count is not None:
+            config["seat_count"] = assignment.seat_count
+        if "pricing_config" in body.model_fields_set and body.pricing_config:
+            for key in (
+                "full_seat_cost_usd",
+                "view_seat_cost_usd",
+                "credits_per_usd",
+                "credit_amount",
+                "included_credits_per_seat",
+            ):
+                if key in body.pricing_config and body.pricing_config[key] is not None:
+                    raw = body.pricing_config[key]
+                    if key == "included_credits_per_seat":
+                        config[key] = int(raw)
+                    else:
+                        config[key] = str(raw)
+        config["provider_slug"] = "figma"
+        config["model"] = config.get("model") or "per_seat"
+        assignment.pricing_config = config
 
     def _apply_subscription_fields(
         self,
@@ -567,6 +619,8 @@ class TeamToolService:
             config["seat_count"] = assignment.seat_count
             config.pop("flat_monthly_cost", None)
             config["model"] = "per_seat"
+            if tool.vendor == "figma" and assignment.cost_per_seat is not None:
+                config["full_seat_cost_usd"] = str(assignment.cost_per_seat)
             assignment.pricing_config = config
             return
 
@@ -587,6 +641,21 @@ class TeamToolService:
             package_allowance=assignment.package_allowance,
             overage_price=assignment.overage_price,
         )
+
+    @staticmethod
+    def _validate_figma_assignment(tool: Tool, assignment: TeamTool) -> None:
+        if tool.vendor != "figma":
+            return
+        if assignment.package_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Figma requires a subscription package.",
+            )
+        if assignment.seat_count is not None and assignment.seat_count < 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Figma seat count must be at least 1.",
+            )
 
     @staticmethod
     def _validate_copilot_assignment(tool: Tool, assignment: TeamTool) -> None:
@@ -619,7 +688,7 @@ class TeamToolService:
             package_allowance=assignment.package_allowance,
             overage_price=assignment.overage_price,
             plan_name=assignment.plan_name,
-            pricing_config=config,
+            pricing_config=jsonable_encoder(config) if config else {},
             package_id=assignment.package_id,
             subscription_start=assignment.subscription_start,
             subscription_end=assignment.subscription_end,

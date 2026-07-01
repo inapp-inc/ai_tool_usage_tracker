@@ -17,6 +17,10 @@ from app.models.auth import User
 from app.models.roles import RolePermission, VALID_RESOURCES
 from app.teams.membership_repository import TeamMembershipRepository
 
+ORG_WIDE_ROLE_NAMES = frozenset({"super_admin", "org_admin", "organization_admin"})
+ORG_ADMIN_NOTIFY_ROLES = ORG_WIDE_ROLE_NAMES | frozenset({"team_admin"})
+ORG_UPLOAD_ROLES = ORG_ADMIN_NOTIFY_ROLES
+
 PermissionRow = dict[str, bool]
 
 
@@ -108,7 +112,7 @@ def require_permission(resource: str, action: str) -> Callable:
         current_user: User = Depends(get_current_user),
         session: AsyncSession = Depends(get_session),
     ) -> User:
-        if current_user.role_name == "super_admin":
+        if current_user.role_name in ORG_WIDE_ROLE_NAMES:
             return current_user
 
         role_id = current_user.role_id
@@ -136,7 +140,7 @@ def get_scoped_team_ids_for(resource: str) -> Callable:
         current_user: User = Depends(get_current_user),
         session: AsyncSession = Depends(get_session),
     ) -> list[uuid.UUID]:
-        if current_user.role_name == "super_admin":
+        if current_user.role_name in ORG_WIDE_ROLE_NAMES:
             return []
 
         role_id = current_user.role_id

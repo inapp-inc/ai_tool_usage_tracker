@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.org_scope import OperatingOrgScope, organization_ids_for_scope
 from app.members.schemas import (
     MemberListResponse,
     MemberResponse,
@@ -32,11 +33,48 @@ class MembersService:
         view: MembersView = "all",
         managed_team_ids: list[UUID] | None = None,
     ) -> MemberListResponse:
-        users = await self._users.list_by_organization(organization_id)
-        summaries = await self._memberships.list_team_summaries_for_users(
-            organization_id,
-            [row.id for row in users],
+        return await self._list_members_for_org_ids(
+            [organization_id],
+            view=view,
+            managed_team_ids=managed_team_ids,
         )
+
+    async def list_members_for_scope(
+        self,
+        scope: OperatingOrgScope,
+        *,
+        view: MembersView = "all",
+        managed_team_ids: list[UUID] | None = None,
+    ) -> MemberListResponse:
+        org_ids = await organization_ids_for_scope(self._session, scope)
+        return await self._list_members_for_org_ids(
+            org_ids,
+            view=view,
+            managed_team_ids=managed_team_ids,
+        )
+
+    async def _list_members_for_org_ids(
+        self,
+        org_ids: list[UUID],
+        *,
+        view: MembersView = "all",
+        managed_team_ids: list[UUID] | None = None,
+    ) -> MemberListResponse:
+        if len(org_ids) == 1:
+            users = await self._users.list_by_organization(org_ids[0])
+        else:
+            users = await self._users.list_for_organizations(org_ids)
+
+        summaries: dict[UUID, list] = {}
+        for org_id in org_ids:
+            org_users = [row for row in users if row.organization_id == org_id]
+            if not org_users:
+                continue
+            partial = await self._memberships.list_team_summaries_for_users(
+                org_id,
+                [row.id for row in org_users],
+            )
+            summaries.update(partial)
 
         managed_set = set(managed_team_ids) if managed_team_ids else None
 
@@ -55,7 +93,7 @@ class MembersService:
                     user_id=user.id,
                     email=user.email,
                     display_name=user.display_name,
-                    role=user.role,  # type: ignore[arg-type]
+                    role=user.role_name,  # type: ignore[arg-type]
                     active=user.active,
                     last_login_at=user.last_login_at,
                     created_at=user.created_at,
@@ -72,7 +110,10 @@ class MembersService:
             )
 
         if view == "all":
-            all_teams = await self._teams.list_by_organization(organization_id, active=None)
+            if len(org_ids) == 1:
+                all_teams = await self._teams.list_by_organization(org_ids[0], active=None)
+            else:
+                all_teams = await self._teams.list_for_organizations(org_ids, active=None)
             teams = (
                 [t for t in all_teams if t.id in managed_set]
                 if managed_set is not None
@@ -109,7 +150,7 @@ class MembersService:
 
                 upload_entries = await fetch_upload_members_for_team(
                     self._session,
-                    organization_id,
+                    team.organization_id,
                     team,
                 )
                 for entry in upload_entries:

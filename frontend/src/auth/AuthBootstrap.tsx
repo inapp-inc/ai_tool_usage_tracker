@@ -20,6 +20,9 @@ export function AuthBootstrap({ children }: AuthBootstrapProps) {
         const session = await restoreAuthSession();
         if (!cancelled && session) {
           useAuthStore.getState().setAuth(session.user, session.accessToken);
+          if (session.user.roleId) {
+            await useAuthStore.getState().loadPermissions(session.user.roleId);
+          }
         }
       } catch {
         if (!cancelled) {

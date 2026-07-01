@@ -32,6 +32,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with session_factory() as session:
         await seed_dev_admin(session, settings)
 
+    from app.organizations.usage_backfill import backfill_usage_event_organization_ids
+
+    async with session_factory() as session:
+        await backfill_usage_event_organization_ids(session)
+        await session.commit()
+
     from app.settings.seed import sync_builtin_providers
     from app.tools.builtin_seed import sync_all_org_builtin_catalogue_tools
 

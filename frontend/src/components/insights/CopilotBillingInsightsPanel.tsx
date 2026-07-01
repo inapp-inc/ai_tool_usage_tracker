@@ -85,13 +85,16 @@ function CopilotCostTooltip({
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
       <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
-        Total (gross): {formatCost(totalCost)}
+        Total cost: {formatCost(totalCost)}
+      </Typography>
+      <Typography variant="caption" sx={{ color: "rgba(255,255,255,0.85)" }}>
+        Subscription limit + additional spend
       </Typography>
       <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
         Subscription limit: {formatCost(monthlyLimit)}
       </Typography>
       <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
-        Additional (net): {formatCost(additionalCost)}
+        Additional (net − subscription): {formatCost(additionalCost)}
       </Typography>
       <Typography variant="caption" sx={{ color: "#fff", fontWeight: 700 }}>
         AI credits: {formatCost(creditsCost)}
